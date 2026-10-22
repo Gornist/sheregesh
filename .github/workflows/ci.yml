@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Базовый CI без продуктивных секретов (ADR-0005 §3, ADR-0008).
+# Нет pull_request_target; права по умолчанию пустые; actions закреплены по SHA.
+name: ci
+
+on:
+  push:
+    branches: [v2, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  requirements:
+    name: Реестр требований и тесты инструментов
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Проверка реестра (REQ-REL-002, REL-009)
+        run: python3 -I tools/reqs/reqgen.py validate
+      - name: Актуальность производных файлов
+        run: python3 -I tools/reqs/reqgen.py generate --check
+      - name: Модульные тесты инструментов
+        run: python3 -m unittest discover -s tests/tools -p 'test_*.py' -v
+      - name: Гейт релиза (REQ-REL-001) — только отчёт
+        # До Stable ожидается NO-GO; в релизном workflow гейт будет блокирующим.
+        run: python3 -I tools/reqs/reqgen.py gate || true
+
+  security:
+    name: Секреты и границы объёма
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Секреты в отслеживаемых файлах (REQ-UPD-009)
+        run: python3 -I tools/security/scan.py secrets
+      - name: Компоненты вне объёма 1.0 (REQ-SYS-003)
+        run: python3 -I tools/security/scan.py scope

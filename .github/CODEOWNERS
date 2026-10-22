@@ -1,0 +1,7 @@
+# Изменения процесса выпуска и модели доверия требуют ревью владельца (ADR-0005 §3).
+/.github/                              @Gornist
+/tools/release/                        @Gornist
+/tools/reqs/                           @Gornist
+/docs/adr/ADR-0005-signing-trust-model.md @Gornist
+/docs/requirements/requirements.json   @Gornist
+/docs/decisions/                       @Gornist
