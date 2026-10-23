@@ -32,13 +32,16 @@ CYCLE = ["10:silence:6", "25:corrupt:garbage", "26:corrupt:json", "30:video-off:
 
 
 def rss_mb(pid="self"):
+    """RSS процесса в МБ: /proc в Linux, иначе ps (macOS); None — если процесс не найден."""
     try:
         for line in Path(f"/proc/{pid}/status").read_text().splitlines():
             if line.startswith("VmRSS:"):
                 return int(line.split()[1]) / 1024
     except OSError:
         pass
-    return None
+    r = subprocess.run(["ps", "-o", "rss=", "-p", str(os.getpid() if pid == "self" else pid)],
+                       capture_output=True, text=True)
+    return int(r.stdout.split()[0]) / 1024 if r.stdout.split() else None
 
 
 def free_port(kind=socket.SOCK_STREAM):
@@ -48,8 +51,11 @@ def free_port(kind=socket.SOCK_STREAM):
 
 
 def gst_count():
-    r = subprocess.run(["pgrep", "-c", "-x", "gst-launch-1.0"], capture_output=True, text=True)
-    return int(r.stdout.strip() or 0)
+    """Число процессов gst-launch-1.0 (pgrep -c есть только в Linux — считаем строки)."""
+    r = subprocess.run(["pgrep", "-x", "gst-launch-1.0"], capture_output=True, text=True)
+    if r.returncode not in (0, 1):
+        raise RuntimeError(f"pgrep: {r.stderr.strip()}")
+    return len(r.stdout.split())
 
 
 def start_agent(port, vport, seconds, offset):
@@ -149,8 +155,10 @@ def run(seconds, out_dir=None):
               "qml_problems": qml_problems[:20], "final": final, "leftover_gst": leftover,
               "event_counts": codes, "states_seen": {k: sorted(v) for k, v in seen.items()}}
     limit = max(15.0, 0.10 * (warm[0]["console_rss_mb"] if warm and warm[0]["console_rss_mb"] else 0))
-    report["verdict"] = {
-        "memory": report["console_rss_growth_mb"] <= limit and report["agent_rss_growth_mb"] <= 15,
+    measured = sum(1 for s in warm if s["console_rss_mb"] is not None and s["agent_rss_mb"] is not None)
+    report["memory_samples"] = measured
+    report["verdict"] = {                            # без замеров памяти вердикт отрицательный, а не «рост 0»
+        "memory": measured >= 2 and report["console_rss_growth_mb"] <= limit and report["agent_rss_growth_mb"] <= 15,
         "responsive": report["loop_worst_ms"] < 1000,
         "no_qml_errors": not qml_problems,
         "no_orphans": leftover <= 0,

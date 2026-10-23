@@ -30,3 +30,11 @@ def test_soak_two_processes_with_faults(qapp, tmp_path):
         from sheregesh import video as gst
         if gst.choose_codec() is not None:    # без GStreamer (напр. macOS без пакетов) видео в прогоне нет
             assert "no-video" in r["states_seen"]["video"] and "playing" in r["states_seen"]["video"], r["states_seen"]
+
+
+def test_soak_probes_measure_on_this_os():
+    """Замеры прогона работают и вне Linux (в macOS нет /proc и pgrep -c — проверка памяти была пустой)."""
+    import soak
+    assert soak.rss_mb() > 10
+    assert soak.rss_mb(os.getpid()) > 10
+    assert isinstance(soak.gst_count(), int) and soak.gst_count() >= 0
