@@ -3,8 +3,8 @@
 """Синтетический видеопоток (REQ-SW-002, ADR-0003/0007): конвейеры gst-launch-1.0.
 
 Источник — только встроенный генератор videotestsrc. Передача — RTP/UDP на 127.0.0.1.
-Кодек: H.264 (openh264enc → avdec_h264/openh264dec), при отсутствии — MJPEG (jpegenc → jpegdec).
-На Pi 4 кодирование и декодирование будут аппаратными (v4l2h264enc/v4l2h264dec) — проверяется на S2.
+Кодек: H.264 — аппаратный v4l2h264enc/v4l2h264dec (Pi 4), иначе openh264enc → avdec_h264/openh264dec;
+при отсутствии работающей связки — MJPEG (jpegenc → jpegdec). Аппаратный путь подтверждает проба S2-4.
 """
 import ctypes
 import os
@@ -61,26 +61,67 @@ def available() -> bool:
     return shutil.which(GST_LAUNCH) is not None and has_element("videotestsrc") and has_element("udpsrc")
 
 
-ENCODERS = {"h264": ["openh264enc", "complexity=0", "gop-size=30", "bitrate=2000000", "!",
-                      "rtph264pay", "config-interval=1", "pt=96"],
-            "jpeg": ["jpegenc", "quality=70", "!", "rtpjpegpay"]}
+# Pi 4: аппаратный кодер требует уровень в caps и повтор SPS/PPS (иначе приёмник, подключившийся позже, не декодирует).
+V4L2_ENC = ["v4l2h264enc", "extra-controls=controls,repeat_sequence_header=1,video_bitrate=2000000,h264_i_frame_period=30",
+            "!", "video/x-h264,level=(string)4", "!", "h264parse"]
+OPENH264_ENC = ["openh264enc", "complexity=0", "gop-size=30", "bitrate=2000000"]
+RTP_H264 = ["!", "rtph264pay", "config-interval=1", "pt=96"]
+ENCODERS = {"jpeg": ["jpegenc", "quality=70", "!", "rtpjpegpay"]}
+_PROBE_SRC = ["videotestsrc", "num-buffers=10", "!", "video/x-raw,width=320,height=240,framerate=30/1", "!",
+              "videoconvert", "!", "video/x-raw,format=I420", "!"]
 
 
-@lru_cache(maxsize=None)
-def codec_works(codec) -> bool:
-    """Пробное кодирование 3 кадров. Наличия элемента мало: в Ubuntu libopenh264 бывает заглушкой без кодирования."""
+def _pipeline_ok(elements) -> bool:
+    """Пробный прогон: наличия элемента мало (заглушка libopenh264 в Ubuntu, недоступный /dev/video* на Pi)."""
     if not shutil.which(GST_LAUNCH):
         return False
-    r = subprocess.run([GST_LAUNCH, "videotestsrc", "num-buffers=3", "!", "video/x-raw,width=64,height=64", "!",
-                        "videoconvert", "!", "video/x-raw,format=I420", "!", *ENCODERS[codec], "!", "fakesink"],
-                       capture_output=True, text=True, timeout=20)
+    try:
+        r = subprocess.run([GST_LAUNCH, *_PROBE_SRC, *elements, "!", "fakesink"], capture_output=True, text=True,
+                           timeout=20)
+    except subprocess.TimeoutExpired:
+        return False
     out = r.stdout + r.stderr
     return r.returncode == 0 and "Error" not in out and "WARNING" not in out
 
 
+@lru_cache(maxsize=None)
+def h264_elements():
+    """(кодер, декодер) H.264: аппаратные v4l2 (Pi 4), иначе openh264/libav; None — если ни одна связка не работает.
+
+    Каждая пара проверяется кодированием и декодированием 10 кадров.
+    """
+    encoders = [e for e in (V4L2_ENC, OPENH264_ENC) if has_element(e[0])]
+    decoders = [d for d in ("v4l2h264dec", "avdec_h264", "openh264dec") if has_element(d)]
+    if not (has_element("rtph264pay") and has_element("rtph264depay") and has_element("h264parse")):
+        return None
+    for enc in encoders:
+        for dec in decoders:
+            if _pipeline_ok([*enc, "!", "h264parse", "!", dec]):
+                return enc, dec
+    return None
+
+
+def encoder_args(codec):
+    return [*h264_elements()[0], *RTP_H264] if codec == "h264" else ENCODERS[codec]
+
+
+def describe(codec) -> str:
+    """Для страницы «О системе» и журнала: кодек и фактические элементы GStreamer."""
+    if codec == "h264" and h264_elements():
+        enc, dec = h264_elements()
+        return f"H.264 ({enc[0]} → {dec})"
+    return {"jpeg": "MJPEG (jpegenc → jpegdec)"}.get(codec, codec or "—")
+
+
+@lru_cache(maxsize=None)
+def codec_works(codec) -> bool:
+    if codec == "h264":
+        return h264_elements() is not None
+    return _pipeline_ok([*ENCODERS[codec], "!", "rtpjpegdepay", "!", "jpegdec"])
+
+
 def choose_codec(prefer="h264"):
-    h264 = has_element("openh264enc") and has_element("rtph264pay") and \
-        (has_element("avdec_h264") or has_element("openh264dec")) and has_element("rtph264depay") and codec_works("h264")
+    h264 = codec_works("h264")
     jpeg = has_element("jpegenc") and has_element("rtpjpegpay") and has_element("jpegdec") and \
         has_element("rtpjpegdepay") and codec_works("jpeg")
     if prefer == "h264" and h264:
@@ -96,14 +137,15 @@ def sender_args(codec, port, width=1280, height=720, fps=30, host="127.0.0.1", p
            "timeoverlay", "halignment=right", "valignment=bottom", "font-desc=Sans 28", "!",
            "textoverlay", "text=SHEREGESH SYNTHETIC TEST PATTERN", "valignment=top", "font-desc=Sans 24", "!",
            "videoconvert", "!", "video/x-raw,format=I420", "!"]   # rtpjpegpay принимает только 4:2:0/4:2:2
-    return src + ENCODERS[codec] + ["!", "udpsink", f"host={host}", f"port={port}", "sync=false"]
+    return src + encoder_args(codec) + ["!", "udpsink", f"host={host}", f"port={port}", "sync=false"]
 
 
 def receiver_args(codec, port, width, height):
     """Вывод — сырые кадры RGBx фиксированного размера в stdout (fd=1)."""
     if codec == "h264":
-        dec = "avdec_h264" if has_element("avdec_h264") else "openh264dec"
-        head = [f"caps={H264_CAPS}", "!", "rtpjitterbuffer", "latency=50", "!", "rtph264depay", "!", dec, "!"]
+        dec = h264_elements()[1]
+        head = [f"caps={H264_CAPS}", "!", "rtpjitterbuffer", "latency=50", "!", "rtph264depay", "!", "h264parse", "!",
+                dec, "!"]
     else:
         head = [f"caps={JPEG_CAPS}", "!", "rtpjitterbuffer", "latency=50", "!", "rtpjpegdepay", "!", "jpegdec", "!"]
     return [GST_LAUNCH, "-q", "udpsrc", f"port={port}", "address=127.0.0.1"] + head + \

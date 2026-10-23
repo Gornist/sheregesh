@@ -350,7 +350,7 @@ class Backend(QObject):
                                                    timeout=2).stdout.splitlines()[0].split()[-1]
             except (OSError, subprocess.SubprocessError, IndexError):
                 self._gst_version = "—"
-            self._video_codec = gst.choose_codec() or "—"
+            self._video_codec = gst.describe(gst.choose_codec())       # с фактическими элементами (проба S2-4)
         gst_version = self._gst_version
         return {"software": __version__, "protocol": PROTOCOL_VERSION, "build": self._build,
                 "schema": self.schema.version, "revision": self._rev.id,
