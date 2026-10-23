@@ -83,3 +83,10 @@ def test_probe_errors_ignore_environment_warnings():
     assert video.probe_errors('WARNING: erroneous pipeline: no element "h264parse"')
     assert video.probe_errors("ERROR: from element /GstPipeline:pipeline0/GstV4l2H264Enc: Device busy")
     assert video.probe_errors("[OpenH264] this = 0x7f, Error:WelsInitEncoderExt(), ParamValidationExt failed")
+
+
+def test_sender_socket_bound_to_loopback(fake_gst):
+    """S2-BOOT: udpsink без bind-address занимал 0.0.0.0:<случайный порт> — отправитель тоже только на loopback."""
+    fake_gst(COMMON, [])
+    tx = video.sender_args("jpeg", 5600)
+    assert tx[tx.index("udpsink"):] == ["udpsink", "host=127.0.0.1", "port=5600", "bind-address=127.0.0.1", "sync=false"]

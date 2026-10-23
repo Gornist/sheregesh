@@ -156,7 +156,9 @@ def sender_args(codec, port, width=1280, height=720, fps=30, host="127.0.0.1", p
     if has_element("textoverlay"):
         src += ["textoverlay", "text=SHEREGESH SYNTHETIC TEST PATTERN", "valignment=top", "font-desc=Sans 24", "!"]
     src += ["videoconvert", "!", "video/x-raw,format=I420", "!"]   # rtpjpegpay принимает только 4:2:0/4:2:2
-    return src + encoder_args(codec) + ["!", "udpsink", f"host={host}", f"port={port}", "sync=false"]
+    # bind-address: передающий сокет тоже только на loopback (иначе udpsink привязывается к 0.0.0.0:<случайный>, S2-BOOT).
+    bind = ["bind-address=127.0.0.1"] if host.startswith("127.") else []
+    return src + encoder_args(codec) + ["!", "udpsink", f"host={host}", f"port={port}", *bind, "sync=false"]
 
 
 def receiver_args(codec, port, width, height):
