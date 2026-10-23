@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Пульт под cage от непривилегированного пользователя sheregesh-ui (ADR-0002), связь с эмулятором — 127.0.0.1.
+# SHEREGESH_FIRST_FRAME_MARK — метка первого кадра для пробы S2-2 (tools/probe/s2probe.py boot).
+# Type=notify и WatchdogSec из ADR-0002 пока не реализованы в пульте (S3); здесь — Type=simple.
+[Unit]
+Description=Sheregesh: laboratory console GUI (cage)
+After=systemd-user-sessions.service seatd.service sheregesh-remote-emu.service
+Wants=seatd.service sheregesh-remote-emu.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=sheregesh-ui
+PAMName=login
+TTYPath=/dev/tty1
+RuntimeDirectory=sheregesh-ui
+RuntimeDirectoryMode=0700
+StateDirectory=sheregesh
+Environment=XDG_RUNTIME_DIR=/run/sheregesh-ui
+Environment=QT_QPA_PLATFORM=wayland
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=SHEREGESH_FIRST_FRAME_MARK=/run/sheregesh-ui/first-frame.json
+ExecStart=/usr/bin/cage -s -- /usr/bin/sheregesh-console --peer 127.0.0.1:7700 --data-dir /var/lib/sheregesh
+Restart=always
+RestartSec=2
+IPAddressDeny=any
+IPAddressAllow=localhost
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

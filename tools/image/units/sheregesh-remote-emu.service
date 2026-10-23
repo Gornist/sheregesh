@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Лабораторный эмулятор удалённого блока на той же плате (S2): только 127.0.0.1, только синтетические данные.
+# Сетевой доступ кроме loopback запрещён и средствами systemd (ADR-0007: канал без аутентификации).
+[Unit]
+Description=Sheregesh: laboratory remote unit emulator (loopback only, synthetic data)
+After=local-fs.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+SupplementaryGroups=video
+ExecStart=/usr/bin/sheregesh-remote-emu --host 127.0.0.1 --port 7700 --video --video-port 5600
+Restart=on-failure
+RestartSec=2
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_INET AF_UNIX
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+WantedBy=multi-user.target
