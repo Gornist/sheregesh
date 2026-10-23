@@ -17,6 +17,7 @@ from PySide6.QtTest import QTest
 
 from procs import Agent, free_port
 from sheregesh import video as gst
+from sheregesh_console.qtwait import pump, wait_until
 from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations
 from sheregesh_console.backend import Backend
 
@@ -47,7 +48,7 @@ def obj(u, name):
 
 def show(u, name):
     u.window.setProperty("currentPage", PAGE_NAMES.index(name))
-    QTest.qWait(30)
+    pump(30)
 
 
 def lit_fraction(u, item):
@@ -90,18 +91,20 @@ def test_synthetic_video_displayed_resized_and_survives_tab_switch(make_ui, qtbo
     u = make_ui(local_video=True)
     rx = u.backend.video
     show(u, "video")
-    qtbot.waitUntil(lambda: rx.state == "playing", timeout=8000)
+    assert wait_until(lambda: rx.state == "playing", 8)
     view = obj(u, "videoView")
+    pump(2500)
+    assert rx.fps >= 15, f"частота отображения {rx.fps} к/с при генераторе 30 к/с"
     assert lit_fraction(u, view) > 0.5, "кадр не отображается"
     assert not obj(u, "videoPlaceholder").property("visible")
     frames0 = rx.frames
     for name in ("dashboard", "settings", "video", "logs", "video"):
         show(u, name)
-    qtbot.waitUntil(lambda: rx.frames > frames0 + 10, timeout=5000)
+    assert wait_until(lambda: rx.frames > frames0 + 10, 5)
     assert rx.state == "playing"
     for w, h in ((1280, 800), (1920, 1200)):
         u.window.resize(w, h)
-        QTest.qWait(150)
+        pump(150)
         assert abs(view.width() - (w - 2 * 16 - 4)) < 40, "видео должно следовать за размером окна"
         assert lit_fraction(u, view) > 0.3
 
@@ -115,16 +118,16 @@ def test_no_video_then_recovery(make_ui, qtbot):
     rx = u.backend.video
     rx.configure(codec, port)
     show(u, "video")
-    qtbot.waitUntil(lambda: rx.state == "no-video", timeout=6000)
+    assert wait_until(lambda: rx.state == "no-video", 6)
     assert obj(u, "videoPlaceholder").property("visible")
     assert obj(u, "videoStateText").property("text") == "Нет видео"
     sender = subprocess.Popen(gst.sender_args(codec, port, 640, 360, 25), stdout=subprocess.DEVNULL,
                               stderr=subprocess.DEVNULL, start_new_session=True)
     try:
-        qtbot.waitUntil(lambda: rx.state == "playing", timeout=8000)
+        assert wait_until(lambda: rx.state == "playing", 8)
         sender.terminate()
         sender.wait(5)
-        qtbot.waitUntil(lambda: rx.state == "no-video", timeout=5000)
+        assert wait_until(lambda: rx.state == "no-video", 5)
     finally:
         if sender.poll() is None:
             sender.kill()
@@ -144,7 +147,7 @@ def test_video_failure_does_not_freeze_gui(make_ui, qtbot, command):
     lat = Latency()
     t_end = time.monotonic() + 4
     while time.monotonic() < t_end:
-        QTest.qWait(50)
+        pump(50)
     worst = lat.stop()
     assert worst < 300, f"событийный цикл GUI стоял {worst} мс"
     assert rx.state in ("no-video", "restarting", "waiting")
@@ -172,7 +175,7 @@ def test_logs_page_and_export_without_secrets(make_ui):
     u.backend.log("error", "test", f"diagnostic dump token={canary}")
     u.backend.log("warning", "test", "-----BEGIN OPENSSH " + "PRIVATE KEY-----")
     show(u, "logs")
-    QTest.qWait(600)
+    pump(600)
     assert "записей" in obj(u, "logCount").property("text")
     name = u.backend.exportLogs()
     data = (u.backend.usb_dir / name).read_bytes()
@@ -197,7 +200,7 @@ def test_power_page_states(make_ui):
     assert obj(u, "consolePowerValue").property("text").endswith("%")
     assert obj(u, "remotePowerValue").property("text") == "Нет данных"   # блок эмулируется в процессе
     u.backend.bench.power.set_available(False)
-    QTest.qWait(700)
+    pump(700)
     assert obj(u, "consolePowerValue").property("text") == "Нет данных"
 
 
@@ -211,23 +214,23 @@ def test_gui_with_remote_process_crash_and_restart(make_ui, qtbot):
     agent = Agent(*args)
     try:
         u = make_ui(peer=("127.0.0.1", agent.port))
-        qtbot.waitUntil(lambda: u.backend.status["peerState"] == "connected", timeout=8000)
-        qtbot.waitUntil(lambda: obj(u, "remoteTelemetry").property("visible"), timeout=5000)
+        assert wait_until(lambda: u.backend.status["peerState"] == "connected", 8)
+        assert wait_until(lambda: obj(u, "remoteTelemetry").property("visible"), 5)
         assert obj(u, "peerValue").property("text") == "Связь есть"
         if args:
-            qtbot.waitUntil(lambda: u.backend.video.state == "playing", timeout=10000)
+            assert wait_until(lambda: u.backend.video.state == "playing", 10)
         agent.signal(signal.SIGKILL)
         agent.proc.wait(5)
-        qtbot.waitUntil(lambda: u.backend.status["peerState"] == "lost", timeout=8000)
+        assert wait_until(lambda: u.backend.status["peerState"] == "lost", 8)
         assert obj(u, "peerValue").property("text") == "Нет связи"
-        qtbot.waitUntil(lambda: "не запущен" in obj(u, "peerDetail").property("text"), timeout=8000)
+        assert wait_until(lambda: "не запущен" in obj(u, "peerDetail").property("text"), 8)
         if args:
-            qtbot.waitUntil(lambda: u.backend.video.state == "no-video", timeout=6000)
+            assert wait_until(lambda: u.backend.video.state == "no-video", 6)
         agent2 = Agent(*args, port=agent.port)
         try:
-            qtbot.waitUntil(lambda: u.backend.status["peerState"] == "connected", timeout=12000)
+            assert wait_until(lambda: u.backend.status["peerState"] == "connected", 12)
             if args:
-                qtbot.waitUntil(lambda: u.backend.video.state == "playing", timeout=10000)
+                assert wait_until(lambda: u.backend.video.state == "playing", 10)
         finally:
             agent2.stop()
     finally:

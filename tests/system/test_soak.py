@@ -24,4 +24,7 @@ def test_soak_two_processes_with_faults(qapp, tmp_path):
     assert r["verdict"]["no_orphans"], f"остались процессы GStreamer: {r['leftover_gst']}"
     assert r["verdict"]["recovered"], r["final"]
     assert r["verdict"]["memory"], (r["console_rss_growth_mb"], r["agent_rss_growth_mb"])
-    assert any(s["peer"] == "lost" for s in r["samples"]) or seconds < 30, "неисправности должны были проявиться"
+    if seconds >= 45:            # неисправности цикла действительно проявились и были отработаны
+        ev = r["event_counts"]
+        assert ev.get("PEER-LOST", 0) >= 1 and ev.get("LINK-BAD-MSG", 0) >= 2, ev
+        assert "no-video" in r["states_seen"]["video"] and "playing" in r["states_seen"]["video"], r["states_seen"]

@@ -14,6 +14,7 @@ from PySide6.QtQuick import QQuickItem
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtTest import QTest
 
+from sheregesh_console.qtwait import pump, wait_until
 from sheregesh_console.app import I18N, PAGE_NAMES, QML, Ui, compile_translations, qt_tool
 from sheregesh_console.backend import Backend
 from sheregesh_emulators.demo import DEMO
@@ -46,7 +47,7 @@ def set_appearance(u, **kw):
     form = dict(u.backend.config)
     form.update(kw)
     assert u.backend.applyForm(form, True), u.backend.lastResult
-    QTest.qWait(50)
+    pump(50)
 
 
 def center(item):
@@ -68,12 +69,12 @@ def test_demo_states_are_shown(ui):
     ui.backend.run_until(DEMO.checkpoints["start"])
     assert badge.property("text") == "Норма" and obj(ui, "noActiveLabel").property("visible")
     ui.backend.run_until(DEMO.checkpoints["warning"])
-    QTest.qWait(20)
+    pump(20)
     assert badge.property("text") == "Предупреждение"
     assert not obj(ui, "noActiveLabel").property("visible")
     assert "°C" in obj(ui, "tempValue").property("text")
     ui.backend.run_until(DEMO.checkpoints["recovered"])
-    QTest.qWait(20)
+    pump(20)
     assert badge.property("text") == "Норма"
 
 
@@ -81,7 +82,7 @@ def test_demo_states_are_shown(ui):
 def test_power_without_telemetry_shows_no_data(ui):
     ui.backend.bench.power.set_available(False)
     ui.backend.tick()
-    QTest.qWait(20)
+    pump(20)
     assert obj(ui, "powerValue").property("text") == "Нет данных"
 
 
@@ -152,11 +153,11 @@ def test_settings_apply_with_keyboard_only(ui):
     apply.forceActiveFocus()
     QTest.keyClick(ui.window, Qt.Key_Space)
     dialog = obj(ui, "confirmDialog")
-    QTest.qWait(50)
+    pump(50)
     assert dialog.property("opened") or dialog.property("visible")
     before = ui.backend.revision
     QTest.keyClick(ui.window, Qt.Key_Return)      # кнопка по умолчанию — «ОК»
-    QTest.qWait(50)
+    pump(50)
     assert ui.backend.revision != before
     assert ui.backend.config["screen_timeout_s"] == 330
 
@@ -171,7 +172,7 @@ def test_touch_tap_switches_tab(ui):
     pos = center(obj(ui, "tabSettings"))
     QTest.touchEvent(ui.window, device).press(0, pos, ui.window).commit()
     QTest.touchEvent(ui.window, device).release(0, pos, ui.window).commit()
-    QTest.qWait(20)
+    pump(20)
     assert page(ui) == "settings"
 
 
@@ -202,7 +203,7 @@ def test_theme_and_scale_layout_fits(ui, theme, scale, tmp_path):
     assert ui.backend.uiScale == scale and ui.backend.theme == theme
     for idx in range(len(PAGES)):
         ui.window.setProperty("currentPage", idx)
-        QTest.qWait(30)
+        pump(30)
         assert _overflow(ui) == [], f"страница {idx}: элементы за границей окна"
         ui.grab(tmp_path / f"{theme}-{scale}-{idx}.png")
     assert obj(ui, "stateBadgeText").property("font").pixelSize() >= 20 * scale / 100 - 1

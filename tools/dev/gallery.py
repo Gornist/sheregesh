@@ -57,6 +57,7 @@ def main():
     from PySide6.QtQuickControls2 import QQuickStyle
     from PySide6.QtTest import QTest
 
+    from sheregesh_console.qtwait import pump, wait_until
     from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations
     from sheregesh_console.backend import Backend
 
@@ -71,7 +72,7 @@ def main():
     def wait(pred, timeout):
         end = time.monotonic() + timeout
         while time.monotonic() < end and not pred():
-            QTest.qWait(100)
+            pump(100)
         return pred()
 
     def session(agent_args=()):
@@ -85,11 +86,11 @@ def main():
         form.update(language=lang, theme=theme, ui_scale=scale)
         if (form["language"], form["theme"], form["ui_scale"]) != (ui.backend.language, ui.backend.theme, ui.backend.uiScale):
             assert ui.backend.applyForm(form, True), ui.backend.lastResult
-        QTest.qWait(250)
+        pump(250)
 
     def shot(ui, state, lang, theme, scale, page):
         ui.window.setProperty("currentPage", PAGE_NAMES.index(page))
-        QTest.qWait(350)
+        pump(350)
         name = f"{state}_{lang}_{theme}_{scale}_{PAGE_NAMES.index(page) + 1:02d}-{page}.png"
         ui.grab(out / name)
         index.append({"file": name, "state": state, "lang": lang, "theme": theme, "scale": scale, "page": page,

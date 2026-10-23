@@ -76,6 +76,7 @@ def run(seconds, out_dir=None):
     from PySide6.QtQuickControls2 import QQuickStyle
     from PySide6.QtTest import QTest
 
+    from sheregesh_console.qtwait import pump, wait_until
     from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations
     from sheregesh_console.backend import Backend
 
@@ -100,18 +101,21 @@ def run(seconds, out_dir=None):
     lat_clock.start()
     lat_timer.start()
     samples, crashes, page = [], 0, 0
+    seen = {"peer": set(), "video": set()}
     next_crash = CRASH_EVERY_S
     try:
         while time.monotonic() - t0 < seconds:
-            QTest.qWait(1000)
+            pump(1000)
             el = time.monotonic() - t0
+            seen["peer"].add(ui.backend.status["peerState"])
+            seen["video"].add(ui.backend.video.state)
             page = (page + 1) % len(PAGE_NAMES)
             ui.window.setProperty("currentPage", page)              # нагрузка на все страницы
             if el >= next_crash and el < seconds - 30:
                 os.killpg(agent.pid, signal.SIGKILL)                 # аварийное завершение блока
                 agent.wait()
                 crashes += 1
-                QTest.qWait(3000)
+                pump(3000)
                 agent = start_agent(port, vport, seconds, time.monotonic() - t0)
                 next_crash += CRASH_EVERY_S
             if int(el) % 5 == 0:
@@ -121,14 +125,19 @@ def run(seconds, out_dir=None):
                                  "video": ui.backend.video.state, "events": len(ui.backend.events),
                                  "logs": len(ui.backend.logs), "gst": gst_count()})
                 worst["ms"] = 0
-        QTest.qWait(500)                                            # последние 20 с прошли без неисправностей
+        pump(500)                                            # последние 20 с прошли без неисправностей
         final = {"peer": ui.backend.status["peerState"], "video": ui.backend.video.state}
+        codes = {}
+        for e in ui.backend.bench.monitor.log.events:
+            codes[e.code] = codes.get(e.code, 0) + 1
     finally:
         lat_timer.stop()
         ui.close()
         os.killpg(agent.pid, signal.SIGKILL)
         agent.wait()
-    time.sleep(1.5)
+    end = time.monotonic() + 5                       # дочерним процессам — до 5 с на завершение
+    while gst_count() > gst_before and time.monotonic() < end:
+        time.sleep(0.2)
     leftover = gst_count() - gst_before
     warm = [s for s in samples if s["t"] >= max(30, seconds * 0.2)]
     def growth(key):
@@ -137,7 +146,8 @@ def run(seconds, out_dir=None):
     report = {"seconds": seconds, "agent_crashes": crashes, "samples": samples,
               "console_rss_growth_mb": growth("console_rss_mb"), "agent_rss_growth_mb": growth("agent_rss_mb"),
               "loop_worst_ms": max((s["loop_worst_ms"] for s in samples), default=0),
-              "qml_problems": qml_problems[:20], "final": final, "leftover_gst": leftover}
+              "qml_problems": qml_problems[:20], "final": final, "leftover_gst": leftover,
+              "event_counts": codes, "states_seen": {k: sorted(v) for k, v in seen.items()}}
     limit = max(15.0, 0.10 * (warm[0]["console_rss_mb"] if warm and warm[0]["console_rss_mb"] else 0))
     report["verdict"] = {
         "memory": report["console_rss_growth_mb"] <= limit and report["agent_rss_growth_mb"] <= 15,
