@@ -15,7 +15,9 @@ Item {
         default: return true
         }
     }
-    readonly property var rows: backend.events.filter(accepted)
+    // Активные события всегда сверху, затем остальные — от новых к старым
+    readonly property var rows: backend.events.filter(accepted).filter(function (e) { return e.active })
+                                .concat(backend.events.filter(accepted).filter(function (e) { return !e.active }))
 
     ColumnLayout {
         anchors.fill: parent

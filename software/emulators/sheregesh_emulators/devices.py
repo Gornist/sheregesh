@@ -124,7 +124,7 @@ class ThermalEmulator:
 class PeerEmulator:
     """Состояние удалённого блока: связь, heartbeat раз в секунду, версии. Обмен данными не эмулируется (S1)."""
 
-    def __init__(self, clock, protocol="1.0", software="0.1.0.dev0", hardware="HW-1.0 Rev A (эмулятор)",
+    def __init__(self, clock, protocol="1.0", software="0.1.0.dev0", hardware="HW-1.0 Rev A (emulator)",
                  device_id="remote-emu-01"):
         self.clock, self.protocol, self.software, self.hardware, self.device_id = \
             clock, protocol, software, hardware, device_id

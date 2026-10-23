@@ -70,7 +70,7 @@ Item {
 
         Tile {
             objectName: "tilePowerHistory"
-            title: qsTr("Console charge, last %1 samples").arg(backend.powerHistory.length)
+            title: qsTr("Console charge history (samples: %1)").arg(backend.powerHistory.length)
             Layout.columnSpan: 2
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -87,18 +87,25 @@ Item {
                     ctx.reset()
                     ctx.fillStyle = win.p.panel
                     ctx.fillRect(0, 0, width, height)
-                    function y(v) { return height - v / 100 * height }
+                    var pad = 8 * win.s, left = 48 * win.s
+                    function y(v) { return pad + (100 - v) / 100 * (height - 2 * pad) }
+                    ctx.fillStyle = win.p.muted
+                    ctx.font = Math.round(14 * win.s) + "px sans-serif"
+                    ctx.textBaseline = "middle"
+                    ;[0, 50, 100].forEach(function (v) { ctx.fillText(v + " %", 0, y(v)) })
+                    ctx.strokeStyle = win.p.border
+                    ctx.beginPath(); ctx.moveTo(left, y(0)); ctx.lineTo(width, y(0)); ctx.moveTo(left, y(100)); ctx.lineTo(width, y(100)); ctx.stroke()
                     ctx.lineWidth = 1
                     ctx.strokeStyle = win.p.warning
-                    ctx.beginPath(); ctx.moveTo(0, y(st.batteryWarning)); ctx.lineTo(width, y(st.batteryWarning)); ctx.stroke()
+                    ctx.beginPath(); ctx.moveTo(left, y(st.batteryWarning)); ctx.lineTo(width, y(st.batteryWarning)); ctx.stroke()
                     ctx.strokeStyle = win.p.fault
-                    ctx.beginPath(); ctx.moveTo(0, y(st.batteryCritical)); ctx.lineTo(width, y(st.batteryCritical)); ctx.stroke()
+                    ctx.beginPath(); ctx.moveTo(left, y(st.batteryCritical)); ctx.lineTo(width, y(st.batteryCritical)); ctx.stroke()
                     if (values.length < 2) return
                     ctx.strokeStyle = win.p.accent
                     ctx.lineWidth = 3
                     ctx.beginPath()
                     for (var i = 0; i < values.length; i++) {
-                        var x = i / (values.length - 1) * width
+                        var x = left + i / (values.length - 1) * (width - left)
                         if (i === 0) ctx.moveTo(x, y(values[i])); else ctx.lineTo(x, y(values[i]))
                     }
                     ctx.stroke()

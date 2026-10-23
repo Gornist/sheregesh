@@ -282,72 +282,72 @@
 <context>
     <name>DiagnosticsPage</name>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="26" />
+        <location filename="../qml/DiagnosticsPage.qml" line="28" />
         <source>Show:</source>
         <translation>Показать:</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="31" />
+        <location filename="../qml/DiagnosticsPage.qml" line="33" />
         <source>All events</source>
         <translation>Все события</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="31" />
+        <location filename="../qml/DiagnosticsPage.qml" line="33" />
         <source>Active only</source>
         <translation>Только активные</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="31" />
+        <location filename="../qml/DiagnosticsPage.qml" line="33" />
         <source>Warnings and errors</source>
         <translation>Предупреждения и ошибки</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="31" />
+        <location filename="../qml/DiagnosticsPage.qml" line="33" />
         <source>Errors only</source>
         <translation>Только ошибки</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="38" />
+        <location filename="../qml/DiagnosticsPage.qml" line="40" />
         <source>%1 of %2 events</source>
         <translation>%1 из %2 событий</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="59" />
+        <location filename="../qml/DiagnosticsPage.qml" line="61" />
         <source>No events</source>
         <translation>Событий нет</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="89" />
+        <location filename="../qml/DiagnosticsPage.qml" line="91" />
         <source>%1 s</source>
         <translation>%1 с</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="92" />
+        <location filename="../qml/DiagnosticsPage.qml" line="94" />
         <source>error</source>
         <translation>ошибка</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="92" />
+        <location filename="../qml/DiagnosticsPage.qml" line="94" />
         <source>warning</source>
         <translation>предупреждение</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="92" />
+        <location filename="../qml/DiagnosticsPage.qml" line="94" />
         <source>info</source>
         <translation>сведения</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="97" />
+        <location filename="../qml/DiagnosticsPage.qml" line="99" />
         <source>ACTIVE</source>
         <translation>АКТИВНО</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="97" />
+        <location filename="../qml/DiagnosticsPage.qml" line="99" />
         <source>resolved at %1 s</source>
         <translation>устранено на %1 с</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="97" />
+        <location filename="../qml/DiagnosticsPage.qml" line="99" />
         <source>logged</source>
         <translation>записано</translation>
     </message>
@@ -555,11 +555,11 @@
     </message>
     <message>
         <location filename="../qml/PowerPage.qml" line="73" />
-        <source>Console charge, last %1 samples</source>
-        <translation>Заряд пульта, последние %1 замеров</translation>
+        <source>Console charge history (samples: %1)</source>
+        <translation>История заряда пульта (замеров: %1)</translation>
     </message>
     <message>
-        <location filename="../qml/PowerPage.qml" line="107" />
+        <location filename="../qml/PowerPage.qml" line="114" />
         <source>Display only: the console does not control real power hardware.</source>
         <translation>Только отображение: пульт не управляет реальным оборудованием питания.</translation>
     </message>
@@ -692,27 +692,27 @@
         <translation>не подтверждена</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="174" />
+        <location filename="../qml/SettingsPage.qml" line="175" />
         <source>Apply settings?</source>
         <translation>Применить настройки?</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="178" />
+        <location filename="../qml/SettingsPage.qml" line="179" />
         <source>A new configuration revision will be created and checked by the affected services. If the check fails, the previous revision is restored automatically.</source>
         <translation>Будет создана новая ревизия конфигурации, затронутые службы её проверят. Если проверка не пройдёт, прежняя ревизия восстановится автоматически.</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="198" />
+        <location filename="../qml/SettingsPage.qml" line="200" />
         <source>Restore configuration from USB?</source>
         <translation>Восстановить конфигурацию с USB?</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="204" />
+        <location filename="../qml/SettingsPage.qml" line="206" />
         <source>The backup will be checked for integrity and compatibility, then applied as a new revision.</source>
         <translation>Резервная копия будет проверена на целостность и совместимость, затем применена как новая ревизия.</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="204" />
+        <location filename="../qml/SettingsPage.qml" line="206" />
         <source>No backups found on the USB drive.</source>
         <translation>На USB-накопителе нет резервных копий.</translation>
     </message>

@@ -211,7 +211,7 @@ def test_gui_with_remote_process_crash_and_restart(make_ui, qtbot):
     video_port = free_port(kind=2)
     args = ["--video", "--video-port", str(video_port), "--video-width", "640", "--video-height", "360",
             "--video-fps", "15"] if gst.choose_codec() else []
-    agent = Agent(*args)
+    agent = Agent(*args, *(["--fault", "8:video-off:6"] if args else []))
     try:
         u = make_ui(peer=("127.0.0.1", agent.port))
         assert wait_until(lambda: u.backend.status["peerState"] == "connected", 8)
@@ -219,6 +219,9 @@ def test_gui_with_remote_process_crash_and_restart(make_ui, qtbot):
         assert obj(u, "peerValue").property("text") == "Связь есть"
         if args:
             assert wait_until(lambda: u.backend.video.state == "playing", 10)
+            # неисправность блока video-off (8–14 с): кадров нет → событие VIDEO-LOST, затем снятие
+            assert wait_until(lambda: any(e["code"] == "VIDEO-LOST" for e in u.backend.activeEvents), 15)
+            assert wait_until(lambda: not any(e["code"] == "VIDEO-LOST" for e in u.backend.activeEvents), 15)
         agent.signal(signal.SIGKILL)
         agent.proc.wait(5)
         assert wait_until(lambda: u.backend.status["peerState"] == "lost", 8)

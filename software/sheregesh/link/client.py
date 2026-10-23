@@ -45,7 +45,7 @@ class _State:
 
 class PeerClient:
     def __init__(self, host="127.0.0.1", port=7700, heartbeat_timeout_s=3.0, device_id="console-emu-01",
-                 hardware="HW-1.0 Rev A (эмулятор)"):
+                 hardware="HW-1.0 Rev A (emulator)"):
         if not host.startswith("127."):
             raise ValueError("S1.5: канал только через loopback (127.0.0.0/8)")
         self.host, self.port = host, port

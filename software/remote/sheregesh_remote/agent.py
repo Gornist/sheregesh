@@ -231,7 +231,7 @@ def main(argv=None):
     ap.add_argument("--port", type=int, default=7700, help="0 — выбрать свободный порт")
     ap.add_argument("--protocol", default=PROTOCOL_VERSION)
     ap.add_argument("--software", default=__version__)
-    ap.add_argument("--hardware", default="HW-1.0 Rev A (эмулятор)")
+    ap.add_argument("--hardware", default="HW-1.0 Rev A (emulator)")
     ap.add_argument("--device-id", default="remote-emu-01")
     ap.add_argument("--heartbeat-interval", type=float, default=1.0)
     ap.add_argument("--speed", type=float, default=1.0, help="ускорение модельного времени сценария")

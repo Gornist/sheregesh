@@ -164,7 +164,7 @@ Item {
                         width: 14 * win.s; height: width; radius: width / 2
                         color: modelData.severity === "error" ? win.p.fault : modelData.severity === "warning" ? win.p.warning : win.p.info
                     }
-                    Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: modelData.code; font.bold: true }
+                    Label { objectName: "activeCode"; text: modelData.code; font.bold: true; Layout.preferredWidth: 170 * win.s; Layout.alignment: Qt.AlignTop }
                     Label { text: modelData.text; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 }
             }

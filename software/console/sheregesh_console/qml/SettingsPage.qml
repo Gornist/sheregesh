@@ -161,6 +161,7 @@ Item {
 
     Dialog {
         id: confirm
+        height: 340 * win.s          // явная высота: иначе цикл привязок implicitHeight в Fusion Dialog
         // Без сенсора: фокус на «ОК», Enter подтверждает, Esc отменяет (REQ-P-003)
         onOpened: standardButton(Dialog.Ok) ? standardButton(Dialog.Ok).forceActiveFocus() : standardButton(Dialog.Cancel).forceActiveFocus()
         Shortcut {
@@ -184,6 +185,7 @@ Item {
 
     Dialog {
         id: restoreDialog
+        height: 340 * win.s          // явная высота: иначе цикл привязок implicitHeight в Fusion Dialog
         // Без сенсора: фокус на «ОК», Enter подтверждает, Esc отменяет (REQ-P-003)
         onOpened: standardButton(Dialog.Ok) ? standardButton(Dialog.Ok).forceActiveFocus() : standardButton(Dialog.Cancel).forceActiveFocus()
         Shortcut {

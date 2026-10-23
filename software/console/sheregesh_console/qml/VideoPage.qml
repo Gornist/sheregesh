@@ -42,7 +42,7 @@ Item {
                       .arg(rx.codec !== "" ? rx.codec.toUpperCase() : "—").arg(rx.port > 0 ? rx.port : "—")
                       .arg(rx.fps.toFixed(0)).arg(rx.frames).arg(rx.restarts)
                 color: win.p.muted
-                elide: Text.ElideRight
+                wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
         }

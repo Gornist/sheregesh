@@ -262,6 +262,13 @@ class Backend(QObject):
         else:
             cnt = {"connects": 0, "disconnects": 0, "bad_messages": 0, "ignored_messages": 0, "received": 0,
                    "seq_gaps": 0}
+        # Пропадание видео — диагностическое событие, видно на главной панели и в диагностике
+        expected = (self.client is not None and bool(vid.get("enabled")) and s.peer_state == "connected") or \
+            self._local_sender is not None
+        if self.video.state in ("no-video", "restarting") and expected:
+            self.bench.events.inject("VIDEO-LOST", state=self.video.state)
+        elif self.video.state == "playing" or not expected:
+            self.bench.events.clear("VIDEO-LOST")
         if self.video.state != self._last_video_state:
             self.log("info" if self.video.state in ("playing", "waiting", "off") else "warning", "video",
                      f"state {self.video.state} {self.video.error}".strip())
@@ -289,7 +296,8 @@ class Backend(QObject):
             if e.id > self._last_event_id:
                 self._last_event_id = e.id
                 level = {"error": "error", "warning": "warning"}.get(e.severity, "info")
-                self.log(level, "monitor", f"{e.code} {e.params}" if e.params else e.code)
+                params = " ".join(f"{k}={v}" for k, v in e.params.items())
+                self.log(level, "monitor", f"{e.code} {params}".strip())
 
     @Property(dict, notify=statusChanged)
     def status(self):
@@ -445,7 +453,7 @@ class Backend(QObject):
             self._last_result = "confirmation required"
             self.configChanged.emit()
             return False
-        res = self.store.apply(self._files_from_form(form), self._health_check, reason="GUI: настройки")
+        res = self.store.apply(self._files_from_form(form), self._health_check, reason="GUI settings")
         return self._after_change(res, "applied")
 
     @Slot(result=str)
