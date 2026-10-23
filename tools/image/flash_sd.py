@@ -12,9 +12,10 @@
 3. Если на выбранной карте уже есть система (разделы bootfs/rootfs/BOOT/BOOTCONFIG/SYSTEM/PERSISTENT), запись
    запрещена без --overwrite-existing: исходные карты плат не перезаписываются.
 4. Подтверждение — ввести идентификатор диска ещё раз (или --confirm diskN для запуска без терминала).
-5. diskutil unmountDisk → zstd -dc | sudo dd of=/dev/rdiskN bs=4m (пароль sudo спросит система) → sync.
-6. Проверка: карта читается обратно на длину образа, SHA-256 сравнивается с image_sha256 из build-report.json
-   (или с распакованным образом). Затем diskutil eject.
+5. diskutil unmountDisk → один процесс под sudo (пароль спросят один раз) пишет образ в /dev/rdiskN и, не закрывая
+   устройство, читает его обратно и сравнивает SHA-256 с image_sha256 из build-report.json. Пока устройство открыто,
+   macOS не перечитывает таблицу разделов и не монтирует FAT-разделы: иначе она успевает записать на карту
+   .fseventsd/.Spotlight-V100 и сверка не сходится (найдено в S2-BOOT). Сразу после закрытия — diskutil eject.
 """
 import argparse
 import hashlib
@@ -94,12 +95,59 @@ def candidates():
     return out
 
 
+def write_and_verify(image, target, size, want_sha, zstd="zstd"):
+    """Под root: zstd -dc → target (/dev/rdiskN), fsync, чтение обратно тем же дескриптором, сверка SHA-256."""
+    import os
+    fd = os.open(target, os.O_RDWR)
+    try:
+        z = subprocess.Popen([zstd, "-dc", str(image)], stdout=subprocess.PIPE)
+        written, buf = 0, bytearray()
+        while True:
+            chunk = z.stdout.read(CHUNK - len(buf))
+            if chunk:
+                buf += chunk
+            if len(buf) == CHUNK or (not chunk and buf):
+                os.write(fd, bytes(buf))
+                written += len(buf)
+                buf.clear()
+                if written % (512 * 1024 * 1024) < CHUNK:
+                    print(f"  записано {written / 1e9:.2f} из {size / 1e9:.2f} ГБ", flush=True)
+            if not chunk:
+                break
+        if z.wait() != 0 or written != size:
+            print(f"ОШИБКА записи: zstd={z.returncode}, записано {written} из {size} Б", flush=True)
+            return 2
+        os.fsync(fd)
+        print("Проверка записи: чтение тем же дескриптором …", flush=True)
+        os.lseek(fd, 0, os.SEEK_SET)
+        h, left = hashlib.sha256(), size
+        while left:
+            data = os.read(fd, min(CHUNK, left))
+            if not data:
+                break
+            h.update(data)
+            left -= len(data)
+    finally:
+        os.close(fd)
+    if left or h.hexdigest() != want_sha:
+        print(f"ПРОВЕРКА НЕ ПРОЙДЕНА: на карте {h.hexdigest()}, ожидалось {want_sha} (не прочитано {left} Б)", flush=True)
+        return 1
+    print(f"Проверка OK: {want_sha}", flush=True)
+    return 0
+
+
 def run(cmd, **kw):
     print("$", " ".join(cmd) if isinstance(cmd, list) else cmd, flush=True)
     return subprocess.run(cmd, check=True, **kw)
 
 
 def main(argv=None):
+    if len(sys.argv) == 7 and sys.argv[1] == "--write-as-root":       # внутренний режим, запускается через sudo
+        _, _, image, disk, size, sha, zstd = sys.argv                 # sudo сбрасывает PATH — zstd передаётся путём
+        if not re.fullmatch(r"disk\d+", disk) or not re.fullmatch(r"[0-9a-f]{64}", sha) or \
+                not (Path(zstd).is_absolute() and Path(zstd).name == "zstd" and Path(zstd).is_file()):
+            raise SystemExit("неверные параметры")
+        return write_and_verify(Path(image), f"/dev/r{disk}", int(size), sha, zstd)
     if sys.platform != "darwin":
         raise SystemExit("скрипт для macOS (diskutil); в Linux используйте Raspberry Pi Imager")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -108,7 +156,6 @@ def main(argv=None):
     ap.add_argument("--confirm", help="повтор идентификатора для запуска без терминала")
     ap.add_argument("--overwrite-existing", action="store_true", help="разрешить запись на карту с установленной системой")
     ap.add_argument("--max-gb", type=float, default=256)
-    ap.add_argument("--no-verify", action="store_true", help="не читать карту обратно после записи")
     a = ap.parse_args(argv)
     if not shutil.which("zstd"):
         raise SystemExit("нужен zstd: brew install zstd")
@@ -156,33 +203,18 @@ def main(argv=None):
     if confirm != a.disk:
         raise SystemExit("подтверждение не совпало — запись отменена")
 
+    ref = raw[0] if raw and raw[0] else None
+    if ref is None:
+        print("Нет build-report.json: считаю SHA-256 распакованного образа …", flush=True)
+        ref = subprocess.run(f"zstd -dc '{a.image}' | shasum -a 256", shell=True, capture_output=True, text=True,
+                             check=True).stdout.split()[0]
     run(["diskutil", "unmountDisk", f"/dev/{a.disk}"])
-    run(f"zstd -dc '{a.image}' | sudo dd of=/dev/r{a.disk} bs=4m status=progress", shell=True)
-    run(["sync"])
-    if not a.no_verify:
-        print("Проверка записи: чтение карты обратно …", flush=True)
-        blocks = -(-image_bytes // CHUNK)
-        h = hashlib.sha256()
-        p = subprocess.Popen(["sudo", "dd", f"if=/dev/r{a.disk}", "bs=4m", f"count={blocks}"], stdout=subprocess.PIPE,
-                             stderr=subprocess.DEVNULL)
-        left = image_bytes
-        while left:
-            chunk = p.stdout.read(min(CHUNK, left))
-            if not chunk:
-                break
-            h.update(chunk)
-            left -= len(chunk)
-        p.stdout.close()
-        p.wait()
-        ref = raw[0] if raw and raw[0] else None
-        if ref is None:
-            ref = subprocess.run(f"zstd -dc '{a.image}' | shasum -a 256", shell=True, capture_output=True, text=True,
-                                 check=True).stdout.split()[0]
-        if left or h.hexdigest() != ref:
-            raise SystemExit(f"ПРОВЕРКА НЕ ПРОЙДЕНА: на карте {h.hexdigest()}, ожидалось {ref} (прочитано не всё: {left} Б)")
-        print(f"Проверка OK: {ref}")
-    run(["diskutil", "eject", f"/dev/{a.disk}"])
-    print("Готово: карту можно вынимать.")
+    rc = subprocess.run(["sudo", sys.executable, "-I", str(Path(__file__).resolve()), "--write-as-root",
+                         str(a.image.resolve()), a.disk, str(image_bytes), ref, shutil.which("zstd")]).returncode
+    subprocess.run(["diskutil", "eject", f"/dev/{a.disk}"])     # сразу, чтобы macOS не успела смонтировать FAT
+    if rc:
+        raise SystemExit(f"запись или проверка не удались (код {rc}); карту в плату не ставить")
+    print("Готово: карта проверена и извлечена.")
     return 0
 
 

@@ -1,8 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Запись образа на microSD (tools/image/flash_sd.py): какие диски допускаются и сверка контрольных сумм."""
+import contextlib
 import hashlib
+import io
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -62,6 +66,25 @@ class SumsTest(unittest.TestCase):
             (Path(tmp) / "SHA256SUMS").write_text(f"{'0' * 64}  other.img.zst\n")
             with self.assertRaises(SystemExit):
                 fs.expected_sums(img)
+
+
+
+@unittest.skipUnless(shutil.which("zstd"), "нет zstd")
+class WriteVerifyTest(unittest.TestCase):
+    def test_write_then_read_back_through_same_descriptor(self):
+        """Запись и сверка тем же дескриптором; на обычном файле вместо /dev/rdiskN."""
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = bytes(range(256)) * (3 * 4096 + 2)           # не кратно блоку 4 МиБ, кратно 512
+            src = Path(tmp) / "i.img"
+            src.write_bytes(raw)
+            subprocess.run(["zstd", "-q", str(src), "-o", str(src) + ".zst"], check=True)
+            dev = Path(tmp) / "card"
+            dev.write_bytes(b"\xff" * (len(raw) + 4096))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(fs.write_and_verify(Path(str(src) + ".zst"), str(dev), len(raw),
+                                                     hashlib.sha256(raw).hexdigest()), 0)
+                self.assertEqual(fs.write_and_verify(Path(str(src) + ".zst"), str(dev), len(raw), "0" * 64), 1)
+            self.assertEqual(dev.read_bytes()[:len(raw)], raw)
 
 
 if __name__ == "__main__":

@@ -48,7 +48,8 @@ COMMANDS = {
     "system_state": "systemctl is-system-running 2>&1 || true",
     "failed": "systemctl --failed --no-legend --plain 2>&1",
     "units": "systemctl show -p Id,ActiveState,SubState,NRestarts,ExecMainStatus " + " ".join(f"{u}.service" for u in UNITS),
-    "listen": "ss -Hltnu",
+    # В образе нет ss (iproute2): слушающие сокеты — из /proc/net, вывод «tcp|udp адрес:порт».
+    "listen": "python3 -c \"import socket,struct\nfor f in ('tcp','tcp6','udp','udp6'):\n for l in open('/proc/net/'+f).read().splitlines()[1:]:\n  p=l.split(); a,o=p[1].split(':')\n  if f.startswith('udp') or p[3]=='0A': print(f, (socket.inet_ntoa(struct.pack('<I',int(a,16))) if len(a)==8 else ('[::1]' if a.endswith('01000000') and a.startswith('0'*24) else '[v6]'))+':'+str(int(o,16)))\"",
     "analyze": "systemd-analyze 2>&1 || true",
     "blame": "systemd-analyze blame 2>/dev/null | head -15",
     "journal_sheregesh": "journalctl -b --no-pager -o short-monotonic -u sheregesh-remote-emu -u sheregesh-console -n 120",
@@ -98,7 +99,7 @@ def collect(a):
         kv = dict(x.split("=", 1) for x in block.splitlines() if "=" in x)
         if kv.get("Id"):
             units[kv["Id"].removesuffix(".service")] = kv
-    listen = [x.split()[4] for x in raw.get("listen", "").splitlines() if len(x.split()) >= 5]
+    listen = [x.split()[1] for x in raw.get("listen", "").splitlines() if len(x.split()) == 2]
     emu_ports = [x for x in listen if x.endswith((":7700", ":5600"))]
     root = json.loads(raw.get("findmnt_root") or '{"filesystems":[{}]}')["filesystems"][0]
     thr = raw.get("throttled", "")
@@ -112,7 +113,7 @@ def collect(a):
         "root": root, "throttled": thr, "temp": raw.get("temp"), "system_state": raw.get("system_state"),
         "failed_units": [x.split()[0] for x in raw.get("failed", "").splitlines() if x.strip()],
         "units": {u: f"{v.get('ActiveState')}/{v.get('SubState')} restarts={v.get('NRestarts')}" for u, v in units.items()},
-        "emulator_listen": emu_ports, "uptime_s": float(raw.get("uptime", "0 0").split()[0] or 0),
+        "emulator_listen": emu_ports, "listen": listen, "uptime_s": float(raw.get("uptime", "0 0").split()[0] or 0),
         "boot_time": raw.get("analyze", "").splitlines()[0] if raw.get("analyze") else None,
     }
     s = data["summary"]
@@ -124,6 +125,7 @@ def collect(a):
         "emulator_active": units.get("sheregesh-remote-emu", {}).get("ActiveState") == "active",
         "console_active": units.get("sheregesh-console", {}).get("ActiveState") == "active",
         "loopback_only": bool(emu_ports) and all(p.startswith(("127.", "[::1]")) for p in emu_ports),
+        "lan_only_ssh_dhcp": all(x.startswith(("127.", "[::1]")) or x.endswith((":22", ":68")) for x in listen),
         "no_failed_units": not s["failed_units"],
         "power_ok": thr.strip() == "throttled=0x0",
     }

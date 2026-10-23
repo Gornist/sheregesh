@@ -94,6 +94,7 @@ jobs:
             build/image/${{ matrix.variant }}/*.img.zst
             build/image/${{ matrix.variant }}/*.deb
             build/image/${{ matrix.variant }}/*.packages.tsv
+            build/image/${{ matrix.variant }}/*.sbom.zst
             build/image/${{ matrix.variant }}/verify.json
             build/image/${{ matrix.variant }}/build-report.json
             build/image/${{ matrix.variant }}/SHA256SUMS
