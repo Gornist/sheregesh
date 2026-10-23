@@ -15,8 +15,8 @@ if [[ -n "${SSH_PUBKEY:-}" ]]; then
 fi
 docker volume create sheregesh-image-work >/dev/null
 exec docker run --rm --privileged --platform linux/arm64 \
-  -v "$ROOT":/src:ro -v "$ROOT/build/image":/out -v sheregesh-image-work:/work "${KEYARGS[@]}" \
-  -e CFG="$CFG" -e SOURCE_DATE_EPOCH="$(git -C "$ROOT" log -1 --format=%ct)" \
+  -v "$ROOT":/src:ro -v "$ROOT/build/image":/out -v sheregesh-image-work:/work ${KEYARGS[@]+"${KEYARGS[@]}"} \
+  -e CFG="$CFG" -e SHEREGESH_POST_ONLY="${SHEREGESH_POST_ONLY:-}" -e SOURCE_DATE_EPOCH="$(git -C "$ROOT" log -1 --format=%ct)" \
   debian:trixie bash -euo pipefail -c '
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq && apt-get install -y -qq --no-install-recommends sudo git ca-certificates python3 python3-yaml \
@@ -35,6 +35,6 @@ exec docker run --rm --privileged --platform linux/arm64 \
     sudo -u builder git -C /work/rpi-image-gen checkout -q "$(cat /work/src/os/rpi-image-gen.ref)"
     /work/rpi-image-gen/install_deps.sh >/dev/null
     mkdir -p /out/$CFG && chown builder /out/$CFG
-    sudo -u builder env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" SSH_PUBKEY="${SSH_PUBKEY:-}" \
+    sudo -u builder env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" SSH_PUBKEY="${SSH_PUBKEY:-}" SHEREGESH_POST_ONLY="$SHEREGESH_POST_ONLY" \
       SHEREGESH_WORK=/work OUT=/out/$CFG /work/src/os/build.sh "$CFG"
   '

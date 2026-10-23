@@ -7,7 +7,8 @@
 # Хост: Debian trixie / Ubuntu 24.04 arm64 (нативно), обычный пользователь с sudo только для install_deps.
 # Переменные: SSH_PUBKEY — открытый ключ для dev-варианта (обязателен для него); OUT — каталог результатов
 # (build/image/<конфигурация>); SHEREGESH_WORK — рабочий каталог rpi-image-gen; SOURCE_DATE_EPOCH — время сборки
-# (по умолчанию — время последнего коммита). Продуктивных ключей сборка не использует и не создаёт.
+# (по умолчанию — время последнего коммита); SHEREGESH_POST_ONLY=1 — только проверка и артефакты уже собранного
+# образа (отладка постобработки). Продуктивных ключей сборка не использует и не создаёт.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CFG="${1:-sheregesh-lab-pi4}"
@@ -44,8 +45,10 @@ fi
 
 echo "== сборка образа $CFG (SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH)"
 START=$(date -u +%FT%TZ)
-HOST_BUILD_DIR="$WORK/build" "$RIG/rpi-image-gen" build -S "$ROOT/os" -c "$CFG.yaml" "${EXTRA[@]}" \
-  2>&1 | tee "$OUT/build.log"
+if [[ -z "${SHEREGESH_POST_ONLY:-}" ]]; then
+  HOST_BUILD_DIR="$WORK/build" "$RIG/rpi-image-gen" build -S "$ROOT/os" -c "$CFG.yaml" ${EXTRA[@]+"${EXTRA[@]}"} \
+    2>&1 | tee "$OUT/build.log"
+fi
 NAME="$(python3 -I -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])); print(d["image"]["name"])' \
         "$ROOT/os/config/$CFG.yaml")"
 IMG="$WORK/build/image-$NAME/$NAME.img"
@@ -64,16 +67,25 @@ cp "$PKGS"/sheregesh_*_all.deb "$OUT/"
 # SBOM и манифест rpi-image-gen — дополнительно к собственному манифесту пакетов.
 cp "$DEPLOY"/filesystem-*.sbom.zst "$OUT/$NAME.sbom.zst" 2>/dev/null || true
 (cd "$OUT" && sha256sum "$NAME.img.zst" sheregesh_*_all.deb "$NAME.packages.tsv" verify.json $(ls "$NAME.sbom.zst" 2>/dev/null) > SHA256SUMS)
-python3 -I - "$OUT" "$CFG" "$NAME" "$RIG_REF" "$START" "$VERIFY" "$IMG" <<'EOF'
+python3 -I - "$OUT" "$CFG" "$NAME" "$RIG_REF" "$START" "$VERIFY" "$IMG" "$ROOT" <<'EOF'
 import json, os, platform, subprocess, sys, hashlib
-out, cfg, name, ref, start, verify, img = sys.argv[1:]
-git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()
+out, cfg, name, ref, start, verify, img, root = sys.argv[1:]
+
+
+def sha256(path):                          # потоково: образ 7 ГБ не помещается в память контейнера
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+git = lambda *a: subprocess.run(["git", "-C", root, *a], capture_output=True, text=True).stdout.strip()
 report = {"config": cfg, "image": name, "rpi_image_gen": ref, "commit": git("rev-parse", "HEAD"),
-          "dirty": bool(git("status", "--porcelain", "--untracked-files=no")),
+          "dirty": bool(git("status", "--porcelain", "--untracked-files=no")), "post_only": bool(os.environ.get("SHEREGESH_POST_ONLY")),
           "source_date_epoch": int(os.environ["SOURCE_DATE_EPOCH"]), "started_utc": start,
           "host": f"{platform.system()} {platform.release()} {platform.machine()}",
           "image_bytes": os.path.getsize(img),
-          "image_sha256": hashlib.sha256(open(img, "rb").read()).hexdigest(),
+          "image_sha256": sha256(img),
           "verify_exit": int(verify), "verify": json.load(open(os.path.join(out, "verify.json"))),
           "note": "Сборка образа не равна загрузке Pi: tryboot, A/B-откат, дисплей и производительность — NOT TESTED."}
 json.dump(report, open(os.path.join(out, "build-report.json"), "w"), ensure_ascii=False, indent=1)
