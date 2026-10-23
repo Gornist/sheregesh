@@ -131,7 +131,7 @@ ApplicationWindow {
             spacing: 32 * win.s
             Label {
                 objectName: "footerTime"
-                text: qsTr("Model time %1 s").arg(st.t.toFixed(1))
+                text: qsTr("Model time %1\u00a0s").arg(st.t.toFixed(1))
                 color: p.muted
             }
             Label {

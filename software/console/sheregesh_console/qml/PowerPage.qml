@@ -31,7 +31,7 @@ Item {
             KeyNavigation.right: remoteTile
             Label {
                 objectName: "consolePowerValue"
-                text: st.powerAvailable ? qsTr("%1 %").arg(st.powerPercent.toFixed(0)) : qsTr("No data")
+                text: st.powerAvailable ? qsTr("%1\u00a0%").arg(st.powerPercent.toFixed(0)) : qsTr("No data")
                 font.pixelSize: page.big
                 font.bold: true
             }
@@ -40,7 +40,7 @@ Item {
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: st.powerAvailable; text: st.lowBattery ? qsTr("Low battery signal: yes") : qsTr("Low battery signal: no"); color: st.lowBattery ? win.p.fault : win.p.muted }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: st.powerAvailable; text: st.undervoltage ? qsTr("Undervoltage: yes") : qsTr("Undervoltage: no"); color: st.undervoltage ? win.p.fault : win.p.muted }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: !st.powerAvailable; text: qsTr("Power telemetry unavailable: values are not shown."); color: win.p.muted }
-            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: qsTr("Thresholds: warning %1 %, critical %2 %").arg(st.batteryWarning).arg(st.batteryCritical); color: win.p.muted }
+            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: qsTr("Thresholds: warning %1\u00a0%, critical %2\u00a0%").arg(st.batteryWarning).arg(st.batteryCritical); color: win.p.muted }
         }
 
         Tile {
@@ -54,7 +54,7 @@ Item {
             KeyNavigation.left: consoleTile
             Label {
                 objectName: "remotePowerValue"
-                text: st.remotePowerPercent >= 0 ? qsTr("%1 %").arg(st.remotePowerPercent.toFixed(0)) : qsTr("No data")
+                text: st.remotePowerPercent >= 0 ? qsTr("%1\u00a0%").arg(st.remotePowerPercent.toFixed(0)) : qsTr("No data")
                 font.pixelSize: page.big
                 font.bold: true
             }

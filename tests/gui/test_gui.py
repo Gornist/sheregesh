@@ -4,6 +4,7 @@
 
 Проверяются базовые состояния интерфейса. Работа на эталонном дисплее Waveshare (L4) здесь НЕ проверяется.
 """
+import re
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
@@ -113,6 +114,15 @@ def test_translation_complete_for_all_qml_strings(tmp_path):
     unfinished = [m.find("source").text for m in ET.parse(ts).iter("message")
                   if m.find("translation").get("type") == "unfinished" or not (m.find("translation").text or "").strip()]
     assert unfinished == []
+
+
+@pytest.mark.test_id("TEST-UI-001")
+def test_number_and_unit_never_split_across_lines():
+    """Число и единица связаны неразрывным пробелом (дефект S1.5: «с» в плитке связи при 150 % на отдельной строке)."""
+    unit = re.compile(r"%\d (s|ms|с|мс|°C|fps|к/с|%)(?=[^\w%]|$)")
+    texts = [e.text or "" for e in ET.parse(I18N / "sheregesh_ru.ts").iter() if e.tag in ("source", "translation")]
+    texts += [m for f in QML.glob("*.qml") for m in re.findall(r'qsTr\("((?:[^"\\]|\\.)*)"\)', f.read_text())]
+    assert [t for t in texts if unit.search(t)] == []
 
 
 # ---------------- ввод: клавиатура, мышь, сенсор (REQ-P-003, автоматическая часть) ----------------

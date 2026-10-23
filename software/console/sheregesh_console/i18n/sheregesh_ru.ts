@@ -96,8 +96,8 @@
     </message>
     <message>
         <location filename="../qml/AboutPage.qml" line="77" />
-        <source>%1 s</source>
-        <translation>%1 с</translation>
+        <source>%1&#160;s</source>
+        <translation>%1&#160;с</translation>
     </message>
     <message>
         <location filename="../qml/AboutPage.qml" line="83" />
@@ -139,8 +139,8 @@
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="58" />
-        <source>%1 %</source>
-        <translation>%1 %</translation>
+        <source>%1&#160;%</source>
+        <translation>%1&#160;%</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="58" />
@@ -225,8 +225,8 @@
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="105" />
-        <source>SoC %1 °C · power %2 % · uptime %3 s</source>
-        <translation>SoC %1 °C · питание %2 % · работает %3 с</translation>
+        <source>SoC %1&#160;°C · power %2&#160;% · uptime %3&#160;s</source>
+        <translation>SoC %1&#160;°C · питание %2&#160;% · работает %3&#160;с</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="108" />
@@ -235,8 +235,8 @@
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="110" />
-        <source>Last heartbeat %1 s ago</source>
-        <translation>Последний heartbeat %1 с назад</translation>
+        <source>Last heartbeat %1&#160;s ago</source>
+        <translation>Последний heartbeat %1&#160;с назад</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="110" />
@@ -250,23 +250,23 @@
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="127" />
-        <source>SoC %1 °C</source>
-        <translation>SoC %1 °C</translation>
+        <source>SoC %1&#160;°C</source>
+        <translation>SoC %1&#160;°C</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="131" />
-        <source>Board %1 °C</source>
-        <translation>Плата %1 °C</translation>
+        <source>Board %1&#160;°C</source>
+        <translation>Плата %1&#160;°C</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="134" />
-        <source>Fan %1 % · %2 rpm</source>
-        <translation>Вентилятор %1 % · %2 об/мин</translation>
+        <source>Fan %1&#160;% · %2 rpm</source>
+        <translation>Вентилятор %1&#160;% · %2 об/мин</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="134" />
-        <source>Fan %1 % · no speed signal</source>
-        <translation>Вентилятор %1 % · нет сигнала оборотов</translation>
+        <source>Fan %1&#160;% · no speed signal</source>
+        <translation>Вентилятор %1&#160;% · нет сигнала оборотов</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="143" />
@@ -318,8 +318,8 @@
     </message>
     <message>
         <location filename="../qml/DiagnosticsPage.qml" line="91" />
-        <source>%1 s</source>
-        <translation>%1 с</translation>
+        <source>%1&#160;s</source>
+        <translation>%1&#160;с</translation>
     </message>
     <message>
         <location filename="../qml/DiagnosticsPage.qml" line="94" />
@@ -343,8 +343,8 @@
     </message>
     <message>
         <location filename="../qml/DiagnosticsPage.qml" line="99" />
-        <source>resolved at %1 s</source>
-        <translation>устранено на %1 с</translation>
+        <source>resolved at %1&#160;s</source>
+        <translation>устранено на %1&#160;с</translation>
     </message>
     <message>
         <location filename="../qml/DiagnosticsPage.qml" line="99" />
@@ -464,8 +464,8 @@
     </message>
     <message>
         <location filename="../qml/Main.qml" line="134" />
-        <source>Model time %1 s</source>
-        <translation>Модельное время %1 с</translation>
+        <source>Model time %1&#160;s</source>
+        <translation>Модельное время %1&#160;с</translation>
     </message>
     <message>
         <location filename="../qml/Main.qml" line="139" />
@@ -488,8 +488,8 @@
     <message>
         <location filename="../qml/PowerPage.qml" line="34" />
         <location filename="../qml/PowerPage.qml" line="57" />
-        <source>%1 %</source>
-        <translation>%1 %</translation>
+        <source>%1&#160;%</source>
+        <translation>%1&#160;%</translation>
     </message>
     <message>
         <location filename="../qml/PowerPage.qml" line="34" />
@@ -530,8 +530,8 @@
     </message>
     <message>
         <location filename="../qml/PowerPage.qml" line="43" />
-        <source>Thresholds: warning %1 %, critical %2 %</source>
-        <translation>Пороги: предупреждение %1 %, критический %2 %</translation>
+        <source>Thresholds: warning %1&#160;%, critical %2&#160;%</source>
+        <translation>Пороги: предупреждение %1&#160;%, критический %2&#160;%</translation>
     </message>
     <message>
         <location filename="../qml/PowerPage.qml" line="49" />
@@ -751,8 +751,8 @@
     </message>
     <message>
         <location filename="../qml/VideoPage.qml" line="41" />
-        <source>Synthetic test pattern · %1 · port %2 · %3 fps · frames %4 · decoder restarts %5</source>
-        <translation>Синтетическая испытательная таблица · %1 · порт %2 · %3 к/с · кадров %4 · перезапусков декодера %5</translation>
+        <source>Synthetic test pattern · %1 · port %2 · %3&#160;fps · frames %4 · decoder restarts %5</source>
+        <translation>Синтетическая испытательная таблица · %1 · порт %2 · %3&#160;к/с · кадров %4 · перезапусков декодера %5</translation>
     </message>
     <message>
         <location filename="../qml/VideoPage.qml" line="79" />
