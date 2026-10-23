@@ -10,7 +10,7 @@ import yaml
 from sheregesh import PROTOCOL_VERSION
 from sheregesh.config import console_defaults
 from sheregesh.faults import CATALOG, render
-from sheregesh.protocol import compatible
+from sheregesh.protocol import negotiate
 from sheregesh_emulators import Bench, Scenario, Step
 
 DEFAULTS = console_defaults()
@@ -176,13 +176,27 @@ def test_silent_peer_detected_by_heartbeat_timeout(bench):
     assert t is not None and LINK["heartbeat_timeout_s"] <= t - t0 <= 5
 
 
+MATRIX = {"protocol": {"supported": {1: {"min_peer_minor": 1}}}, "software": {"rejected": ["0.0.9"]},
+          "hardware": {"accepted_prefixes": ["HW-1.0"]}}
+
+
 @pytest.mark.test_id("TEST-SW-003")
-@pytest.mark.parametrize("local,peer,ok", [
-    ("1.0", "1.0", True), ("1.0", "1.1", True), ("1.0", "1.9", True), ("1.2", "1.0", True),
-    ("1.0", "2.0", False), ("2.0", "1.0", False), ("1.0", "0.9", False), ("1.0", "10.0", False),
-    ("1.0", "", False), ("1.0", None, False), ("1.0", "1", False), ("1.0", "1.0.0", False), ("1.0", "a.b", False)])
-def test_protocol_compatibility_rule(local, peer, ok):
-    assert compatible(local, peer) is ok
+@pytest.mark.parametrize("local,peer,sw,hw,ok,session,reason", [
+    ("1.0", "1.1", None, None, True, "1.0", "ok"), ("1.2", "1.1", None, None, True, "1.1", "ok"),
+    ("1.1", "1.5", None, None, True, "1.1", "ok"), ("1.3", "1.3", "0.1.0", "HW-1.0 Rev A", True, "1.3", "ok"),
+    ("1.1", "1.0", None, None, False, None, "minor"), ("1.0", "2.1", None, None, False, None, "major"),
+    ("2.1", "2.1", None, None, False, None, "major"), ("1.1", "0.9", None, None, False, None, "major"),
+    ("1.1", "1.1", "0.0.9", None, False, None, "software"), ("1.1", "1.1", None, "HW-2.0", False, None, "hardware"),
+    ("1.1", "", None, None, False, None, "bad-version"), ("1.1", None, None, None, False, None, "bad-version"),
+    ("1.1", "1", None, None, False, None, "bad-version"), ("1.1", "1.1.0", None, None, False, None, "bad-version"),
+    ("1.1", "a.b", None, None, False, None, "bad-version"), ("x", "1.1", None, None, False, None, "bad-version")])
+def test_protocol_negotiation_rule(local, peer, sw, hw, ok, session, reason):
+    n = negotiate(local, peer, sw, hw, matrix=MATRIX)
+    assert (n.compatible, n.session, n.reason) == (ok, session, reason)
+
+
+def test_shipped_matrix_accepts_current_protocol():
+    assert negotiate(PROTOCOL_VERSION, PROTOCOL_VERSION, "0.1.0.dev0", "HW-1.0 Rev A (эмулятор)").compatible
 
 
 @pytest.mark.test_id("TEST-SW-003")
@@ -191,7 +205,7 @@ def test_incompatible_peer_raises_error(bench):
     snap = run(bench, 1)
     assert snap.peer_state == "incompatible" and "PEER-INCOMPAT" in codes(snap)
     ev = next(e for e in snap.active if e.code == "PEER-INCOMPAT")
-    assert ev.params == {"peer": "2.0", "local": PROTOCOL_VERSION}
+    assert ev.params == {"peer": "2.0", "local": PROTOCOL_VERSION, "reason": "major"}
 
 
 # ---------------- индикатор и каталог (REQ-UI-003/004, логика) ----------------
@@ -218,7 +232,7 @@ def test_every_catalog_entry_has_ru_en_text_and_action(code):
     for lang in ("ru", "en"):
         assert f.text[lang].strip() and f.action[lang].strip()
     params = {"sensor": "soc", "value": 71.2, "limit": 70, "rpm": 5000, "duty": 40, "percent": 15, "source": "battery",
-              "timeout": 3, "peer": "2.0", "local": "1.0", "detail": "x", "revision": "r000002", "active": "r000001", "reason": "x"}
+              "timeout": 3, "peer": "2.0", "local": "1.0", "reason": "major", "detail": "x", "revision": "r000002", "active": "r000001", "reason": "x"}
     for lang in ("ru", "en"):
         text, action = render(code, lang, params)
         assert "{" not in text and "{" not in action

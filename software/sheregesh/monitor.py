@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from . import PROTOCOL_VERSION
 from .faults import CATALOG, ERROR, SEVERITY_ORDER, WARNING
 from .hal import PeerStatus, PowerReading
-from .protocol import compatible
+from .protocol import negotiate
 
 HYSTERESIS_C = 2.0
 FAN_MIN, FAN_MAX = 30.0, 100.0
@@ -179,8 +179,9 @@ class SystemMonitor:
             self.log.raise_(t, "PEER-LOST", timeout=timeout)
             return "lost"
         self.log.resolve(t, "PEER-LOST")
-        if not compatible(PROTOCOL_VERSION, st.protocol):
-            self.log.raise_(t, "PEER-INCOMPAT", peer=st.protocol, local=PROTOCOL_VERSION)
+        n = negotiate(PROTOCOL_VERSION, st.protocol, st.software, st.hardware)
+        if not n.compatible:
+            self.log.raise_(t, "PEER-INCOMPAT", peer=st.protocol, local=PROTOCOL_VERSION, reason=n.reason)
             return "incompatible"
         self.log.resolve(t, "PEER-INCOMPAT")
         return "connected"

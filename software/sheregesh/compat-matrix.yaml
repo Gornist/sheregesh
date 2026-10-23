@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Матрица совместимости HW/SW (REQ-SYS-008, REQ-SW-003; правило — CHG-012, ADR-0007).
+# Устанавливается вместе с пакетом; обе стороны используют одну и ту же матрицу своей версии.
+protocol:
+  # Поддерживаемые MAJOR и минимальный MINOR второй стороны для каждого.
+  supported:
+    1: {min_peer_minor: 0}
+software:
+  # Версии ПО второй стороны с известными дефектами обмена: соединение отклоняется.
+  rejected: []
+hardware:
+  # Допустимые HW-версии второй стороны (префикс). Эмулятор сообщает «HW-1.0 Rev A (эмулятор)».
+  accepted_prefixes: ["HW-1.0"]
