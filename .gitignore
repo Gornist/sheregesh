@@ -6,3 +6,6 @@ reports/
 .pytest_cache/
 software/console/sheregesh_console/i18n/*.qm
 .venv/
+
+# Образ Pi 4 (S2-1): собранный пакет для слоя
+/os/layer/sheregesh-lab.d/pkgs/

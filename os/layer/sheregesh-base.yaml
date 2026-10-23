@@ -1,0 +1,17 @@
+# METABEGIN
+# X-Env-Layer-Name: sheregesh-base
+# X-Env-Layer-Category: suite
+# X-Env-Layer-Desc: Raspberry Pi OS trixie arm64 base for Sheregesh: Debian trixie
+#  plus Raspberry Pi archive, without SSH, Wi-Fi and Bluetooth stacks (ADR-0002).
+#  Time: systemd-timesyncd clock file (fake-hwclock is masked on trixie;
+#  RTC pending AUD-012).
+# X-Env-Layer-Version: 0.1.0
+# X-Env-Layer-Requires: debian-trixie-arm64-multi,
+#  rpi-debian-trixie,
+#  rpi-misc-utils,
+#  rpi-essential-base,
+#  rpi-misc-skel,
+#  systemd-net-min,
+#  systemd-timesyncd
+# METAEND
+---

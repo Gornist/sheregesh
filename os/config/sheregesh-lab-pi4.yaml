@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Лабораторный образ «Шерегеш» для Raspberry Pi 4B (S2-1, ADR-0002/0006), строгий вариант:
+# без SSH и паролей, статический адрес стенда ADR-0007 (192.168.77.1/24, без шлюза).
+# На плате работают эмулятор удалённого блока и пульт; канал SHRG-LAB — только 127.0.0.1.
+device:
+  layer: rpi4
+  hostname: sheregesh-lab
+  user1: sheregesh-ui
+
+image:
+  # ADR-0006: autoboot(FAT 32M) | boot-A/B (FAT) | root-A/B (ext4, ro) | data (ext4); выбор слота — tryboot.
+  layer: image-rota
+  rootfs_type: ext4
+  boot_part_size: 256M
+  system_part_size: 2560M
+  data_part_size: 1G
+  name: sheregesh-lab-pi4
+
+layer:
+  base: sheregesh-base
+  app: sheregesh-lab
+  net: sheregesh-net-lab

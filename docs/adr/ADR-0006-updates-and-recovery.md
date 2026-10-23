@@ -45,3 +45,11 @@
 ## Отклонённые варианты
 - **U-Boot + RAUC / SWUpdate / Mender:** лишний загрузчик при наличии штатного tryboot; Mender ориентирован на сервер.
 - **OSTree:** другая модель обновления, хуже сочетается с Raspberry Pi OS и требованием раздельных слотов.
+
+## Реализация S2-1 (2026-10-23)
+
+Разметка реализована встроенным слоем `image-rota` из `rpi-image-gen` (ext4, GPT, выравнивание 8 МиБ): `bootconfig` (FAT 32 МиБ, `autoboot.txt` с `tryboot_a_b=1`) | `boot_a`/`boot_b` (FAT 256 МиБ) | `system_a`/`system_b` (ext4 2560 МиБ, монтируется только для чтения) | `persistent` (ext4 ≥ 1 ГиБ). Слоты A и B побайтово одинаковы; выбор слота — штатный tryboot (`rpi-slot-tryboot`), U-Boot не используется. Структуру проверяет `tools/image/verify_image.py`.
+
+Отличия в деталях:
+- раздел data называется `persistent` и монтируется в `/persistent`; `/home` и `/var/log/journal` — bind из него, `/var` — свой для каждого слота (защита отката от состояния новой версии);
+- RAUC, `sheregesh-health.service` и `mark-good` в образ S2-1 не входят — это проба S2-5 и этап S5. Слой `image-rota` предлагает собственный формат обновлений; выбор между ним и RAUC — по результату S2-5.

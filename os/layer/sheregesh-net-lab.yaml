@@ -1,0 +1,16 @@
+# METABEGIN
+# X-Env-Layer-Name: sheregesh-net-lab
+# X-Env-Layer-Category: net
+# X-Env-Layer-Desc: Static address of the isolated lab stand (ADR-0007):
+#  console 192.168.77.1/24, no gateway, no DNS.
+# X-Env-Layer-Version: 0.1.0
+# X-Env-Layer-Requires: systemd-net-min
+# X-Env-Layer-Provides: sheregesh-net
+# METAEND
+---
+mmdebstrap:
+  customize-hooks:
+    - |-
+      mkdir -p $1/etc/systemd/network
+      printf '[Match]\nName=eth0\n\n[Network]\nAddress=192.168.77.1/24\nLinkLocalAddressing=no\nIPv6AcceptRA=no\n' \
+        > $1/etc/systemd/network/20-sheregesh-lab.network

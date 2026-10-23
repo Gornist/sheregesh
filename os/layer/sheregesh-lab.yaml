@@ -1,0 +1,50 @@
+# METABEGIN
+# X-Env-Layer-Name: sheregesh-lab
+# X-Env-Layer-Category: app
+# X-Env-Layer-Desc: Sheregesh laboratory console: the sheregesh .deb (console GUI
+#  under cage and the remote unit emulator, loopback only, synthetic data),
+#  Wi-Fi and Bluetooth disabled in config.txt, package manifest inside the image.
+# X-Env-Layer-Version: 0.1.0
+# X-Env-Layer-Requires: sheregesh-base,device-user-admin,rpi-boot-firmware
+# X-Env-Layer-RequiresProvider: sheregesh-net
+#
+# X-Env-VarPrefix: sheregesh
+#
+# X-Env-Var-assetdir: ${DIRECTORY}/sheregesh-lab.d
+# X-Env-Var-assetdir-Desc: Layer assets; pkgs/ holds the sheregesh .deb built by
+#  tools/image/build_deb.py before the image build.
+# X-Env-Var-assetdir-Required: n
+# X-Env-Var-assetdir-Valid: dir
+# X-Env-Var-assetdir-Set: y
+# METAEND
+---
+mmdebstrap:
+  packages:
+    - ca-certificates
+  customize-hooks:
+    - |-
+      set -eu
+      ls "$IGconf_sheregesh_assetdir"/pkgs/sheregesh_*_all.deb >/dev/null
+      mkdir -p $1/tmp/sheregesh-debs
+      cp "$IGconf_sheregesh_assetdir"/pkgs/sheregesh_*_all.deb $1/tmp/sheregesh-debs/
+      chroot $1 sh -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/sheregesh-debs/*.deb'
+    - |-
+      set -eu
+      # ADR-0002: версия 1.0 работает только по проводу — Wi-Fi и Bluetooth выключены оверлеями.
+      printf '\n[all]\n# Sheregesh (ADR-0002): wired only\ndtoverlay=disable-wifi\ndtoverlay=disable-bt\n' \
+        >> $1/boot/firmware/config.txt
+    - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console
+    - |-
+      set -eu
+      # Манифест (ADR-0002, DOC-006): пакет, версия, архитектура, SHA-256 .deb из индекса репозитория.
+      # Собственный пакет помечается local и хешируется отдельно в отчёте сборки.
+      mkdir -p $1/usr/share/sheregesh
+      # Формат dpkg-query -W по умолчанию: «пакет[:арх]<TAB>версия» (без шаблона с фигурными скобками).
+      chroot $1 dpkg-query -W | LC_ALL=C sort > $1/tmp/pkgs.tsv
+      while IFS="$(printf '\t')" read -r p v; do
+        h=$(chroot $1 apt-cache show "$p=$v" 2>/dev/null | awk '/^SHA256:/{print $2; exit}')
+        printf '%s\t%s\t%s\n' "$p" "$v" "${h:-local}"
+      done < $1/tmp/pkgs.tsv > $1/usr/share/sheregesh/image-packages.tsv
+      rm -f $1/tmp/pkgs.tsv
+  cleanup-hooks:
+    - rm -rf $1/tmp/sheregesh-debs

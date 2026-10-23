@@ -35,3 +35,15 @@
 - **Yocto/Buildroot:** лучшая воспроизводимость, но это не Raspberry Pi OS (противоречит P-001/R-001) и слишком дорого в сопровождении.
 - **Полный рабочий стол (labwc и панель):** дольше загрузка, лишние функции, сложнее изоляция.
 - **Контейнеры (Docker) на устройстве:** лишний слой и расход памяти; A/B решает задачу атомарности обновлений.
+
+## Реализация S2-1 (2026-10-23)
+
+Сборка — `os/build.sh` (`rpi-image-gen`, коммит закреплён в `os/rpi-image-gen.ref`), CI — `.github/workflows/image.yml` на нативном `ubuntu-24.04-arm`. Решения ADR не меняются; отклонения в деталях:
+
+- **База.** Состав, равный Raspberry Pi OS Lite trixie arm64 (Debian trixie + архив Raspberry Pi, слои `rpi-*`), собирается слоем `sheregesh-base` без `openssh-server`, `iwd` и беспроводных регуляторных пакетов: SSH по умолчанию отсутствует (AUD-028), Wi-Fi и Bluetooth — `dtoverlay=disable-wifi`/`disable-bt`.
+- **Время.** В trixie стек Raspberry Pi OS маскирует `fake-hwclock`. Ту же функцию — время не раньше последнего сохранённого — выполняет файл часов `systemd-timesyncd` в `/var/lib/systemd/timesync/clock` (засевается `SOURCE_DATE_EPOCH`). Без сети NTP недоступен; RTC — по решению AUD-012.
+- **Службы.** `sheregesh-console.service` (cage, пользователь `sheregesh-ui`) и `sheregesh-remote-emu.service` (лабораторный эмулятор, `DynamicUser`, `IPAddressAllow=localhost`). `Type=notify` и `WatchdogSec` пока не реализованы в пульте — `Type=simple` до S3.
+- **Пакет.** `sheregesh_*_all.deb` собирается детерминированно `tools/image/build_deb.py` (без dpkg-deb), переводы `.qm` — в пакете.
+- **PySide6.** В trixie — PySide6 6.8.2, а разработка и CI идут на 6.12. В контейнере trixie arm64 пульт на 6.8.2 отрисовал все экраны демонстрационного сценария без ошибок QML (offscreen). Подтверждение под cage на Pi — проба S2-3.
+- **Dev-вариант** (`sheregesh-lab-dev-pi4`) — для проб в локальной сети владельца: DHCP и SSH только по открытому ключу, root и пароли заблокированы, sudo нет. Не для релизов.
+- **Воспроизводимость.** Манифест в образе (`/usr/share/sheregesh/image-packages.tsv`: пакет, версия, SHA-256 из индекса). Архив использованных `.deb` с каждым релизом (REL-010) пока не реализован: archive.raspberrypi.com не хранит старые версии, поэтому повторная сборка через время может дать другие версии. Это открытый пункт до первого релиза.

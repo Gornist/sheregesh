@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Dev-вариант лабораторного образа для проб S2 на плате в локальной сети владельца:
+# DHCP вместо адреса стенда и SSH только по открытому ключу (ADR-0002: «SSH только в dev-режиме по ключу»).
+# Ключ передаётся при сборке: -- IGconf_ssh_pubkey_user1=/путь/к/ключу.pub (в репозиторий не попадает).
+# Эмулятор и канал SHRG-LAB по-прежнему слушают только 127.0.0.1.
+include:
+  file: sheregesh-lab-pi4.yaml
+
+device:
+  hostname: sheregesh-dev
+
+image:
+  name: sheregesh-lab-dev-pi4
+
+layer:
+  net: sheregesh-dev-access
