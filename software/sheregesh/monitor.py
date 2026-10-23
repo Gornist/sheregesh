@@ -76,7 +76,7 @@ class Snapshot:
     fan_rpm: int | None
     fan_nominal: int
     peer: PeerStatus
-    peer_state: str              # connected | lost | incompatible
+    peer_state: str              # connecting | connected | lost | incompatible
     indicator: str               # boot | normal | warning | fault
     overall: str                 # normal | warning | fault
     active: list = field(default_factory=list)
@@ -92,6 +92,8 @@ class SystemMonitor:
         self._last_source = None
         self._shutdown = None
         self._duty = FAN_MAX
+        self._t_start = clock()
+        self._peer_seen = False
         self.indicator.set_state("boot")
 
     def set_thresholds(self, diagnostics: dict, link: dict):
@@ -173,12 +175,30 @@ class SystemMonitor:
             self._request_shutdown(t, "PWR-LOW-SIGNAL")
 
     def _peer(self, t, st: PeerStatus):
+        drain = getattr(self.peer, "drain_link_events", None)
+        for code, params in (drain() if drain else []):
+            self.log.raise_(t, code, **params)
         timeout = self.link["heartbeat_timeout_s"]
-        alive = st.link_up and st.last_heartbeat is not None and t - st.last_heartbeat <= timeout
+        age = None if st.last_heartbeat is None else t - st.last_heartbeat
+        alive = st.link_up and age is not None and age <= timeout
+        if alive:
+            self._peer_seen = True
+        elif not self._peer_seen and t - self._t_start <= timeout:
+            return "connecting"            # первый таймаут после старта: связь ещё устанавливается
         if not alive:
+            self.log.resolve(t, "PEER-SLOW")
             self.log.raise_(t, "PEER-LOST", timeout=timeout)
             return "lost"
         self.log.resolve(t, "PEER-LOST")
+        if age > timeout / 2:
+            self.log.raise_(t, "PEER-SLOW", age=age, timeout=timeout)
+        elif age < timeout / 3:
+            self.log.resolve(t, "PEER-SLOW")
+        remote = (st.telemetry or {}).get("active_events") or []
+        if remote:
+            self.log.raise_(t, "REMOTE-ALERT", codes=", ".join(remote))
+        else:
+            self.log.resolve(t, "REMOTE-ALERT")
         n = negotiate(PROTOCOL_VERSION, st.protocol, st.software, st.hardware)
         if not n.compatible:
             self.log.raise_(t, "PEER-INCOMPAT", peer=st.protocol, local=PROTOCOL_VERSION, reason=n.reason)

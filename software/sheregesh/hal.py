@@ -24,6 +24,9 @@ class PeerStatus:
     software: str | None
     hardware: str | None
     device_id: str | None
+    detail: str = "ok"          # refused | timeout | closed | heartbeat | bad-messages | handshake | <причина несовместимости>
+    telemetry: dict | None = None   # синтетическое состояние второй стороны (температуры, питание, видео, события)
+    session: str | None = None      # согласованная версия сессии MAJOR.MINOR
 
 
 class PowerProvider(Protocol):

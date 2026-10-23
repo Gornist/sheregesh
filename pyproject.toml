@@ -15,6 +15,6 @@ test = ["pytest>=8", "pytest-qt>=4"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/system", "tests/gui", "tests/tools"]
-pythonpath = ["software", "software/emulators", "software/console"]
+pythonpath = ["software", "software/emulators", "software/console", "software/remote", "tests/system"]
 markers = ["test_id(id): связь автотеста с TEST-ID реестра требований"]
 qt_api = "pyside6"

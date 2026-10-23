@@ -14,12 +14,13 @@ TICK_S = 0.5
 class Bench:
     """Эмулированный стенд пульта: все провайдеры + монитор на модельных часах."""
 
-    def __init__(self, diagnostics: dict, link: dict):
+    def __init__(self, diagnostics: dict, link: dict, peer_factory=None):
+        """peer_factory(clock) → внешний Peer (например, RemotePeer к процессу удалённого блока); по умолчанию — эмулятор."""
         self.clock = SimClock()
         self.power = PowerEmulator()
         self.fan = FanEmulator()
         self.thermal = ThermalEmulator(self.fan)
-        self.peer = PeerEmulator(self.clock)
+        self.peer = peer_factory(self.clock) if peer_factory else PeerEmulator(self.clock)
         self.indicator = IndicatorEmulator(self.clock)
         self.monitor = SystemMonitor(self.clock, self.power, self.thermal, self.fan, self.peer, self.indicator,
                                      diagnostics, link)
@@ -33,7 +34,8 @@ class Bench:
     def step(self, dt=TICK_S):
         self.clock.advance(dt)
         for dev in (self.power, self.thermal, self.peer):
-            dev.step(dt)
+            if hasattr(dev, "step"):
+                dev.step(dt)
         self.snapshot = self.monitor.tick()
         return self.snapshot
 
@@ -78,7 +80,10 @@ class ScenarioRunner:
         steps = self.scenario.steps
         while self._next < len(steps) and steps[self._next].t <= self.bench.clock() + 1e-9:
             s = steps[self._next]
-            getattr(self.bench.target(s.target), s.action)(*s.args, **s.kwargs)
+            target = self.bench.target(s.target)
+            # С внешним удалённым блоком его неисправности задаёт сам процесс блока (сценарий агента).
+            if hasattr(target, s.action):
+                getattr(target, s.action)(*s.args, **s.kwargs)
             self.log.append((self.bench.clock(), s.label or f"{s.target}.{s.action}"))
             self._next += 1
 

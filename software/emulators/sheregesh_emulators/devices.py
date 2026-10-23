@@ -155,7 +155,8 @@ class PeerEmulator:
 
     def status(self):
         return PeerStatus(self.link_up, self.last_heartbeat if self.link_up else None, self.protocol,
-                          self.software, self.hardware, self.device_id)
+                          self.software, self.hardware, self.device_id, detail="ok" if self.link_up else "closed",
+                          session=self.protocol)
 
 
 class IndicatorEmulator:
