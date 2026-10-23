@@ -206,6 +206,26 @@ def main(argv=None):
                 sdnotify.ping()
         wd_timer.timeout.connect(ping)
         wd_timer.start(int(wd * 1000))
+    # Без дисплея: что показывает плитка связи (текст QML), раз в секунду — доказательство состояний, не визуальный PASS.
+    ui_state = os.environ.get("SHEREGESH_UI_STATE")
+    ui_timer = QTimer()
+    if ui_state:
+        def dump_ui():
+            st = backend.status
+            label = ui.find("peerValue")
+            detail = ui.find("peerDetail")
+            data = {"time": time.time(), "peerLink": st.get("peerLink"), "peerState": st.get("peerState"),
+                    "peerDetail": st.get("peerDetail"), "linkTls": st.get("linkTls"), "linkHost": st.get("linkHost"),
+                    "linkRttMs": st.get("linkRttMs"), "peerValueText": label.property("text") if label else None,
+                    "peerDetailText": detail.property("text") if detail and detail.property("visible") else ""}
+            try:
+                tmp = Path(ui_state + ".tmp")
+                tmp.write_text(json.dumps(data, ensure_ascii=False))
+                os.replace(tmp, ui_state)
+            except OSError:
+                pass
+        ui_timer.timeout.connect(dump_ui)
+        ui_timer.start(1000)
     mark = os.environ.get("SHEREGESH_FIRST_FRAME_MARK")
     if mark:                                 # проба S2-2: время от загрузки ядра до первого показанного кадра
         def first_frame():

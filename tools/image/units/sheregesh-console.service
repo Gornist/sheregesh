@@ -29,6 +29,7 @@ Environment=XDG_RUNTIME_DIR=/run/sheregesh-ui
 Environment=QT_QPA_PLATFORM=wayland
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=SHEREGESH_FIRST_FRAME_MARK=/run/sheregesh-ui/first-frame.json
+Environment=SHEREGESH_UI_STATE=/run/sheregesh-ui/ui-state.json
 ExecStart=/usr/bin/cage -s -- /usr/bin/sheregesh-console --link-config /home/sheregesh-ui/.config/sheregesh/link.json --link-status /run/sheregesh-ui/link-status.json --peer 127.0.0.1:7700 --data-dir /var/lib/sheregesh
 ExecStopPost=/bin/sh -c 'echo "sheregesh-console stopped: result=$SERVICE_RESULT code=$EXIT_CODE status=$EXIT_STATUS"'
 TimeoutStartSec=90

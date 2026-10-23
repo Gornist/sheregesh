@@ -32,7 +32,7 @@ def test_console_sends_ready_then_watchdog(tmp_path):
     s.bind(path)
     s.settimeout(30)
     env = {**os.environ, "NOTIFY_SOCKET": path, "WATCHDOG_USEC": "2000000", "QT_QPA_PLATFORM": "offscreen",
-           "QT_QUICK_BACKEND": "software",
+           "QT_QUICK_BACKEND": "software", "SHEREGESH_UI_STATE": str(tmp_path / "ui.json"),
            "PYTHONPATH": os.pathsep.join(str(ROOT / p) for p in ("software", "software/emulators", "software/console"))}
     p = subprocess.Popen([sys.executable, "-m", "sheregesh_console", "--data-dir", str(tmp_path),
                           "--link-config", str(tmp_path / "absent.json")], env=env,
@@ -43,6 +43,11 @@ def test_console_sends_ready_then_watchdog(tmp_path):
         assert first.startswith("READY=1"), first
         assert s.recv(256).decode() == "WATCHDOG=1"
         assert time.monotonic() - t0 < 30
+        deadline = time.monotonic() + 10
+        while not (tmp_path / "ui.json").exists() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        ui = __import__("json").loads((tmp_path / "ui.json").read_text())
+        assert ui["peerLink"] in ("CONNECTED", "DISCONNECTED") and ui["peerValueText"]   # текст плитки связи из QML
     finally:
         p.terminate()
         p.wait(10)
