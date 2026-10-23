@@ -167,6 +167,32 @@ def test_video_unavailable_without_gstreamer(make_ui, monkeypatch):
 
 
 # ---------------- страницы ----------------
+def test_full_event_and_log_history_keeps_gui_responsive(make_ui):
+    """Регрессия 60-минутного прогона: при заполненных журналах (500 событий, 2000 записей) такт GUI
+    занимал до 7,5 с — QML фильтровал список-свойство, перечитывая его из Python на каждый элемент."""
+    u = make_ui()
+    b = u.backend
+    for i in range(600):
+        b.bench.monitor.log.raise_(b.bench.clock(), "LINK-BAD-MSG", reason="fields", count=i)
+    for i in range(2100):
+        b.log("info", "test", f"record {i}")
+    worst = 0.0
+    for page in ("diagnostics", "logs", "dashboard"):
+        show(u, page)
+        for k in range(3):
+            b.bench.monitor.log.raise_(b.bench.clock(), "LINK-BAD-MSG", reason="json", count=k)
+            b.log("warning", "test", f"new {k}")
+            t = time.perf_counter()
+            b.tick()
+            pump(1)
+            worst = max(worst, time.perf_counter() - t)
+    assert b.eventCount == 500 and b.logCount == 2000
+    assert worst < 0.5, f"такт GUI {worst * 1000:.0f} мс"
+    show(u, "diagnostics")
+    rows = obj(u, "eventsList").property("count")
+    assert rows == 500
+
+
 @pytest.mark.test_id("TEST-SW-005")
 @pytest.mark.test_id("TEST-SW-001")
 def test_logs_page_and_export_without_secrets(make_ui):

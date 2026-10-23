@@ -6,14 +6,7 @@ import QtQuick.Layouts
 
 Item {
     id: page
-    function accepted(r) {
-        switch (levelBox.currentIndex) {
-        case 1: return r.level !== "info"
-        case 2: return r.level === "error"
-        default: return true
-        }
-    }
-    readonly property var rows: backend.logs.filter(accepted)
+    readonly property var rows: backend.logsRevision, backend.logRows(levelBox.currentIndex)
 
     ColumnLayout {
         anchors.fill: parent
@@ -31,7 +24,7 @@ Item {
                 KeyNavigation.right: exportButton
                 KeyNavigation.down: list
             }
-            Label { objectName: "logCount"; text: qsTr("%1 of %2 records").arg(page.rows.length).arg(backend.logs.length); color: win.p.muted }
+            Label { objectName: "logCount"; text: qsTr("%1 of %2 records").arg(page.rows.length).arg(backend.logCount); color: win.p.muted }
             Item { Layout.fillWidth: true }
             Button {
                 id: exportButton

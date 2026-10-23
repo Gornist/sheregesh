@@ -120,6 +120,7 @@ class Backend(QObject):
         self.runner = DEMO.runner(self.bench) if demo else None
         self._scenario_label = ""
         self._status, self._events, self._active = {}, [], []
+        self._events_rev = 0
         self._last_result = ""
         self._timer = QTimer(self)
         self._timer.setInterval(max(20, int(TICK_S * 1000 / max(speed, 0.01))))
@@ -239,6 +240,7 @@ class Backend(QObject):
             self._events_sig = sig
             self._active = [self._render_event(e) for e in s.active]
             self._events = [self._render_event(e) for e in reversed(events)]
+            self._events_rev += 1
             self.eventsChanged.emit()
         if getattr(self, "_logs_dirty", False):     # журнал — в QML только при новых записях
             self._logs_dirty = False
@@ -315,6 +317,24 @@ class Backend(QObject):
     def logs(self):
         return list(reversed(self._logs))
 
+    # QML получает списки событий и журнала только через вызов слота: результат вызова — готовый
+    # JS-массив. Свойство-список в QML 6 — ссылка, каждое обращение к элементу перечитывает весь
+    # список из Python, и фильтрация в QML становится O(n²) (5 с паузы GUI на 60-минутном прогоне).
+    @Property(int, notify=logsChanged)
+    def logsRevision(self):
+        return self._log_seq
+
+    @Property(int, notify=logsChanged)
+    def logCount(self):
+        return len(self._logs)
+
+    @Slot(int, result=list)
+    def logRows(self, level_filter):
+        """Записи журнала от новых к старым; 0 — все, 1 — предупреждения и ошибки, 2 — ошибки."""
+        ok = {0: lambda r: True, 1: lambda r: r["level"] != "info", 2: lambda r: r["level"] == "error"}
+        keep = ok.get(level_filter, ok[0])
+        return [r for r in reversed(self._logs) if keep(r)]
+
     @Property(dict, notify=configChanged)
     def about(self):
         def git_rev():
@@ -323,20 +343,22 @@ class Backend(QObject):
                                       capture_output=True, text=True, timeout=2).stdout.strip() or "—"
             except (OSError, subprocess.SubprocessError):
                 return "—"
-        if not hasattr(self, "_build"):
-            self._build = git_rev()
-        try:
-            gst_version = subprocess.run(["gst-launch-1.0", "--version"], capture_output=True, text=True,
-                                         timeout=2).stdout.splitlines()[0].split()[-1]
-        except (OSError, subprocess.SubprocessError, IndexError):
-            gst_version = "—"
+        if not hasattr(self, "_build"):            # не меняется за время работы: вычислить один раз,
+            self._build = git_rev()                # QML читает свойство на каждое поле страницы
+            try:
+                self._gst_version = subprocess.run(["gst-launch-1.0", "--version"], capture_output=True, text=True,
+                                                   timeout=2).stdout.splitlines()[0].split()[-1]
+            except (OSError, subprocess.SubprocessError, IndexError):
+                self._gst_version = "—"
+            self._video_codec = gst.choose_codec() or "—"
+        gst_version = self._gst_version
         return {"software": __version__, "protocol": PROTOCOL_VERSION, "build": self._build,
                 "schema": self.schema.version, "revision": self._rev.id,
                 "device": self._rev.data["system.yaml"]["device_name"],
                 "hardware": "HW-1.0 Rev A (эмулятор, x86)" if self.lang == "ru" else "HW-1.0 Rev A (emulator, x86)",
                 "platform": f"{platform.system()} {platform.machine()}, Python {platform.python_version()}",
                 "qt": f"Qt {qVersion()}, PySide6 {PYSIDE_VERSION}", "gstreamer": gst_version,
-                "videoCodec": gst.choose_codec() or "—", "catalog": len(CATALOG)}
+                "videoCodec": self._video_codec, "catalog": len(CATALOG)}
 
     @Slot(result=str)
     def exportLogs(self):
@@ -358,6 +380,23 @@ class Backend(QObject):
     @Property(list, notify=eventsChanged)
     def events(self):
         return self._events
+
+    @Property(int, notify=eventsChanged)
+    def eventsRevision(self):
+        return self._events_rev
+
+    @Property(int, notify=eventsChanged)
+    def eventCount(self):
+        return len(self._events)
+
+    @Slot(int, result=list)
+    def eventRows(self, filter_index):
+        """Активные события сверху, затем остальные от новых к старым; 0 — все, 1 — активные,
+        2 — предупреждения и ошибки, 3 — ошибки."""
+        ok = {0: lambda e: True, 1: lambda e: e["active"], 2: lambda e: e["severity"] != "info",
+              3: lambda e: e["severity"] == "error"}
+        rows = [e for e in self._events if ok.get(filter_index, ok[0])(e)]
+        return [e for e in rows if e["active"]] + [e for e in rows if not e["active"]]
 
     @Property(list, notify=eventsChanged)
     def activeEvents(self):

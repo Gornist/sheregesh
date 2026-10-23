@@ -7,17 +7,8 @@ import QtQuick.Layouts
 Item {
     id: page
 
-    function accepted(e) {
-        switch (filter.currentIndex) {
-        case 1: return e.active
-        case 2: return e.severity !== "info"
-        case 3: return e.severity === "error"
-        default: return true
-        }
-    }
-    // Активные события всегда сверху, затем остальные — от новых к старым
-    readonly property var rows: backend.events.filter(accepted).filter(function (e) { return e.active })
-                                .concat(backend.events.filter(accepted).filter(function (e) { return !e.active }))
+    // Фильтр и порядок (активные сверху) — в backend.eventRows; результат слота — готовый массив
+    readonly property var rows: backend.eventsRevision, backend.eventRows(filter.currentIndex)
 
     ColumnLayout {
         anchors.fill: parent
@@ -37,7 +28,7 @@ Item {
             Item { Layout.fillWidth: true }
             Label {
                 objectName: "eventCount"
-                text: qsTr("%1 of %2 events").arg(page.rows.length).arg(backend.events.length)
+                text: qsTr("%1 of %2 events").arg(page.rows.length).arg(backend.eventCount)
                 color: win.p.muted
             }
         }
