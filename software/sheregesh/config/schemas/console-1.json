@@ -1,0 +1,49 @@
+{
+  "$comment": "Схема тестовой конфигурации пульта, версия 1 (REQ-CFG-001). Каждый ключ files — отдельный YAML-файл набора.",
+  "schema_version": 1,
+  "device": "console",
+  "files": {
+    "system.yaml": {
+      "x-services": ["ui"],
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["device_name", "language", "theme", "ui_scale", "screen_timeout_s"],
+        "properties": {
+          "device_name": {"type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[A-Za-z0-9А-Яа-яЁё _.-]+$"},
+          "language": {"enum": ["ru", "en"]},
+          "theme": {"enum": ["light", "dark"]},
+          "ui_scale": {"enum": [100, 125, 150]},
+          "screen_timeout_s": {"type": "integer", "minimum": 0, "maximum": 3600}
+        }
+      }
+    },
+    "diagnostics.yaml": {
+      "x-services": ["monitor"],
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["temp_warning_c", "temp_critical_c", "battery_warning_pct", "battery_critical_pct"],
+        "properties": {
+          "temp_warning_c": {"type": "number", "minimum": 40, "maximum": 85},
+          "temp_critical_c": {"type": "number", "minimum": 50, "maximum": 90},
+          "battery_warning_pct": {"type": "integer", "minimum": 5, "maximum": 50},
+          "battery_critical_pct": {"type": "integer", "minimum": 1, "maximum": 30}
+        }
+      }
+    },
+    "link.yaml": {
+      "x-services": ["link"],
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["peer_address", "port", "heartbeat_timeout_s"],
+        "properties": {
+          "peer_address": {"type": "string", "pattern": "^192\\.168\\.77\\.([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-4])$"},
+          "port": {"type": "integer", "minimum": 1024, "maximum": 65535},
+          "heartbeat_timeout_s": {"type": "number", "minimum": 1, "maximum": 5}
+        }
+      }
+    }
+  }
+}

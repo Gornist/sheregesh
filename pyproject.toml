@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+[project]
+name = "sheregesh"
+version = "0.1.0.dev0"
+description = "Шерегеш 1.0: лабораторный прототип пульта и удалённого блока (только эмуляторы и синтетические данные)"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+# В образе зависимости ставятся из пакетов Debian (ADR-0002); здесь — для разработки на x86.
+dependencies = ["PyYAML>=6.0", "jsonschema>=4.10"]
+
+[project.optional-dependencies]
+gui = ["PySide6-Essentials>=6.5"]
+test = ["pytest>=8", "pytest-qt>=4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "tests/system", "tests/gui", "tests/tools"]
+pythonpath = ["software", "software/emulators", "software/console"]
+markers = ["test_id(id): связь автотеста с TEST-ID реестра требований"]
+qt_api = "pyside6"
