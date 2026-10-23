@@ -8,6 +8,7 @@
 import argparse
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -178,6 +179,13 @@ def main(argv=None):
         app.exec()
         ui.close()
         return code["rc"]
+    # Ctrl+C / SIGTERM: штатное завершение. Обработчик Python срабатывает только между событиями Qt,
+    # поэтому таймер периодически возвращает управление интерпретатору.
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: app.quit())
+    wake = QTimer()
+    wake.start(200)
+    wake.timeout.connect(lambda: None)
     rc = app.exec()
     ui.close()
     return rc
