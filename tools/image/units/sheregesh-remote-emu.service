@@ -1,16 +1,26 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Лабораторный эмулятор удалённого блока на той же плате (S2): только 127.0.0.1, только синтетические данные.
-# Сетевой доступ кроме loopback запрещён и средствами systemd (ADR-0007: канал без аутентификации).
+# Сетевой доступ кроме loopback запрещён и средствами systemd (ADR-0007). Работает только без сетевой роли
+# (на стенде pi1↔pi2 удалённый блок — отдельная плата, служба sheregesh-remote-net).
 [Unit]
 Description=Sheregesh: laboratory remote unit emulator (loopback only, synthetic data)
 After=local-fs.target
+RequiresMountsFor=/home/sheregesh-ui
+ConditionPathExists=!/home/sheregesh-ui/.config/sheregesh/console.role
+ConditionPathExists=!/home/sheregesh-ui/.config/sheregesh/remote.role
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 DynamicUser=yes
 SupplementaryGroups=video
 ExecStart=/usr/bin/sheregesh-remote-emu --host 127.0.0.1 --port 7700 --video --video-port 5600
+ExecStopPost=/bin/sh -c 'echo "sheregesh-remote-emu stopped: result=$SERVICE_RESULT code=$EXIT_CODE status=$EXIT_STATUS"'
+TimeoutStartSec=60
+WatchdogSec=15
 Restart=on-failure
 RestartSec=2
 IPAddressDeny=any

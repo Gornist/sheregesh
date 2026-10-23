@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Диагностическая проверка здоровья (S3.1): только чтение; НЕ выполняет mark-good, не переключает слоты и не
+# перезагружает плату. Отчёт — /run/sheregesh-health/report.json (запуск по таймеру и вручную).
+[Unit]
+Description=Sheregesh: diagnostic health check (read-only)
+After=local-fs.target
+RequiresMountsFor=/home/sheregesh-ui
+
+[Service]
+Type=oneshot
+User=sheregesh-ui
+RuntimeDirectory=sheregesh-health
+RuntimeDirectoryPreserve=yes
+ExecStart=/bin/sh -c '/usr/bin/sheregesh-health --json --out /run/sheregesh-health/report.json >/dev/null; exit 0'
+ProtectSystem=strict
+ProtectHome=read-only
+NoNewPrivileges=yes

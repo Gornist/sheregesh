@@ -22,6 +22,8 @@ from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
 from PySide6.QtQuick import QQuickWindow  # noqa: F401 — регистрирует тип окна для rootObjects()
 from PySide6.QtQuickControls2 import QQuickStyle
 
+from sheregesh import sdnotify
+
 from .backend import Backend
 from .video import VideoView
 
@@ -147,6 +149,9 @@ def main(argv=None):
     ap.add_argument("--peer", metavar="HOST:PORT",
                     help="отдельный процесс удалённого блока (только 127.0.0.1); без параметра блок эмулируется в процессе")
     ap.add_argument("--local-video", action="store_true", help="локальный синтетический видеогенератор (без удалённого блока)")
+    ap.add_argument("--link-config", metavar="FILE",
+                    help="сетевой лабораторный профиль (mTLS, S3.1); если файла нет — канал через --peer (loopback)")
+    ap.add_argument("--link-status", metavar="FILE", help="состояние канала в JSON для sheregesh-health")
     args = ap.parse_args(argv)
     peer = None
     if args.peer:
@@ -163,8 +168,17 @@ def main(argv=None):
     app.setApplicationName("sheregesh-console")
     compile_translations()
     data_dir = Path(args.data_dir) if args.data_dir else Path(tempfile.mkdtemp(prefix="sheregesh-emu-"))
+    link_cfg = None
+    if args.link_config and Path(args.link_config).expanduser().exists():
+        from sheregesh.link.tls import LinkConfig, LinkConfigError
+        try:
+            link_cfg = LinkConfig.load(args.link_config)
+            print(f"Сетевой профиль: {link_cfg.own_uri} → {link_cfg.peer_uri}, порт {link_cfg.port}", flush=True)
+        except LinkConfigError as e:              # без проверенных ключей сеть не используется
+            print(f"Сетевой профиль не принят: {e}; канал через {args.peer or 'эмулятор в процессе'}", flush=True)
     backend = Backend(data_dir, demo=args.demo or bool(args.screenshots), speed=args.speed,
-                      autostart=not args.screenshots, peer=peer, local_video=args.local_video)
+                      autostart=not args.screenshots, peer=peer, local_video=args.local_video, link_cfg=link_cfg,
+                      link_status_file=args.link_status)
     ui = Ui(backend)
     print(f"Данные эмулятора: {data_dir}", flush=True)
     if args.screenshots:
@@ -181,6 +195,17 @@ def main(argv=None):
         app.exec()
         ui.close()
         return code["rc"]
+    # systemd (ADR-0002): READY — после загрузки QML и запуска бэкенда, а не после старта композитора cage;
+    # WATCHDOG — из цикла Qt и только пока таймер бэкенда действительно тикает.
+    sdnotify.ready(f"console ready, peer {backend.status.get('peerMode', '?')}")
+    wd = sdnotify.watchdog_interval()
+    wd_timer = QTimer()
+    if wd:
+        def ping():
+            if time.monotonic() - getattr(backend, "last_tick", time.monotonic()) < max(5.0, wd):
+                sdnotify.ping()
+        wd_timer.timeout.connect(ping)
+        wd_timer.start(int(wd * 1000))
     mark = os.environ.get("SHEREGESH_FIRST_FRAME_MARK")
     if mark:                                 # проба S2-2: время от загрузки ядра до первого показанного кадра
         def first_frame():
@@ -188,6 +213,7 @@ def main(argv=None):
             clock = getattr(time, "CLOCK_BOOTTIME", time.CLOCK_MONOTONIC)
             Path(mark).write_text(json.dumps({"clock": "boottime" if clock != time.CLOCK_MONOTONIC else "monotonic",
                                               "seconds": time.clock_gettime(clock), "wall": time.time()}))
+            sdnotify.notify("STATUS=first frame shown")
         ui.window.frameSwapped.connect(first_frame)
     # Ctrl+C / SIGTERM: штатное завершение. Обработчик Python срабатывает только между событиями Qt,
     # поэтому таймер периодически возвращает управление интерпретатору.

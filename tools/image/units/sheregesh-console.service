@@ -1,15 +1,24 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Пульт под cage от непривилегированного пользователя sheregesh-ui (ADR-0002), связь с эмулятором — 127.0.0.1.
-# SHEREGESH_FIRST_FRAME_MARK — метка первого кадра для пробы S2-2 (tools/probe/s2probe.py boot).
-# Type=notify и WatchdogSec из ADR-0002 пока не реализованы в пульте (S3); здесь — Type=simple.
+# Пульт под cage от непривилегированного пользователя sheregesh-ui (ADR-0002).
+# Канал: сетевой профиль mTLS к удалённому блоку, если настроен (~/.config/sheregesh/link.json, S3.1), иначе
+# эмулятор на 127.0.0.1. Сеть службы — только loopback и частные/link-local диапазоны (не интернет).
+# Type=notify: READY отправляет само приложение после загрузки QML и запуска бэкенда (NotifyAccess=all — оно дочерний
+# процесс cage), а не композитор. WATCHDOG — из цикла Qt; зависание → перезапуск, циклические перезапуски ограничены.
+# На плате с ролью удалённого блока пульт не запускается (D3: блок без GUI).
 [Unit]
 Description=Sheregesh: laboratory console GUI (cage)
-After=systemd-user-sessions.service seatd.service sheregesh-remote-emu.service
-Wants=seatd.service sheregesh-remote-emu.service
+After=systemd-user-sessions.service seatd.service sheregesh-remote-emu.service network.target
+Wants=seatd.service
 Conflicts=getty@tty1.service
+RequiresMountsFor=/home/sheregesh-ui
+ConditionPathExists=!/home/sheregesh-ui/.config/sheregesh/remote.role
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
+Type=notify
+NotifyAccess=all
 User=sheregesh-ui
 PAMName=login
 TTYPath=/dev/tty1
@@ -20,11 +29,15 @@ Environment=XDG_RUNTIME_DIR=/run/sheregesh-ui
 Environment=QT_QPA_PLATFORM=wayland
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=SHEREGESH_FIRST_FRAME_MARK=/run/sheregesh-ui/first-frame.json
-ExecStart=/usr/bin/cage -s -- /usr/bin/sheregesh-console --peer 127.0.0.1:7700 --data-dir /var/lib/sheregesh
+ExecStart=/usr/bin/cage -s -- /usr/bin/sheregesh-console --link-config /home/sheregesh-ui/.config/sheregesh/link.json --link-status /run/sheregesh-ui/link-status.json --peer 127.0.0.1:7700 --data-dir /var/lib/sheregesh
+ExecStopPost=/bin/sh -c 'echo "sheregesh-console stopped: result=$SERVICE_RESULT code=$EXIT_CODE status=$EXIT_STATUS"'
+TimeoutStartSec=90
+WatchdogSec=20
 Restart=always
-RestartSec=2
+RestartSec=3
+TimeoutStopSec=15
 IPAddressDeny=any
-IPAddressAllow=localhost
+IPAddressAllow=localhost 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 fe80::/10 fc00::/7
 NoNewPrivileges=yes
 
 [Install]

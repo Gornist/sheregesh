@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Удалённый лабораторный блок — сетевой профиль SHRG-LAB (S3.1, ADR-0007): TLS 1.3 с взаимной аутентификацией,
+# только синтетические данные, без команд ОС и управления устройствами. Не запускается, пока не настроены роль,
+# ключ, сертификат и CA стенда (sheregesh-link). Входящие — только частные и link-local сети (IPAddressAllow);
+# в приложении — только подсеть интерфейса и пульт с URI из link.json.
+[Unit]
+Description=Sheregesh: laboratory remote unit, network profile (mTLS, synthetic data)
+After=network.target local-fs.target
+RequiresMountsFor=/home/sheregesh-ui
+ConditionPathExists=/home/sheregesh-ui/.config/sheregesh/remote.role
+ConditionPathExists=/home/sheregesh-ui/.config/sheregesh/link.json
+ConditionPathExists=/home/sheregesh-ui/.local/share/sheregesh/link/device.key
+ConditionPathExists=/home/sheregesh-ui/.local/share/sheregesh/link/device.crt
+ConditionPathExists=/home/sheregesh-ui/.local/share/sheregesh/link/ca.crt
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=sheregesh-ui
+ExecStart=/usr/bin/sheregesh-remote-emu --link-config /home/sheregesh-ui/.config/sheregesh/link.json --status-file /run/sheregesh-remote/link-status.json --event-interval 5
+ExecStopPost=/bin/sh -c 'echo "sheregesh-remote-net stopped: result=$SERVICE_RESULT code=$EXIT_CODE status=$EXIT_STATUS"'
+RuntimeDirectory=sheregesh-remote
+TimeoutStartSec=60
+WatchdogSec=15
+Restart=on-failure
+RestartSec=3
+IPAddressDeny=any
+IPAddressAllow=localhost 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 fe80::/10 fc00::/7
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+WantedBy=multi-user.target
