@@ -71,6 +71,23 @@ def _yaml(data: dict) -> str:
     return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
 
 
+RECONNECT_WINDOW_S = 30.0
+
+
+def peer_link(peer_state, snap):
+    """Состояние канала для интерфейса: CONNECTED | RECONNECTING | DISCONNECTED | AUTH_FAILED | INCOMPATIBLE."""
+    if peer_state == "connected":
+        return "CONNECTED"
+    if peer_state == "auth-failed":
+        return "AUTH_FAILED"
+    if peer_state == "incompatible":
+        return "INCOMPATIBLE"
+    lost = snap.get("lost_s")
+    if lost is not None and lost <= RECONNECT_WINDOW_S:
+        return "RECONNECTING"                      # связь была и только что потеряна — идут попытки
+    return "DISCONNECTED"
+
+
 class Backend(QObject):
     statusChanged = Signal()
     eventsChanged = Signal()
@@ -80,7 +97,7 @@ class Backend(QObject):
     message = Signal(str, str)          # уровень (info/warning/error), текст
 
     def __init__(self, data_dir, demo=False, speed=1.0, autostart=True, peer=None, local_video=False,
-                 video_command=None):
+                 video_command=None, link_cfg=None, link_status_file=None):
         """peer=None — удалённый блок эмулируется в процессе пульта; peer=(host, port) — внешний процесс-эмулятор.
         local_video — локальный синтетический генератор видео (без удалённого блока)."""
         super().__init__()
@@ -100,9 +117,16 @@ class Backend(QObject):
         self._last_video_state = None
         self._power_history = collections.deque(maxlen=POWER_HISTORY)
         self.client = None
-        if peer is not None:
+        if link_cfg is not None:                    # сетевой лабораторный профиль: mTLS к удалённому блоку (S3.1)
+            peer = (link_cfg.peer_hosts[0] if link_cfg.peer_hosts else "discover", link_cfg.port)
+            self.client = PeerClient(None, link_cfg.port, heartbeat_timeout_s=data["link.yaml"]["heartbeat_timeout_s"],
+                                     tls_cfg=link_cfg, status_file=link_status_file).start()
+            self.bench = Bench(data["diagnostics.yaml"], data["link.yaml"],
+                               peer_factory=lambda clock: RemotePeer(self.client, clock))
+        elif peer is not None:
             host, port = peer
-            self.client = PeerClient(host, port, heartbeat_timeout_s=data["link.yaml"]["heartbeat_timeout_s"]).start()
+            self.client = PeerClient(host, port, heartbeat_timeout_s=data["link.yaml"]["heartbeat_timeout_s"],
+                                     status_file=link_status_file).start()
             self.bench = Bench(data["diagnostics.yaml"], data["link.yaml"],
                                peer_factory=lambda clock: RemotePeer(self.client, clock))
         else:
@@ -132,6 +156,7 @@ class Backend(QObject):
     # ---------- время и сценарий ----------
     @Slot()
     def tick(self):
+        self.last_tick = time.monotonic()           # для watchdog: таймер бэкенда действительно работает
         if self.runner and not self.runner.done:
             n = len(self.runner.log)
             self.runner.advance()
@@ -252,8 +277,8 @@ class Backend(QObject):
         temps = tel.get("temperatures") or {}
         rp = tel.get("power") or {}
         vid = tel.get("video") or {}
+        snap = self.client.snapshot() if self.client is not None else {}
         if self.client is not None:
-            snap = self.client.snapshot()
             cnt = snap["counters"]
             if snap["phase"] != self._last_phase:
                 self.log("warning" if snap["phase"] != "connected" else "info", "link",
@@ -276,7 +301,11 @@ class Backend(QObject):
                      f"state {self.video.state} {self.video.error}".strip())
             self._last_video_state = self.video.state
         return {
-            "peerMode": "process" if self.client is not None else "emulated",
+            "peerMode": ("network" if snap.get("secure") else "process") if self.client is not None else "emulated",
+            "peerLink": peer_link(s.peer_state, snap),
+            "linkSecure": bool(snap.get("secure")), "linkTls": snap.get("tls") or "", "linkHost": snap.get("host") or "",
+            "linkPeerUri": snap.get("peer_uri") or "",
+            "linkRttMs": (tel.get("link") or {}).get("rtt_avg_ms", -1),
             "peerDetail": s.peer.detail, "peerSession": s.peer.session or "",
             "peerHardware": s.peer.hardware or "",
             "linkConnects": cnt["connects"], "linkBad": cnt["bad_messages"], "linkIgnored": cnt["ignored_messages"],

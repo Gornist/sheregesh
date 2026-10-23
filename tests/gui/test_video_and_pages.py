@@ -251,7 +251,9 @@ def test_gui_with_remote_process_crash_and_restart(make_ui, qtbot):
         agent.signal(signal.SIGKILL)
         agent.proc.wait(5)
         assert wait_until(lambda: u.backend.status["peerState"] == "lost", 8)
-        assert obj(u, "peerValue").property("text") == "Нет связи"
+        # S3.1: связь была и только что потеряна — RECONNECTING, а не DISCONNECTED
+        assert u.backend.status["peerLink"] == "RECONNECTING"
+        assert obj(u, "peerValue").property("text") == "Переподключение…"
         assert wait_until(lambda: "не запущен" in obj(u, "peerDetail").property("text"), 8)
         if args:
             assert wait_until(lambda: u.backend.video.state == "no-video", 6)

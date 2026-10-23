@@ -278,6 +278,22 @@
         <source>No active events</source>
         <translation>Активных событий нет</translation>
     </message>
+    <message>
+        <source>Reconnecting…</source>
+        <translation>Переподключение…</translation>
+    </message>
+    <message>
+        <source>Authentication failed</source>
+        <translation>Ошибка аутентификации</translation>
+    </message>
+    <message>
+        <source>Certificate or device identity check failed: %1</source>
+        <translation>Не прошла проверка сертификата или идентичности устройства: %1</translation>
+    </message>
+    <message>
+        <source>Mutual TLS %1 · %2 · round trip %3&#160;ms</source>
+        <translation>Взаимный TLS %1 · %2 · задержка %3&#160;мс</translation>
+    </message>
 </context>
 <context>
     <name>DiagnosticsPage</name>

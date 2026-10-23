@@ -70,8 +70,10 @@ Item {
             id: tileLink
             objectName: "tileLink"
             title: qsTr("Test link to remote unit")
-            accent: st.peerState === "connected" ? win.p.ok : st.peerState === "connecting" ? win.p.info
-                  : st.peerState === "lost" ? win.p.warning : win.p.fault
+            // peerLink: CONNECTED | RECONNECTING | DISCONNECTED | AUTH_FAILED | INCOMPATIBLE (S3.1)
+            accent: st.peerLink === "CONNECTED" ? win.p.ok
+                  : st.peerLink === "AUTH_FAILED" || st.peerLink === "INCOMPATIBLE" ? win.p.fault
+                  : st.peerState === "connecting" ? win.p.info : win.p.warning
             Layout.fillWidth: true
             Layout.preferredWidth: 1
             Layout.fillHeight: true
@@ -79,8 +81,9 @@ Item {
             KeyNavigation.down: tileEvents
             Label {
                 objectName: "peerValue"
-                text: st.peerState === "connected" ? qsTr("Connected") : st.peerState === "connecting" ? qsTr("Connecting…")
-                    : st.peerState === "lost" ? qsTr("No link") : qsTr("Incompatible")
+                text: st.peerLink === "CONNECTED" ? qsTr("Connected") : st.peerLink === "RECONNECTING" ? qsTr("Reconnecting…")
+                    : st.peerLink === "AUTH_FAILED" ? qsTr("Authentication failed") : st.peerLink === "INCOMPATIBLE" ? qsTr("Incompatible")
+                    : st.peerState === "connecting" ? qsTr("Connecting…") : qsTr("No link")
                 font.pixelSize: page.big
                 font.bold: true
             }
@@ -94,8 +97,9 @@ Item {
                     : st.peerDetail === "bad-messages" ? qsTr("Too many corrupted messages; reconnecting")
                     : st.peerDetail === "timeout" || st.peerDetail === "handshake-timeout" ? qsTr("No response from the remote unit")
                     : st.peerState === "incompatible" ? qsTr("Version check failed: %1").arg(st.peerDetail)
+                    : st.peerDetail.indexOf("auth") === 0 ? qsTr("Certificate or device identity check failed: %1").arg(st.peerDetail.substring(5).trim())
                     : qsTr("Establishing connection")
-                color: st.peerState === "incompatible" ? win.p.fault : win.p.warning
+                color: st.peerState === "incompatible" || st.peerLink === "AUTH_FAILED" ? win.p.fault : win.p.warning
             }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: qsTr("Remote unit: %1").arg(st.peerDevice !== "" ? st.peerDevice : "—"); color: win.p.muted }
             Label {
@@ -106,6 +110,14 @@ Item {
                 color: win.p.muted
             }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: qsTr("Protocol: remote %1 / console %2").arg(st.peerProtocol).arg(st.localProtocol); color: win.p.muted }
+            Label {
+                objectName: "linkSecurity"
+                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                visible: st.linkSecure === true
+                text: qsTr("Mutual TLS %1 · %2 · round trip %3 ms").arg(st.linkTls !== "" ? st.linkTls : "—")
+                      .arg(st.linkHost !== "" ? st.linkHost : "—").arg(st.linkRttMs >= 0 ? win.num(st.linkRttMs, 1) : "—")
+                color: win.p.muted
+            }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap;
                 text: st.peerHeartbeatAge >= 0 ? qsTr("Last heartbeat %1\u00a0s ago").arg(win.num(st.peerHeartbeatAge, 1)) : qsTr("No heartbeat")
                 color: win.p.muted

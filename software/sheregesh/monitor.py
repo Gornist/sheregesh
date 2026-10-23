@@ -76,7 +76,7 @@ class Snapshot:
     fan_rpm: int | None
     fan_nominal: int
     peer: PeerStatus
-    peer_state: str              # connecting | connected | lost | incompatible
+    peer_state: str              # connecting | connected | lost | incompatible | auth-failed
     indicator: str               # boot | normal | warning | fault
     overall: str                 # normal | warning | fault
     active: list = field(default_factory=list)
@@ -179,6 +179,9 @@ class SystemMonitor:
         for code, params in (drain() if drain else []):
             self.log.raise_(t, code, **params)
         timeout = self.link["heartbeat_timeout_s"]
+        if not st.link_up and (st.detail or "").startswith("auth"):
+            self.log.raise_(t, "LINK-AUTH-FAIL", reason=st.detail.split(":", 1)[-1].strip())
+            return "auth-failed"            # причина — сертификат/идентичность, а не обрыв связи
         age = None if st.last_heartbeat is None else t - st.last_heartbeat
         alive = st.link_up and age is not None and age <= timeout
         if alive:
@@ -190,6 +193,7 @@ class SystemMonitor:
             self.log.raise_(t, "PEER-LOST", timeout=timeout)
             return "lost"
         self.log.resolve(t, "PEER-LOST")
+        self.log.resolve(t, "LINK-AUTH-FAIL")
         if age > timeout / 2:
             self.log.raise_(t, "PEER-SLOW", age=age, timeout=timeout)
         elif age < timeout / 3:

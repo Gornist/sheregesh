@@ -10,7 +10,9 @@ from dataclasses import dataclass
 MAX_LINE = 64 * 1024
 # Типы сообщений по версии протокола. Получатель ничего не исполняет по сообщениям:
 # hello — рукопожатие; heartbeat/status/event — данные; error — диагностика; bye — завершение.
+# 1.1 (S3.1): ack — подтверждение получения heartbeat/event пультом (измерение задержки и потерь); ничего не исполняет.
 TYPES = {"1.0": frozenset({"hello", "heartbeat", "status", "event", "error", "bye"})}
+TYPES["1.1"] = TYPES["1.0"] | {"ack"}
 
 
 @dataclass(frozen=True)
