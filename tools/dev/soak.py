@@ -16,6 +16,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -72,7 +73,10 @@ def start_agent(port, vport, seconds, offset):
                              "--video-port", str(vport), "--video-width", "640", "--video-height", "360",
                              "--video-fps", "15", *faults], env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, text=True, start_new_session=True)
-    proc.stdout.readline()
+    # Строку готовности читает поток: синхронный readline останавливал событийный цикл пульта на время старта
+    # блока (≈ 1,6 с в macOS), и стенд засчитывал это как паузу GUI при каждом перезапуске.
+    proc.ready = threading.Event()
+    threading.Thread(target=lambda: (proc.stdout.readline(), proc.ready.set()), daemon=True).start()
     return proc
 
 
@@ -99,6 +103,7 @@ def run(seconds, out_dir=None):
     port, vport = free_port(), free_port(socket.SOCK_DGRAM)
     t0 = time.monotonic()
     agent = start_agent(port, vport, seconds, 0)
+    agent.ready.wait(30)
     ui = Ui(Backend(tempfile.mkdtemp(prefix="sheregesh-soak-"), autostart=True, peer=("127.0.0.1", port)))
     lat_timer, lat_clock = QTimer(), QElapsedTimer()
     worst = {"ms": 0}
@@ -123,6 +128,7 @@ def run(seconds, out_dir=None):
                 crashes += 1
                 pump(3000)
                 agent = start_agent(port, vport, seconds, time.monotonic() - t0)
+                wait_until(agent.ready.is_set, 30)            # цикл Qt продолжает работать
                 next_crash += CRASH_EVERY_S
             if int(el) % 5 == 0:
                 st = ui.backend.status
