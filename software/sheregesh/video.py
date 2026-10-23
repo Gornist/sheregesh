@@ -133,10 +133,13 @@ def choose_codec(prefer="h264"):
 
 def sender_args(codec, port, width=1280, height=720, fps=30, host="127.0.0.1", pattern="smpte"):
     src = [GST_LAUNCH, "-q", "videotestsrc", "is-live=true", f"pattern={pattern}", "!",
-           f"video/x-raw,width={width},height={height},framerate={fps}/1", "!",
-           "timeoverlay", "halignment=right", "valignment=bottom", "font-desc=Sans 28", "!",
-           "textoverlay", "text=SHEREGESH SYNTHETIC TEST PATTERN", "valignment=top", "font-desc=Sans 24", "!",
-           "videoconvert", "!", "video/x-raw,format=I420", "!"]   # rtpjpegpay принимает только 4:2:0/4:2:2
+           f"video/x-raw,width={width},height={height},framerate={fps}/1", "!"]
+    # Надписи — элементы pango (в Debian — пакет gstreamer1.0-x). Без них поток идёт без надписей, а не падает.
+    if has_element("timeoverlay"):
+        src += ["timeoverlay", "halignment=right", "valignment=bottom", "font-desc=Sans 28", "!"]
+    if has_element("textoverlay"):
+        src += ["textoverlay", "text=SHEREGESH SYNTHETIC TEST PATTERN", "valignment=top", "font-desc=Sans 24", "!"]
+    src += ["videoconvert", "!", "video/x-raw,format=I420", "!"]   # rtpjpegpay принимает только 4:2:0/4:2:2
     return src + encoder_args(codec) + ["!", "udpsink", f"host={host}", f"port={port}", "sync=false"]
 
 

@@ -63,3 +63,13 @@ def test_no_working_h264_falls_back_to_mjpeg(fake_gst):
 def test_nothing_works(fake_gst):
     fake_gst(set(), [])
     assert video.choose_codec() is None
+
+
+def test_sender_without_pango_overlays_still_streams(fake_gst):
+    """В Debian timeoverlay/textoverlay — отдельный пакет gstreamer1.0-x; без него генератор не должен падать."""
+    fake_gst(COMMON, [])
+    tx = video.sender_args("jpeg", 5600)
+    assert "timeoverlay" not in tx and "textoverlay" not in tx and "jpegenc" in tx
+    fake_gst(COMMON | {"timeoverlay", "textoverlay"}, [])
+    tx = video.sender_args("jpeg", 5600)
+    assert tx.index("videotestsrc") < tx.index("timeoverlay") < tx.index("textoverlay") < tx.index("jpegenc")
