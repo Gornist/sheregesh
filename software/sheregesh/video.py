@@ -10,6 +10,7 @@ import ctypes
 import os
 import shutil
 import signal
+import re
 import subprocess
 import sys
 from functools import lru_cache
@@ -85,12 +86,18 @@ def _pipeline_ok(elements) -> bool:
     except subprocess.TimeoutExpired:
         PROBE_FAILURES.append(f"{elements[0]}: timeout 20 s")
         return False
-    out = r.stdout + r.stderr
-    ok = r.returncode == 0 and "Error" not in out and "WARNING" not in out
+    bad = probe_errors(r.stdout + r.stderr)
+    ok = r.returncode == 0 and not bad
     if not ok:
-        tail = " | ".join(x.strip() for x in out.splitlines() if "Error" in x or "WARNING" in x or "ERROR" in x)[-300:]
-        PROBE_FAILURES.append(f"{elements[0]}: rc={r.returncode} {tail or out.strip()[-200:]}")
+        PROBE_FAILURES.append(f"{elements[0]}: rc={r.returncode} {' | '.join(bad)[-300:] or (r.stdout + r.stderr).strip()[-200:]}")
     return ok
+
+
+def probe_errors(out):
+    """Строки, означающие отказ пробы: ERROR/WARNING: от gst-launch и «Error» кодеков (заглушка openh264).
+    Предупреждения GLib и Fontconfig окружения (нет домашнего каталога, uid DynamicUser без NSS) — не отказ."""
+    return [x.strip() for x in out.splitlines()
+            if re.search(r"^(ERROR|WARNING:)|\bError\b", x.strip()) and "GLib-WARNING" not in x and "Fontconfig" not in x]
 
 
 @lru_cache(maxsize=None)

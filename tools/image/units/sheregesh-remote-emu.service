@@ -24,6 +24,7 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 # Кэш реестра GStreamer: без записываемого каталога каждый вызов gst-* заново сканирует плагины (S2-BOOT).
 CacheDirectory=sheregesh-remote-emu
 Environment=XDG_CACHE_HOME=%C/sheregesh-remote-emu
+Environment=HOME=%C/sheregesh-remote-emu
 
 [Install]
 WantedBy=multi-user.target

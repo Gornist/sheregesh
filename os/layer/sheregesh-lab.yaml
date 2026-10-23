@@ -21,6 +21,9 @@
 mmdebstrap:
   packages:
     - ca-certificates
+    # uid DynamicUser (эмулятор) разрешается через NSS-модуль systemd; без него GLib и GStreamer
+    # предупреждают «unknown user id» (найдено в S2-BOOT на pi2).
+    - libnss-systemd
   customize-hooks:
     - |-
       set -eu

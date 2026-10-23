@@ -73,13 +73,14 @@ def find(mac, net):
     mac = mac.lower()
     hosts = [str(h) for h in ipaddress.ip_network(net).hosts()]
     with ThreadPoolExecutor(64) as ex:
-        list(ex.map(lambda h: subprocess.run(["ping", "-c", "1", "-W", "1000" if sys.platform == "darwin" else "1", h],
-                                             capture_output=True), hosts))
+        alive = {h for h, r in zip(hosts, ex.map(lambda h: subprocess.run(
+            ["ping", "-c", "1", "-W", "1000" if sys.platform == "darwin" else "1", h], capture_output=True), hosts))
+            if r.returncode == 0}
     arp = subprocess.run(["arp", "-an"], capture_output=True, text=True).stdout
     norm = lambda m: ":".join(f"{int(x, 16):02x}" for x in m.split(":"))           # noqa: E731 (macOS пишет «d8:3a:dd:69:e:90»)
     for line in arp.splitlines():
         m = re.search(r"\(([\d.]+)\) at ([0-9a-f:]+)", line)
-        if m and norm(m[2]) == mac:
+        if m and norm(m[2]) == mac and m[1] in alive:   # в ARP могут остаться прежние адреса той же платы
             return m[1]
     return None
 

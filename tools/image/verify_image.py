@@ -200,7 +200,10 @@ def verify(img, variant, out):
             emu = root.cat("/usr/lib/systemd/system/sheregesh-remote-emu.service")
             rep.add("emu.loopback", "эмулятор: только 127.0.0.1 (--host и IPAddressDeny/Allow)",
                     "--host 127.0.0.1" in emu and "IPAddressDeny=any" in emu and "IPAddressAllow=localhost" in emu)
-            rep.add("emu.cache", "эмулятор: каталог кэша GStreamer (CacheDirectory)", "CacheDirectory=sheregesh-remote-emu" in emu)
+            rep.add("emu.cache", "эмулятор: каталог кэша GStreamer и HOME (CacheDirectory)",
+                    "CacheDirectory=sheregesh-remote-emu" in emu and "Environment=HOME=%C/sheregesh-remote-emu" in emu)
+            nss = next((x for x in root.cat("/etc/nsswitch.conf").splitlines() if x.startswith("passwd:")), "")
+            rep.add("nss.systemd", "NSS: uid DynamicUser разрешается (systemd в passwd:)", "systemd" in nss.split(), nss)
             rep.add("unit.eeprom-masked", "rpi-eeprom-update замаскирован (обновление EEPROM — явная процедура)",
                     "/dev/null" in root.run("stat /etc/systemd/system/rpi-eeprom-update.service"))
             rep.add("resolved.no-llmnr", "systemd-resolved: LLMNR и mDNS выключены (нет 0.0.0.0:5355)",

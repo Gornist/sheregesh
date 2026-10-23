@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Dev-образ: пользователь sheregesh-ui без root и sudo может только
 // останавливать/запускать две лабораторные службы (проба S2-4б под cage) и перезагружать плату,
-// в том числе в tryboot (S2-5). Других прав нет.
+// в том числе в tryboot (S2-5), и штатно выключать её (S2-BOOT). Других прав нет.
 polkit.addRule(function(action, subject) {
     if (subject.user != "sheregesh-ui") { return polkit.Result.NOT_HANDLED; }
     if (action.id == "org.freedesktop.systemd1.manage-units") {
@@ -12,7 +12,8 @@ polkit.addRule(function(action, subject) {
         }
     }
     if (action.id == "org.freedesktop.login1.reboot" || action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
-        action.id == "org.freedesktop.login1.set-reboot-parameter") {
+        action.id == "org.freedesktop.login1.set-reboot-parameter" ||
+        action.id == "org.freedesktop.login1.power-off" || action.id == "org.freedesktop.login1.power-off-multiple-sessions") {
         return polkit.Result.YES;
     }
     return polkit.Result.NOT_HANDLED;

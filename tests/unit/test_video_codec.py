@@ -73,3 +73,13 @@ def test_sender_without_pango_overlays_still_streams(fake_gst):
     fake_gst(COMMON | {"timeoverlay", "textoverlay"}, [])
     tx = video.sender_args("jpeg", 5600)
     assert tx.index("videotestsrc") < tx.index("timeoverlay") < tx.index("textoverlay") < tx.index("jpegenc")
+
+
+def test_probe_errors_ignore_environment_warnings():
+    """S2-BOOT: GLib-WARNING об uid DynamicUser не отказ пробы; ошибки gst-launch и кодеков — отказ."""
+    env = ("(gst-launch-1.0:783): GLib-WARNING **: getpwuid_r(): failed due to unknown user id (64421)\n"
+           "Fontconfig error: No writable cache directories\nSetting pipeline to PLAYING ...\nGot EOS")
+    assert video.probe_errors(env) == []
+    assert video.probe_errors('WARNING: erroneous pipeline: no element "h264parse"')
+    assert video.probe_errors("ERROR: from element /GstPipeline:pipeline0/GstV4l2H264Enc: Device busy")
+    assert video.probe_errors("[OpenH264] this = 0x7f, Error:WelsInitEncoderExt(), ParamValidationExt failed")
