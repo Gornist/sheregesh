@@ -6,12 +6,14 @@
   python3 -m sheregesh_console --demo --screenshots DIR     # снимки экранов и выход (без дисплея)
 """
 import argparse
+import json
 import os
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, QTranslator, QUrl
@@ -179,6 +181,14 @@ def main(argv=None):
         app.exec()
         ui.close()
         return code["rc"]
+    mark = os.environ.get("SHEREGESH_FIRST_FRAME_MARK")
+    if mark:                                 # проба S2-2: время от загрузки ядра до первого показанного кадра
+        def first_frame():
+            ui.window.frameSwapped.disconnect(first_frame)
+            clock = getattr(time, "CLOCK_BOOTTIME", time.CLOCK_MONOTONIC)
+            Path(mark).write_text(json.dumps({"clock": "boottime" if clock != time.CLOCK_MONOTONIC else "monotonic",
+                                              "seconds": time.clock_gettime(clock), "wall": time.time()}))
+        ui.window.frameSwapped.connect(first_frame)
     # Ctrl+C / SIGTERM: штатное завершение. Обработчик Python срабатывает только между событиями Qt,
     # поэтому таймер периодически возвращает управление интерпретатору.
     for sig in (signal.SIGINT, signal.SIGTERM):
