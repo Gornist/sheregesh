@@ -12,8 +12,10 @@ from procs import ROOT, free_port, wait_for
 
 
 def children_of(pgid):
+    """[pid, pgid, имя] процессов группы; имя без пути (в macOS ps выводит полный путь, напр. .../MacOS/Python)."""
     out = subprocess.run(["ps", "-eo", "pid,pgid,comm"], capture_output=True, text=True).stdout.split("\n")[1:]
-    return [line.split() for line in out if line.split() and line.split()[1] == str(pgid)]
+    rows = [line.split(None, 2) for line in out if line.split()]
+    return [[pid, pg, os.path.basename(comm).lower()] for pid, pg, comm in rows if pg == str(pgid)]
 
 
 def test_one_command_starts_two_processes_and_stops_cleanly():

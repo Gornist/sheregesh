@@ -27,4 +27,6 @@ def test_soak_two_processes_with_faults(qapp, tmp_path):
     if seconds >= 45:            # неисправности цикла действительно проявились и были отработаны
         ev = r["event_counts"]
         assert ev.get("PEER-LOST", 0) >= 1 and ev.get("LINK-BAD-MSG", 0) >= 2, ev
-        assert "no-video" in r["states_seen"]["video"] and "playing" in r["states_seen"]["video"], r["states_seen"]
+        from sheregesh import video as gst
+        if gst.choose_codec() is not None:    # без GStreamer (напр. macOS без пакетов) видео в прогоне нет
+            assert "no-video" in r["states_seen"]["video"] and "playing" in r["states_seen"]["video"], r["states_seen"]

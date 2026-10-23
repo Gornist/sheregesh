@@ -11,10 +11,13 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 from functools import lru_cache
+from pathlib import Path
 
 GST_LAUNCH = "gst-launch-1.0"
 _PR_SET_PDEATHSIG = 1
+_PDEATH = Path(__file__).with_name("pdeath.py")
 
 
 def die_with_parent():
@@ -34,11 +37,15 @@ def spawn(args, **kw):
     """Дочерний процесс GStreamer, который завершается вместе с родителем.
 
     Предпочтительно через setpriv --pdeathsig (util-linux): preexec_fn небезопасен в многопоточном процессе.
+    Вне Linux pdeathsig нет — через сторож pdeath.py. Во всех случаях процесс — лидер своей группы (killpg).
     """
     if shutil.which("setpriv"):
         return subprocess.Popen(["setpriv", "--pdeathsig", "KILL", "--", *args], stdin=subprocess.DEVNULL,
                                 process_group=0, **kw)
-    return subprocess.Popen(args, stdin=subprocess.DEVNULL, preexec_fn=die_with_parent, **kw)
+    if sys.platform.startswith("linux"):
+        return subprocess.Popen(args, stdin=subprocess.DEVNULL, preexec_fn=die_with_parent, **kw)
+    return subprocess.Popen([sys.executable, "-I", str(_PDEATH), "--parent", str(os.getpid()), "--", *args],
+                            stdin=subprocess.DEVNULL, process_group=0, **kw)
 H264_CAPS = "application/x-rtp,media=video,encoding-name=H264,payload=96,clock-rate=90000"
 JPEG_CAPS = "application/x-rtp,media=video,encoding-name=JPEG,payload=26,clock-rate=90000"
 

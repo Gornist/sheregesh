@@ -273,7 +273,14 @@ def test_video_sender_dies_with_crashed_agent():
     import subprocess as sp
     a = Agent("--video", "--video-port", str(free_port(kind=2)), "--video-width", "320", "--video-height", "180")
     try:
-        children = wait_for(lambda: sp.run(["pgrep", "-P", str(a.proc.pid)], capture_output=True, text=True).stdout.split(), 5)
+        def descendants(pid):          # вне Linux между блоком и gst-launch есть сторож pdeath.py
+            kids = sp.run(["pgrep", "-P", str(pid)], capture_output=True, text=True).stdout.split()
+            return kids + [d for k in kids for d in descendants(k)]
+        def gst_running():
+            pids = descendants(a.proc.pid)
+            names = sp.run(["ps", "-o", "comm=", "-p", ",".join(pids)], capture_output=True, text=True).stdout if pids else ""
+            return pids if "gst-launch" in names else []
+        children = wait_for(gst_running, 5)
         assert children, "видеогенератор не запущен"
         a.signal(signal.SIGKILL)
         a.proc.wait(5)
