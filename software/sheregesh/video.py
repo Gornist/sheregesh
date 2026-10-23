@@ -71,17 +71,26 @@ _PROBE_SRC = ["videotestsrc", "num-buffers=10", "!", "video/x-raw,width=320,heig
               "videoconvert", "!", "video/x-raw,format=I420", "!"]
 
 
+PROBE_FAILURES = []   # причины неудачных проб (для журнала: «VIDEO unavailable» без причины не диагностируется)
+
+
 def _pipeline_ok(elements) -> bool:
     """Пробный прогон: наличия элемента мало (заглушка libopenh264 в Ubuntu, недоступный /dev/video* на Pi)."""
     if not shutil.which(GST_LAUNCH):
+        PROBE_FAILURES.append(f"{GST_LAUNCH} not found")
         return False
     try:
         r = subprocess.run([GST_LAUNCH, *_PROBE_SRC, *elements, "!", "fakesink"], capture_output=True, text=True,
                            timeout=20)
     except subprocess.TimeoutExpired:
+        PROBE_FAILURES.append(f"{elements[0]}: timeout 20 s")
         return False
     out = r.stdout + r.stderr
-    return r.returncode == 0 and "Error" not in out and "WARNING" not in out
+    ok = r.returncode == 0 and "Error" not in out and "WARNING" not in out
+    if not ok:
+        tail = " | ".join(x.strip() for x in out.splitlines() if "Error" in x or "WARNING" in x or "ERROR" in x)[-300:]
+        PROBE_FAILURES.append(f"{elements[0]}: rc={r.returncode} {tail or out.strip()[-200:]}")
+    return ok
 
 
 @lru_cache(maxsize=None)

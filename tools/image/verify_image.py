@@ -200,6 +200,14 @@ def verify(img, variant, out):
             emu = root.cat("/usr/lib/systemd/system/sheregesh-remote-emu.service")
             rep.add("emu.loopback", "эмулятор: только 127.0.0.1 (--host и IPAddressDeny/Allow)",
                     "--host 127.0.0.1" in emu and "IPAddressDeny=any" in emu and "IPAddressAllow=localhost" in emu)
+            rep.add("emu.cache", "эмулятор: каталог кэша GStreamer (CacheDirectory)", "CacheDirectory=sheregesh-remote-emu" in emu)
+            rep.add("unit.eeprom-masked", "rpi-eeprom-update замаскирован (обновление EEPROM — явная процедура)",
+                    "/dev/null" in root.run("stat /etc/systemd/system/rpi-eeprom-update.service"))
+            rep.add("resolved.no-llmnr", "systemd-resolved: LLMNR и mDNS выключены (нет 0.0.0.0:5355)",
+                    "LLMNR=no" in (rc := root.cat("/etc/systemd/resolved.conf.d/90-sheregesh.conf")) and "MulticastDNS=no" in rc)
+            rep.add("console-setup.ro", "console-setup не пишет в ro-корень (кэш собран или служба замаскирована)",
+                    any("cached_" in x for x in root.ls("/etc/console-setup")) or
+                    "/dev/null" in root.run("stat /etc/systemd/system/console-setup.service"))
             shadow = {x.split(":")[0]: x.split(":")[1] for x in root.cat("/etc/shadow").splitlines() if x.count(":") >= 2}
             locked = lambda h: h.startswith(("!", "*"))                                    # noqa: E731
             rep.add("users.locked", "root и sheregesh-ui без пароля (заблокированы)",

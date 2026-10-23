@@ -215,7 +215,9 @@ class Agent:
         if self.video_codec:
             print(f"VIDEO codec={self.video_codec} port={self.video_port}", flush=True)
         elif self.args.video:
-            print("VIDEO unavailable", flush=True)
+            why = "; ".join(video.PROBE_FAILURES[-4:]) or ("no gst-launch-1.0/videotestsrc/udpsrc" if not video.available()
+                                                         else "no working codec")
+            print(f"VIDEO unavailable: {why}", flush=True)
         async with server:
             await asyncio.gather(server.serve_forever(), self.ticker())
 

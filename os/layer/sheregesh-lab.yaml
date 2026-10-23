@@ -36,6 +36,17 @@ mmdebstrap:
     - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console
     - |-
       set -eu
+      # Найдено при первой загрузке на Pi 4 (S2-BOOT), корень только для чтения:
+      # console-setup пишет кэш раскладки в /etc при каждой загрузке — готовим кэш при сборке.
+      chroot $1 setupcon --force --save-only || chroot $1 systemctl mask console-setup.service
+      # rpi-eeprom-update готовит обновление загрузчика записью в /boot/firmware; обновление EEPROM —
+      # отдельная явная процедура, не автоматическая (влияет на tryboot, ADR-0006).
+      chroot $1 systemctl mask rpi-eeprom-update.service
+      # systemd-resolved: LLMNR и mDNS слушали 0.0.0.0:5355 в локальной сети — лишняя поверхность (ADR-0002).
+      mkdir -p $1/etc/systemd/resolved.conf.d
+      printf '[Resolve]\nLLMNR=no\nMulticastDNS=no\n' > $1/etc/systemd/resolved.conf.d/90-sheregesh.conf
+    - |-
+      set -eu
       # Манифест (ADR-0002, DOC-006): пакет, версия, архитектура, SHA-256 .deb из индекса репозитория.
       # Собственный пакет помечается local и хешируется отдельно в отчёте сборки.
       mkdir -p $1/usr/share/sheregesh
