@@ -4,3 +4,4 @@ __pycache__/
 *.img
 reports/
 .pytest_cache/
+software/console/sheregesh_console/i18n/*.qm

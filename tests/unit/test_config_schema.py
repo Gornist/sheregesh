@@ -79,3 +79,12 @@ def test_sample_counts_meet_criterion():
 
 def test_services_for_changed_files():
     assert SCHEMA.services_for(["diagnostics.yaml", "system.yaml"]) == ["monitor", "ui"]
+
+
+@pytest.mark.test_id("TEST-CFG-001")
+def test_all_errors_reported_at_once():
+    """Межполевая ошибка одного файла видна вместе с ошибкой схемы в другом файле."""
+    f = replace("diagnostics.yaml", "temp_warning_c: 70", "temp_warning_c: 85")
+    f["link.yaml"] = f["link.yaml"].replace("192.168.77.2", "10.0.0.1")
+    kinds = {(i.file, i.kind) for i in SCHEMA.validate(f)}
+    assert {("diagnostics.yaml", "semantic"), ("link.yaml", "pattern")} <= kinds

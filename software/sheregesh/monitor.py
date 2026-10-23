@@ -105,6 +105,7 @@ class SystemMonitor:
         return max(FAN_MIN, min(FAN_MAX, FAN_MIN + x * (FAN_MAX - FAN_MIN)))
 
     def _request_shutdown(self, t, reason):
+        """reason — код причины (не зависит от языка интерфейса)."""
         if self._shutdown is None:
             self._shutdown = reason
             self.log.raise_(t, "SYS-SHUTDOWN-REQ", reason=reason)
@@ -119,7 +120,7 @@ class SystemMonitor:
             warn, crit = self.diag["temp_warning_c"], self.diag["temp_critical_c"]
             if hottest >= crit:
                 self.log.raise_(t, "TEMP-CRIT", sensor=sensor, value=hottest, limit=crit)
-                self._request_shutdown(t, f"TEMP-CRIT {sensor} {hottest:.1f} °C")
+                self._request_shutdown(t, "TEMP-CRIT")
             elif hottest < crit - HYSTERESIS_C:
                 self.log.resolve(t, "TEMP-CRIT")
             if hottest >= warn:
@@ -145,7 +146,7 @@ class SystemMonitor:
             elif rpm > 0:
                 self.log.resolve(t, "FAN-STALL")
         if self.log.is_active("FAN-STALL") and hottest is not None and hottest >= self.diag["temp_warning_c"]:
-            self._request_shutdown(t, "FAN-STALL и высокая температура")
+            self._request_shutdown(t, "FAN-STALL")
         self._duty = duty
         self.fan.set_duty(duty)
         return rpm
@@ -169,7 +170,7 @@ class SystemMonitor:
             self.log.resolve(t, "PWR-CRIT")
             self.log.resolve(t, "PWR-LOW")
         if on_battery and reading.low_battery:
-            self._request_shutdown(t, "сигнал низкого заряда модуля питания")
+            self._request_shutdown(t, "PWR-LOW-SIGNAL")
 
     def _peer(self, t, st: PeerStatus):
         timeout = self.link["heartbeat_timeout_s"]

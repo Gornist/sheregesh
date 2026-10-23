@@ -148,7 +148,7 @@ def test_battery_thresholds_and_low_signal(bench):
     assert snap.shutdown_requested is None
     bench.power.set_percent(4)      # сигнал модуля «низкий заряд»
     snap = run(bench, 1)
-    assert snap.shutdown_requested and "низкого заряда" in snap.shutdown_requested
+    assert snap.shutdown_requested == "PWR-LOW-SIGNAL"
     bench.power.switch_source("external")
     assert not {"PWR-LOW", "PWR-CRIT"} & set(codes(run(bench, 1)))
 
@@ -218,7 +218,7 @@ def test_every_catalog_entry_has_ru_en_text_and_action(code):
     for lang in ("ru", "en"):
         assert f.text[lang].strip() and f.action[lang].strip()
     params = {"sensor": "soc", "value": 71.2, "limit": 70, "rpm": 5000, "duty": 40, "percent": 15, "source": "battery",
-              "timeout": 3, "peer": "2.0", "local": "1.0", "detail": "x", "revision": "r000002", "reason": "x"}
+              "timeout": 3, "peer": "2.0", "local": "1.0", "detail": "x", "revision": "r000002", "active": "r000001", "reason": "x"}
     for lang in ("ru", "en"):
         text, action = render(code, lang, params)
         assert "{" not in text and "{" not in action
@@ -250,10 +250,23 @@ def test_same_scenario_gives_identical_results():
 
 
 def test_emulators_contain_no_out_of_scope_functionality():
-    """Эмуляторы не реализуют управление аппаратами, радио и внешними исполнительными устройствами."""
+    """Эмуляторы не реализуют управление аппаратами, радио и внешними исполнительными устройствами.
+
+    Перечень запрещённых признаков берётся из сканера (единый источник); дополнительно — отсутствие
+    сетевых и последовательных интерфейсов: эмуляторы работают только в памяти процесса.
+    """
+    import ast
     import inspect
+    import sys
+    from pathlib import Path
 
     import sheregesh_emulators.devices as dev
-    src = inspect.getsource(dev).lower()
-    for word in ("crsf", "elrs", "sbus", "mavlink", "rx5808", "throttle", "servo", "uart", "serial.serial", "socket"):
-        assert word not in src, word
+    import sheregesh_emulators.scenario as scn
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools/security"))
+    import scan
+    for module in (dev, scn):
+        src = inspect.getsource(module)
+        assert not scan.SCOPE_PATTERNS.search(src)
+        imported = {n.names[0].name.split(".")[0] for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Import)}
+        imported |= {(n.module or "").split(".")[0] for n in ast.walk(ast.parse(src)) if isinstance(n, ast.ImportFrom)}
+        assert not imported & {"socket", "serial", "ssl", "http", "urllib", "subprocess", "gpiozero", "smbus", "spidev"}

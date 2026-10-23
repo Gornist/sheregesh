@@ -45,7 +45,7 @@ class Step:
     action: str              # имя метода эмулятора
     args: tuple = ()
     kwargs: dict = field(default_factory=dict)
-    label: str = ""
+    label: str | dict = ""      # строка или {"ru": ..., "en": ...}
 
 
 @dataclass

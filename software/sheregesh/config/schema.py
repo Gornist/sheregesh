@@ -79,8 +79,9 @@ class Schema:
                     continue
                 issues.append(ValidationIssue(name, path, kind, err.message))
             parsed[name] = data
-        if not issues:
-            issues += self._semantic(parsed)
+        # Межполевые правила — для каждого файла без собственных ошибок схемы, чтобы все ошибки были видны сразу.
+        clean = {n: d for n, d in parsed.items() if not any(i.file == n for i in issues)}
+        issues += self._semantic(clean)
         return parsed, issues
 
     def validate(self, files: dict):
