@@ -14,7 +14,7 @@ from PySide6.QtQuick import QQuickItem
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtTest import QTest
 
-from sheregesh_console.app import I18N, QML, Ui, compile_translations
+from sheregesh_console.app import I18N, QML, Ui, compile_translations, qt_tool
 from sheregesh_console.backend import Backend
 from sheregesh_emulators.demo import DEMO
 
@@ -101,9 +101,9 @@ def test_language_switch_without_restart(ui):
 @pytest.mark.test_id("TEST-UI-001")
 def test_translation_complete_for_all_qml_strings(tmp_path):
     """Повторное извлечение строк из QML не находит непереведённых или новых строк."""
-    tool = shutil.which("pyside6-lupdate") or shutil.which("lupdate")
-    if tool is None:
-        pytest.skip("lupdate не установлен")
+    tools = qt_tool("lupdate")
+    assert tools, "lupdate не найден — полноту перевода проверить нельзя"
+    tool = tools[0]
     ts = tmp_path / "check.ts"
     shutil.copy(I18N / "sheregesh_ru.ts", ts)
     subprocess.run([tool, *map(str, sorted(QML.glob("*.qml"))), "-ts", str(ts), "-no-obsolete"],

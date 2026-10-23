@@ -7,6 +7,7 @@
 """
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,13 @@ I18N = PKG / "i18n"
 LANGS = ("ru",)   # исходные строки QML — английские; переводы — файлы .ts/.qm
 
 
+def qt_tool(name):
+    """Кандидаты инструмента Qt: рядом с интерпретатором (.venv/bin), в PATH, в каталоге Qt дистрибутива."""
+    here = Path(sys.executable).parent
+    out = [str(here / f"pyside6-{name}"), f"pyside6-{name}", name, f"/usr/lib/qt6/bin/{name}"]
+    return [c for c in out if shutil.which(c)]
+
+
 def compile_translations(out_dir: Path = I18N) -> list[Path]:
     """Собирает .qm из .ts (pyside6-lrelease или lrelease). На устройстве .qm входят в пакет."""
     out = []
@@ -34,7 +42,7 @@ def compile_translations(out_dir: Path = I18N) -> list[Path]:
         if qm.exists() and qm.stat().st_mtime >= ts.stat().st_mtime:
             out.append(qm)
             continue
-        for tool in ("pyside6-lrelease", "lrelease"):
+        for tool in qt_tool("lrelease"):
             try:
                 subprocess.run([tool, "-silent", str(ts), "-qm", str(qm)], check=True, capture_output=True)
                 out.append(qm)
