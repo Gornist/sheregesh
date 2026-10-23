@@ -41,7 +41,7 @@ LAYOUT = [  # (имя GPT, ФС, размер в байтах или None — н
 ]
 MIN_DATA = 1024 * MiB
 ALIGN = 8 * MiB
-UNITS = ("seatd", "sheregesh-remote-emu", "sheregesh-console")
+UNITS = ("seatd", "sheregesh-remote-emu", "sheregesh-console", "sheregesh-remote-net")
 
 
 class Report:
@@ -200,6 +200,15 @@ def verify(img, variant, out):
             emu = root.cat("/usr/lib/systemd/system/sheregesh-remote-emu.service")
             rep.add("emu.loopback", "эмулятор: только 127.0.0.1 (--host и IPAddressDeny/Allow)",
                     "--host 127.0.0.1" in emu and "IPAddressDeny=any" in emu and "IPAddressAllow=localhost" in emu)
+            for u in ("sheregesh-console", "sheregesh-remote-emu", "sheregesh-remote-net"):
+                text = root.cat(f"/usr/lib/systemd/system/{u}.service")
+                rep.add(f"unit.{u}.notify", f"{u}: Type=notify, WatchdogSec, ограничение перезапусков (ADR-0002)",
+                        "Type=notify" in text and "WatchdogSec=" in text and "StartLimitBurst=" in text)
+            net = root.cat("/usr/lib/systemd/system/sheregesh-remote-net.service")
+            rep.add("net.conditions", "sheregesh-remote-net не стартует без роли, ключа, сертификата и CA",
+                    all(f"ConditionPathExists=/home/sheregesh-ui/{p}" in net for p in
+                        (".config/sheregesh/remote.role", ".local/share/sheregesh/link/device.key",
+                         ".local/share/sheregesh/link/ca.crt")) and "IPAddressDeny=any" in net)
             rep.add("emu.cache", "эмулятор: каталог кэша GStreamer и HOME (CacheDirectory)",
                     "CacheDirectory=sheregesh-remote-emu" in emu and "Environment=HOME=%C/sheregesh-remote-emu" in emu)
             nss = next((x for x in root.cat("/etc/nsswitch.conf").splitlines() if x.startswith("passwd:")), "")

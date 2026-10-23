@@ -36,13 +36,15 @@ DEPENDS = [
     "gstreamer1.0-tools", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good", "gstreamer1.0-x",
     "gstreamer1.0-plugins-bad",   # h264parse (videoparsersbad) — связка v4l2 H.264 на Pi 4
     "util-linux",
-    "cage", "seatd",
+    "cage", "seatd", "openssl",
 ]
 WRAPPERS = {   # команда → модуль (-m) или скрипт из /usr/lib/sheregesh (пробы S2 и длительный прогон)
     "usr/bin/sheregesh-console": "sheregesh_console",
     "usr/bin/sheregesh-remote-emu": "sheregesh_remote",
     "usr/bin/sheregesh-probe": "tools/probe/s2probe.py",
     "usr/bin/sheregesh-soak": "tools/dev/soak.py",
+    "usr/bin/sheregesh-link": "sheregesh.link.pki",       # ключи и сертификаты устройства (S3.1)
+    "usr/bin/sheregesh-health": "sheregesh.health",       # диагностическая проверка здоровья (S3.1)
 }
 UNITS = Path(__file__).resolve().parent / "units"
 POSTINST = """#!/bin/sh
@@ -104,7 +106,7 @@ def build_tree(stage: Path):
         f.write_text(f"#!/bin/sh\n# {PKG}: запуск {module} из /{PREFIX}\nexport PYTHONPATH={PYTHONPATH}\n"
                      f"exec /usr/bin/python3 {target} \"$@\"\n")
         f.chmod(0o755)
-    for unit in sorted(UNITS.glob("*.service")):
+    for unit in sorted([*UNITS.glob("*.service"), *UNITS.glob("*.timer")]):
         dst = stage / "usr/lib/systemd/system" / unit.name
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(unit, dst)
