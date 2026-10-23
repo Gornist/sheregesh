@@ -20,6 +20,10 @@ ApplicationWindow {
     function stateColor(state) {
         return state === "fault" ? p.fault : state === "warning" ? p.warning : state === "boot" ? p.boot : p.ok
     }
+    function num(v, digits) {        // дробная часть: запятая в RU, точка в EN; без разделителя тысяч
+        var t = Number(v).toFixed(digits)
+        return backend.language === "ru" ? t.replace(".", ",") : t
+    }
     function stateText(state) {
         return state === "fault" ? qsTr("Fault") : state === "warning" ? qsTr("Warning")
              : state === "boot" ? qsTr("Starting") : qsTr("Normal")
@@ -131,7 +135,7 @@ ApplicationWindow {
             spacing: 32 * win.s
             Label {
                 objectName: "footerTime"
-                text: qsTr("Model time %1\u00a0s").arg(st.t.toFixed(1))
+                text: qsTr("Model time %1\u00a0s").arg(win.num(st.t, 1))
                 color: p.muted
             }
             Label {

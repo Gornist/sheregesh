@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Каталог диагностических событий (REQ-UI-003): код, важность, текст и действия RU/EN."""
+import re
+import string
 from dataclasses import dataclass
 
 INFO, WARNING, ERROR = "info", "warning", "error"
@@ -114,9 +116,22 @@ CATALOG = {f.code: f for f in [
 ]}
 
 
+class _RuFormatter(string.Formatter):
+    """Дробные значения с запятой: 75,3 °C."""
+    def format_field(self, value, spec):
+        text = super().format_field(value, spec)
+        return text.replace(".", ",") if isinstance(value, float) else text
+
+
+_FORMATTERS = {"ru": _RuFormatter(), "en": string.Formatter()}
+_UNIT = re.compile(r"(\d) (°C|%|с|мс|s|ms|об/мин|rpm)(?=[^\w%]|$)")
+
+
 def render(code, lang, params):
+    """Текст события и действия на языке lang; число и единица связаны неразрывным пробелом."""
     f = CATALOG[code]
     try:
-        return f.text[lang].format(**params), f.action[lang]
+        text = _FORMATTERS[lang].format(f.text[lang], **params)
     except (KeyError, ValueError, IndexError):
-        return f.text[lang], f.action[lang]
+        text = f.text[lang]
+    return _UNIT.sub("\\1\u00a0\\2", text), f.action[lang]

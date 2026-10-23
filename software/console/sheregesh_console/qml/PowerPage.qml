@@ -31,7 +31,7 @@ Item {
             KeyNavigation.right: remoteTile
             Label {
                 objectName: "consolePowerValue"
-                text: st.powerAvailable ? qsTr("%1\u00a0%").arg(st.powerPercent.toFixed(0)) : qsTr("No data")
+                text: st.powerAvailable ? qsTr("%1\u00a0%").arg(win.num(st.powerPercent, 0)) : qsTr("No data")
                 font.pixelSize: page.big
                 font.bold: true
             }
@@ -54,7 +54,7 @@ Item {
             KeyNavigation.left: consoleTile
             Label {
                 objectName: "remotePowerValue"
-                text: st.remotePowerPercent >= 0 ? qsTr("%1\u00a0%").arg(st.remotePowerPercent.toFixed(0)) : qsTr("No data")
+                text: st.remotePowerPercent >= 0 ? qsTr("%1\u00a0%").arg(win.num(st.remotePowerPercent, 0)) : qsTr("No data")
                 font.pixelSize: page.big
                 font.bold: true
             }

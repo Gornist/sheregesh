@@ -55,7 +55,7 @@ Item {
             KeyNavigation.down: tileEvents
             Label {
                 objectName: "powerValue"
-                text: st.powerAvailable ? qsTr("%1\u00a0%").arg(st.powerPercent.toFixed(0)) : qsTr("No data")
+                text: st.powerAvailable ? qsTr("%1\u00a0%").arg(win.num(st.powerPercent, 0)) : qsTr("No data")
                 font.pixelSize: page.big
                 font.bold: true
             }
@@ -102,12 +102,12 @@ Item {
                 objectName: "remoteTelemetry"
                 Layout.fillWidth: true; wrapMode: Text.WordWrap
                 visible: st.remoteAvailable && st.peerState === "connected"
-                text: qsTr("SoC %1\u00a0°C · power %2\u00a0% · uptime %3\u00a0s").arg(st.remoteTempSoc.toFixed(1)).arg(st.remotePowerPercent.toFixed(0)).arg(st.remoteUptime.toFixed(0))
+                text: qsTr("SoC %1\u00a0°C · power %2\u00a0% · uptime %3\u00a0s").arg(win.num(st.remoteTempSoc, 1)).arg(win.num(st.remotePowerPercent, 0)).arg(win.num(st.remoteUptime, 0))
                 color: win.p.muted
             }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: qsTr("Protocol: remote %1 / console %2").arg(st.peerProtocol).arg(st.localProtocol); color: win.p.muted }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap;
-                text: st.peerHeartbeatAge >= 0 ? qsTr("Last heartbeat %1\u00a0s ago").arg(st.peerHeartbeatAge.toFixed(1)) : qsTr("No heartbeat")
+                text: st.peerHeartbeatAge >= 0 ? qsTr("Last heartbeat %1\u00a0s ago").arg(win.num(st.peerHeartbeatAge, 1)) : qsTr("No heartbeat")
                 color: win.p.muted
             }
         }
@@ -124,11 +124,11 @@ Item {
             KeyNavigation.right: tileEvents
             Label {
                 objectName: "tempValue"
-                text: st.tempAvailable ? qsTr("SoC %1\u00a0°C").arg(st.tempSoc.toFixed(1)) : qsTr("No data")
+                text: st.tempAvailable ? qsTr("SoC %1\u00a0°C").arg(win.num(st.tempSoc, 1)) : qsTr("No data")
                 font.pixelSize: page.big
                 font.bold: true
             }
-            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: st.tempAvailable; text: qsTr("Board %1\u00a0°C").arg(st.tempBoard.toFixed(1)); color: win.p.muted }
+            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: st.tempAvailable; text: qsTr("Board %1\u00a0°C").arg(win.num(st.tempBoard, 1)); color: win.p.muted }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap;
                 objectName: "fanValue"
                 text: st.fanRpm >= 0 ? qsTr("Fan %1\u00a0% · %2 rpm").arg(st.fanDuty).arg(st.fanRpm) : qsTr("Fan %1\u00a0% · no speed signal").arg(st.fanDuty)

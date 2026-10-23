@@ -79,7 +79,7 @@ Item {
                         spacing: 4 * win.s
                         RowLayout {
                             spacing: 12 * win.s
-                            Label { text: qsTr("%1\u00a0s").arg(modelData.t.toFixed(1)); color: win.p.muted }
+                            Label { text: qsTr("%1\u00a0s").arg(win.num(modelData.t, 1)); color: win.p.muted }
                             Label { text: modelData.code; font.bold: true }
                             Label {
                                 text: modelData.severity === "error" ? qsTr("error") : modelData.severity === "warning" ? qsTr("warning") : qsTr("info")
@@ -87,7 +87,7 @@ Item {
                             }
                             Item { Layout.fillWidth: true }
                             Label {
-                                text: modelData.active ? qsTr("ACTIVE") : modelData.resolved >= 0 ? qsTr("resolved at %1\u00a0s").arg(modelData.resolved.toFixed(1)) : qsTr("logged")
+                                text: modelData.active ? qsTr("ACTIVE") : modelData.resolved >= 0 ? qsTr("resolved at %1\u00a0s").arg(win.num(modelData.resolved, 1)) : qsTr("logged")
                                 color: modelData.active ? win.p.warning : win.p.muted
                                 font.bold: modelData.active
                             }

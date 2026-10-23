@@ -239,6 +239,15 @@ def test_every_catalog_entry_has_ru_en_text_and_action(code):
 
 
 @pytest.mark.test_id("TEST-UI-003")
+def test_event_text_number_format_follows_language():
+    """RU: десятичная запятая; число и единица не разрываются переносом строки (RU и EN)."""
+    params = {"sensor": "SoC", "value": 75.34, "limit": 70.0}
+    assert render("TEMP-HIGH", "ru", params)[0] == "Высокая температура SoC: 75,3 °C (порог 70 °C)"
+    assert render("TEMP-HIGH", "en", params)[0] == "High SoC temperature: 75.3 °C (limit 70 °C)"
+    assert render("CFG-APPLIED", "ru", {"revision": "1.2"})[0].endswith("1.2")   # строки не меняются, только дроби
+
+
+@pytest.mark.test_id("TEST-UI-003")
 @pytest.mark.parametrize("code", sorted(c for c, f in CATALOG.items() if f.latched))
 def test_every_latched_fault_can_be_injected_and_cleared(bench, code):
     bench.events.inject(code)

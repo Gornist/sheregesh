@@ -74,7 +74,7 @@ Item {
                 Label { text: qsTr("Protocol / session"); color: win.p.muted }
                 Label { text: (st.peerProtocol !== "" ? st.peerProtocol : "—") + " / " + (st.peerSession !== "" ? st.peerSession : "—"); Layout.fillWidth: true }
                 Label { text: qsTr("Uptime"); color: win.p.muted }
-                Label { text: st.remoteUptime >= 0 ? qsTr("%1\u00a0s").arg(st.remoteUptime.toFixed(0)) : "—"; Layout.fillWidth: true }
+                Label { text: st.remoteUptime >= 0 ? qsTr("%1\u00a0s").arg(win.num(st.remoteUptime, 0)) : "—"; Layout.fillWidth: true }
             }
         }
 

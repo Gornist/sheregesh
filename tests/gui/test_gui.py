@@ -117,6 +117,18 @@ def test_translation_complete_for_all_qml_strings(tmp_path):
 
 
 @pytest.mark.test_id("TEST-UI-001")
+def test_decimal_separator_follows_language(ui):
+    """RU — десятичная запятая (75,3), EN — точка; в текстах событий так же."""
+    ui.backend.run_until(DEMO.checkpoints["warning"])
+    set_appearance(ui, language="ru")
+    assert re.fullmatch(r"SoC \d+,\d\u00a0°C", obj(ui, "tempValue").property("text"))
+    temp = [e["text"] for e in ui.backend.activeEvents if e["code"] == "TEMP-HIGH"]
+    assert temp and all(re.search(r"\d,\d\u00a0°C", t) for t in temp), temp
+    set_appearance(ui, language="en")
+    assert re.fullmatch(r"SoC \d+\.\d\u00a0°C", obj(ui, "tempValue").property("text"))
+
+
+@pytest.mark.test_id("TEST-UI-001")
 def test_number_and_unit_never_split_across_lines():
     """Число и единица связаны неразрывным пробелом (дефект S1.5: «с» в плитке связи при 150 % на отдельной строке)."""
     unit = re.compile(r"%\d (s|ms|с|мс|°C|fps|к/с|%)(?=[^\w%]|$)")

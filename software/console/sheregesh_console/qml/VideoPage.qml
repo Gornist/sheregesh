@@ -40,7 +40,7 @@ Item {
                 objectName: "videoInfo"
                 text: qsTr("Synthetic test pattern · %1 · port %2 · %3\u00a0fps · frames %4 · decoder restarts %5")
                       .arg(rx.codec !== "" ? rx.codec.toUpperCase() : "—").arg(rx.port > 0 ? rx.port : "—")
-                      .arg(rx.fps.toFixed(0)).arg(rx.frames).arg(rx.restarts)
+                      .arg(win.num(rx.fps, 0)).arg(rx.frames).arg(rx.restarts)
                 color: win.p.muted
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
