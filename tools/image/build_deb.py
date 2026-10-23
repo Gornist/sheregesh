@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PKG = "sheregesh"
 PREFIX = "usr/lib/sheregesh"
 SOURCES = ["software/sheregesh", "software/emulators/sheregesh_emulators", "software/console/sheregesh_console",
-           "software/remote/sheregesh_remote"]
+           "software/remote/sheregesh_remote", "tools/probe/s2probe.py", "tools/dev/soak.py"]
 PYTHONPATH = ":".join(f"/{PREFIX}/{p}" for p in ("software", "software/emulators", "software/console", "software/remote"))
 DEPENDS = [
     "python3 (>= 3.11)", "python3-yaml", "python3-jsonschema",
@@ -34,12 +34,15 @@ DEPENDS = [
     "qml6-module-qtquick-templates", "qml6-module-qtquick-window", "qml6-module-qtqml-workerscript",
     "qt6-wayland", "fonts-dejavu-core",
     "gstreamer1.0-tools", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good", "gstreamer1.0-x",
+    "gstreamer1.0-plugins-bad",   # h264parse (videoparsersbad) — связка v4l2 H.264 на Pi 4
     "util-linux",
     "cage", "seatd",
 ]
-WRAPPERS = {
+WRAPPERS = {   # команда → модуль (-m) или скрипт из /usr/lib/sheregesh (пробы S2 и длительный прогон)
     "usr/bin/sheregesh-console": "sheregesh_console",
     "usr/bin/sheregesh-remote-emu": "sheregesh_remote",
+    "usr/bin/sheregesh-probe": "tools/probe/s2probe.py",
+    "usr/bin/sheregesh-soak": "tools/dev/soak.py",
 }
 UNITS = Path(__file__).resolve().parent / "units"
 POSTINST = """#!/bin/sh
@@ -97,8 +100,9 @@ def build_tree(stage: Path):
     for path, module in WRAPPERS.items():
         f = stage / path
         f.parent.mkdir(parents=True, exist_ok=True)
+        target = f"/{PREFIX}/{module}" if module.endswith(".py") else f"-m {module}"
         f.write_text(f"#!/bin/sh\n# {PKG}: запуск {module} из /{PREFIX}\nexport PYTHONPATH={PYTHONPATH}\n"
-                     f"exec /usr/bin/python3 -m {module} \"$@\"\n")
+                     f"exec /usr/bin/python3 {target} \"$@\"\n")
         f.chmod(0o755)
     for unit in sorted(UNITS.glob("*.service")):
         dst = stage / "usr/lib/systemd/system" / unit.name

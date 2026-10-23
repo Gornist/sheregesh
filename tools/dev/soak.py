@@ -84,7 +84,6 @@ def run(seconds, out_dir=None):
     from PySide6.QtCore import QElapsedTimer, QTimer, qInstallMessageHandler
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtQuickControls2 import QQuickStyle
-    from PySide6.QtTest import QTest
 
     from sheregesh_console.qtwait import pump, wait_until
     from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations
