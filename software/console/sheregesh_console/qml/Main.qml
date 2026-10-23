@@ -41,9 +41,14 @@ ApplicationWindow {
     palette.light: p.panel
     palette.dark: p.border
 
-    Shortcut { sequences: ["Ctrl+1", "F1"]; onActivated: { tabs.currentIndex = 0; tabs.forceActiveFocus() } }
-    Shortcut { sequences: ["Ctrl+2", "F2"]; onActivated: { tabs.currentIndex = 1; tabs.forceActiveFocus() } }
-    Shortcut { sequences: ["Ctrl+3", "F3"]; onActivated: { tabs.currentIndex = 2; tabs.forceActiveFocus() } }
+    // Экраны: Ctrl+1…7 или F1…F7 (без сенсора, REQ-P-003)
+    Repeater {
+        model: 7
+        delegate: Item {
+            required property int index
+            Shortcut { sequences: ["Ctrl+" + (index + 1), "F" + (index + 1)]; onActivated: { tabs.currentIndex = index; tabs.forceActiveFocus() } }
+        }
+    }
     Shortcut { sequence: "Escape"; onActivated: tabs.forceActiveFocus() }
 
     header: Rectangle {
@@ -90,9 +95,13 @@ ApplicationWindow {
                 Keys.onLeftPressed: decrementCurrentIndex()
                 Keys.onRightPressed: incrementCurrentIndex()
                 Keys.onDownPressed: pages.children[currentIndex].forceActiveFocus()
-                TabButton { objectName: "tabDashboard"; text: qsTr("Dashboard"); width: implicitWidth + 40 * win.s }
-                TabButton { objectName: "tabDiagnostics"; text: qsTr("Diagnostics") + (st.activeCount > 0 ? " (" + st.activeCount + ")" : ""); width: implicitWidth + 40 * win.s }
-                TabButton { objectName: "tabSettings"; text: qsTr("Settings"); width: implicitWidth + 40 * win.s }
+                TabButton { objectName: "tabDashboard"; text: qsTr("Dashboard"); width: implicitWidth + 32 * win.s }
+                TabButton { objectName: "tabVideo"; text: qsTr("Video"); width: implicitWidth + 32 * win.s }
+                TabButton { objectName: "tabDiagnostics"; text: qsTr("Diagnostics") + (st.activeCount > 0 ? " (" + st.activeCount + ")" : ""); width: implicitWidth + 32 * win.s }
+                TabButton { objectName: "tabPower"; text: qsTr("Power"); width: implicitWidth + 32 * win.s }
+                TabButton { objectName: "tabLogs"; text: qsTr("Logs"); width: implicitWidth + 32 * win.s }
+                TabButton { objectName: "tabSettings"; text: qsTr("Settings"); width: implicitWidth + 32 * win.s }
+                TabButton { objectName: "tabAbout"; text: qsTr("About"); width: implicitWidth + 32 * win.s }
             }
         }
     }
@@ -103,8 +112,12 @@ ApplicationWindow {
         anchors.margins: 16 * win.s
         currentIndex: tabs.currentIndex
         DashboardPage { objectName: "dashboardPage" }
+        VideoPage { objectName: "videoPage" }
         DiagnosticsPage { objectName: "diagnosticsPage" }
+        PowerPage { objectName: "powerPage" }
+        LogsPage { objectName: "logsPage" }
         SettingsPage { objectName: "settingsPage" }
+        AboutPage { objectName: "aboutPage" }
     }
 
     footer: Rectangle {

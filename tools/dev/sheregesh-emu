@@ -2,12 +2,15 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Запуск пульта «Шерегеш» на эмуляторах одной командой (x86/Linux, без Raspberry Pi).
-#   tools/dev/sheregesh-emu --demo              демонстрационный сценарий в окне
-#   tools/dev/sheregesh-emu --demo --speed 10   ускорение модельного времени
+# Запуск программного стенда «Шерегеш» одной командой (x86/Linux, без Raspberry Pi).
+#   tools/dev/sheregesh-emu --demo              два процесса: удалённый блок (+ видео) и пульт, сценарий S1.5
+#   tools/dev/sheregesh-emu                     два процесса без сценария
+#   tools/dev/sheregesh-emu --single --demo     один процесс: удалённый блок эмулируется внутри пульта
 #   tools/dev/sheregesh-emu --screenshots DIR   снимки экранов без дисплея и выход
+#   tools/dev/sheregesh-emu --gallery DIR       полная матрица снимков (темы × масштабы × языки × состояния)
+#   tools/dev/sheregesh-emu --soak SECONDS      длительный прогон двух процессов с контролем памяти
 #   tools/dev/sheregesh-emu --test              все автотесты
-# Окружение: .venv в корне репозитория создаётся при первом запуске из tools/ci/requirements-dev.txt.
+# Связь между процессами — только 127.0.0.1. Окружение .venv создаётся при первом запуске.
 # SHEREGESH_SYSTEM_PYTHON=1 — использовать уже установленные пакеты вместо .venv.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -20,10 +23,32 @@ if [[ "${SHEREGESH_SYSTEM_PYTHON:-0}" != 1 ]]; then
   fi
   PY="$ROOT/.venv/bin/python"
 fi
-export PYTHONPATH="$ROOT/software:$ROOT/software/emulators:$ROOT/software/console${PYTHONPATH:+:$PYTHONPATH}"
-if [[ "${1:-}" == "--test" ]]; then
+export PYTHONPATH="$ROOT/software:$ROOT/software/emulators:$ROOT/software/console:$ROOT/software/remote${PYTHONPATH:+:$PYTHONPATH}"
+cd "$ROOT"
+case "${1:-}" in
+  --test)    shift; exec env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software "$PY" -m pytest "$@" ;;
+  --gallery) shift; exec env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software "$PY" tools/dev/gallery.py "$@" ;;
+  --soak)    shift; exec env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software "$PY" tools/dev/soak.py "$@" ;;
+esac
+SINGLE=0; DEMO=0; SPEED=4; ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --single) SINGLE=1 ;;
+    --demo) DEMO=1; ARGS+=("$1") ;;
+    --speed) SPEED="$2"; ARGS+=("$1" "$2"); shift ;;
+    --screenshots) SINGLE=1; ARGS+=("$1") ;;
+    *) ARGS+=("$1") ;;
+  esac
   shift
-  cd "$ROOT"
-  exec env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software "$PY" -m pytest "$@"
+done
+if [[ $SINGLE == 1 ]]; then
+  exec "$PY" -m sheregesh_console --local-video "${ARGS[@]}"
 fi
-exec "$PY" -m sheregesh_console "$@"
+PORT="${SHEREGESH_PORT:-7700}"; VPORT="${SHEREGESH_VIDEO_PORT:-5600}"
+REMOTE=("$PY" -m sheregesh_remote --port "$PORT" --video --video-port "$VPORT" --speed "$SPEED")
+[[ $DEMO == 1 ]] && REMOTE+=(--scenario demo-s1)
+"${REMOTE[@]}" > /dev/null &
+RPID=$!
+trap 'kill $RPID 2>/dev/null || true; wait $RPID 2>/dev/null || true' EXIT INT TERM
+echo "Удалённый блок: процесс $RPID, 127.0.0.1:$PORT, видео UDP $VPORT" >&2
+"$PY" -m sheregesh_console --peer "127.0.0.1:$PORT" "${ARGS[@]}"

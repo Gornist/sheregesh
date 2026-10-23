@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Запуск GUI пульта на эмуляторах.
 
-  python3 -m sheregesh_console [--demo] [--speed N] [--data-dir DIR]
+  python3 -m sheregesh_console [--demo] [--speed N] [--data-dir DIR] [--peer 127.0.0.1:PORT] [--local-video]
   python3 -m sheregesh_console --demo --screenshots DIR     # снимки экранов и выход (без дисплея)
 """
 import argparse
@@ -15,16 +15,20 @@ from pathlib import Path
 
 from PySide6.QtCore import QTimer, QTranslator, QUrl
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
 from PySide6.QtQuick import QQuickWindow  # noqa: F401 — регистрирует тип окна для rootObjects()
 from PySide6.QtQuickControls2 import QQuickStyle
 
 from .backend import Backend
+from .video import VideoView
+
+qmlRegisterType(VideoView, "Sheregesh", 1, 0, "VideoView")
 
 PKG = Path(__file__).resolve().parent
 QML = PKG / "qml"
 I18N = PKG / "i18n"
-LANGS = ("ru",)   # исходные строки QML — английские; переводы — файлы .ts/.qm
+LANGS = ("ru",)
+PAGE_NAMES = ["dashboard", "video", "diagnostics", "power", "logs", "settings", "about"]   # порядок вкладок Main.qml   # исходные строки QML — английские; переводы — файлы .ts/.qm
 
 
 def qt_tool(name):
@@ -112,20 +116,20 @@ def capture_demo(ui: Ui, out_dir: Path):
     shots = []
 
     def shot(name, page):
-        ui.window.setProperty("currentPage", page)
+        ui.window.setProperty("currentPage", PAGE_NAMES.index(page) if isinstance(page, str) else page)
         shots.append(ui.grab(out_dir / f"{name}.png"))
 
     b.run_until(DEMO.checkpoints["start"]);     shot("01-dashboard-normal", 0)
     b.run_until(DEMO.checkpoints["heating"]);   shot("02-dashboard-heating", 0)
     b.run_until(DEMO.checkpoints["warning"]);   shot("03-dashboard-warning", 0)
-    b.run_until(DEMO.checkpoints["peer-lost"]); shot("04-dashboard-peer-lost", 0); shot("05-diagnostics-events", 1)
-    b.run_until(DEMO.checkpoints["recovered"]); shot("06-dashboard-recovered", 0); shot("07-diagnostics-history", 1)
-    shot("08-settings-ru", 2)
+    b.run_until(DEMO.checkpoints["peer-lost"]); shot("04-dashboard-peer-lost", 0); shot("05-diagnostics-events", "diagnostics")
+    b.run_until(DEMO.checkpoints["recovered"]); shot("06-dashboard-recovered", 0); shot("07-diagnostics-history", "diagnostics")
+    shot("08-settings-ru", "settings")
     form = dict(b.config)
     form.update(language="en", theme="light", ui_scale=125)
     b.applyForm(form, True)
     b.reload()                                   # повторная загрузка с диска
-    shot("09-settings-en-light-125", 2)
+    shot("09-settings-en-light-125", "settings")
     shot("10-dashboard-en-light-125", 0)
     return shots
 
@@ -137,7 +141,16 @@ def main(argv=None):
     ap.add_argument("--speed", type=float, default=4.0, help="ускорение модельного времени (по умолчанию 4)")
     ap.add_argument("--data-dir", help="каталог данных эмулятора (по умолчанию временный)")
     ap.add_argument("--screenshots", metavar="DIR", help="снять экраны сценария в DIR и выйти")
+    ap.add_argument("--peer", metavar="HOST:PORT",
+                    help="отдельный процесс удалённого блока (только 127.0.0.1); без параметра блок эмулируется в процессе")
+    ap.add_argument("--local-video", action="store_true", help="локальный синтетический видеогенератор (без удалённого блока)")
     args = ap.parse_args(argv)
+    peer = None
+    if args.peer:
+        host, _, port = args.peer.rpartition(":")
+        if not host.startswith("127.") or not port.isdigit():
+            ap.error("--peer: только 127.0.0.1:ПОРТ")
+        peer = (host, int(port))
 
     if args.screenshots:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -148,7 +161,7 @@ def main(argv=None):
     compile_translations()
     data_dir = Path(args.data_dir) if args.data_dir else Path(tempfile.mkdtemp(prefix="sheregesh-emu-"))
     backend = Backend(data_dir, demo=args.demo or bool(args.screenshots), speed=args.speed,
-                      autostart=not args.screenshots)
+                      autostart=not args.screenshots, peer=peer, local_video=args.local_video)
     ui = Ui(backend)
     print(f"Данные эмулятора: {data_dir}", flush=True)
     if args.screenshots:

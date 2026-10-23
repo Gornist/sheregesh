@@ -96,10 +96,9 @@ class Agent:
     def video_start(self):
         if not self.video_codec or self.video_proc is not None:
             return
-        self.video_proc = subprocess.Popen(
+        self.video_proc = video.spawn(
             video.sender_args(self.video_codec, self.video_port, self.args.video_width, self.args.video_height,
-                              self.args.video_fps), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True)
+                              self.args.video_fps), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def video_stop(self):
         if self.video_proc is not None:

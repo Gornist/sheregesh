@@ -6,11 +6,39 @@
 Кодек: H.264 (openh264enc → avdec_h264/openh264dec), при отсутствии — MJPEG (jpegenc → jpegdec).
 На Pi 4 кодирование и декодирование будут аппаратными (v4l2h264enc/v4l2h264dec) — проверяется на S2.
 """
+import ctypes
+import os
 import shutil
+import signal
 import subprocess
 from functools import lru_cache
 
 GST_LAUNCH = "gst-launch-1.0"
+_PR_SET_PDEATHSIG = 1
+
+
+def die_with_parent():
+    """preexec_fn: новая группа процессов и SIGKILL при смерти родителя (Linux).
+
+    Без этого аварийное завершение эмулятора или пульта оставляет живой gst-launch-1.0, который
+    продолжает слать или принимать поток (дефект найден интеграционным тестом S1.5).
+    """
+    os.setsid()
+    try:
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def spawn(args, **kw):
+    """Дочерний процесс GStreamer, который завершается вместе с родителем.
+
+    Предпочтительно через setpriv --pdeathsig (util-linux): preexec_fn небезопасен в многопоточном процессе.
+    """
+    if shutil.which("setpriv"):
+        return subprocess.Popen(["setpriv", "--pdeathsig", "KILL", "--", *args], stdin=subprocess.DEVNULL,
+                                process_group=0, **kw)
+    return subprocess.Popen(args, stdin=subprocess.DEVNULL, preexec_fn=die_with_parent, **kw)
 H264_CAPS = "application/x-rtp,media=video,encoding-name=H264,payload=96,clock-rate=90000"
 JPEG_CAPS = "application/x-rtp,media=video,encoding-name=JPEG,payload=26,clock-rate=90000"
 
@@ -26,10 +54,28 @@ def available() -> bool:
     return shutil.which(GST_LAUNCH) is not None and has_element("videotestsrc") and has_element("udpsrc")
 
 
+ENCODERS = {"h264": ["openh264enc", "complexity=0", "gop-size=30", "bitrate=2000000", "!",
+                      "rtph264pay", "config-interval=1", "pt=96"],
+            "jpeg": ["jpegenc", "quality=70", "!", "rtpjpegpay"]}
+
+
+@lru_cache(maxsize=None)
+def codec_works(codec) -> bool:
+    """Пробное кодирование 3 кадров. Наличия элемента мало: в Ubuntu libopenh264 бывает заглушкой без кодирования."""
+    if not shutil.which(GST_LAUNCH):
+        return False
+    r = subprocess.run([GST_LAUNCH, "videotestsrc", "num-buffers=3", "!", "video/x-raw,width=64,height=64", "!",
+                        "videoconvert", "!", "video/x-raw,format=I420", "!", *ENCODERS[codec], "!", "fakesink"],
+                       capture_output=True, text=True, timeout=20)
+    out = r.stdout + r.stderr
+    return r.returncode == 0 and "Error" not in out and "WARNING" not in out
+
+
 def choose_codec(prefer="h264"):
     h264 = has_element("openh264enc") and has_element("rtph264pay") and \
-        (has_element("avdec_h264") or has_element("openh264dec")) and has_element("rtph264depay")
-    jpeg = has_element("jpegenc") and has_element("rtpjpegpay") and has_element("jpegdec") and has_element("rtpjpegdepay")
+        (has_element("avdec_h264") or has_element("openh264dec")) and has_element("rtph264depay") and codec_works("h264")
+    jpeg = has_element("jpegenc") and has_element("rtpjpegpay") and has_element("jpegdec") and \
+        has_element("rtpjpegdepay") and codec_works("jpeg")
     if prefer == "h264" and h264:
         return "h264"
     if jpeg:
@@ -42,13 +88,8 @@ def sender_args(codec, port, width=1280, height=720, fps=30, host="127.0.0.1", p
            f"video/x-raw,width={width},height={height},framerate={fps}/1", "!",
            "timeoverlay", "halignment=right", "valignment=bottom", "font-desc=Sans 28", "!",
            "textoverlay", "text=SHEREGESH SYNTHETIC TEST PATTERN", "valignment=top", "font-desc=Sans 24", "!",
-           "videoconvert", "!"]
-    if codec == "h264":
-        enc = ["openh264enc", "complexity=0", "gop-size=30", f"bitrate={2_000_000}", "!",
-               "rtph264pay", "config-interval=1", "pt=96", "!"]
-    else:
-        enc = ["jpegenc", "quality=70", "!", "rtpjpegpay", "!"]
-    return src + enc + ["udpsink", f"host={host}", f"port={port}", "sync=false"]
+           "videoconvert", "!", "video/x-raw,format=I420", "!"]   # rtpjpegpay принимает только 4:2:0/4:2:2
+    return src + ENCODERS[codec] + ["!", "udpsink", f"host={host}", f"port={port}", "sync=false"]
 
 
 def receiver_args(codec, port, width, height):

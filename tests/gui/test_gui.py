@@ -14,11 +14,12 @@ from PySide6.QtQuick import QQuickItem
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtTest import QTest
 
-from sheregesh_console.app import I18N, QML, Ui, compile_translations, qt_tool
+from sheregesh_console.app import I18N, PAGE_NAMES, QML, Ui, compile_translations, qt_tool
 from sheregesh_console.backend import Backend
 from sheregesh_emulators.demo import DEMO
 
 QQuickStyle.setStyle("Fusion")
+PAGES = PAGE_NAMES
 
 
 @pytest.fixture
@@ -38,7 +39,7 @@ def obj(u, name):
 
 
 def page(u):
-    return u.window.property("currentPage")
+    return PAGES[u.window.property("currentPage")]
 
 
 def set_appearance(u, **kw):
@@ -117,18 +118,22 @@ def test_translation_complete_for_all_qml_strings(tmp_path):
 @pytest.mark.test_id("TEST-P-003")
 def test_keyboard_only_navigation(ui):
     ui.window.requestActivate()
-    QTest.keyClick(ui.window, Qt.Key_2, Qt.ControlModifier)
-    assert page(ui) == 1
-    QTest.keyClick(ui.window, Qt.Key_F3)
-    assert page(ui) == 2
+    QTest.keyClick(ui.window, Qt.Key_3, Qt.ControlModifier)
+    assert page(ui) == "diagnostics"
+    QTest.keyClick(ui.window, Qt.Key_F6)
+    assert page(ui) == "settings"
+    for key, expected in [(Qt.Key_F7, "about"), (Qt.Key_F2, "video"), (Qt.Key_F4, "power"), (Qt.Key_F5, "logs")]:
+        QTest.keyClick(ui.window, key)
+        assert page(ui) == expected
     QTest.keyClick(ui.window, Qt.Key_Escape)
     QTest.keyClick(ui.window, Qt.Key_Left)
-    assert page(ui) == 1
+    assert page(ui) == "power"
     QTest.keyClick(ui.window, Qt.Key_Left)
-    assert page(ui) == 0
+    assert page(ui) == "diagnostics"
     QTest.keyClick(ui.window, Qt.Key_Right)
     QTest.keyClick(ui.window, Qt.Key_Right)
-    assert page(ui) == 2
+    QTest.keyClick(ui.window, Qt.Key_Right)
+    assert page(ui) == "settings"
     # фокус перемещается по полям настроек клавишей Tab
     obj(ui, "nameField").forceActiveFocus()
     QTest.keyClick(ui.window, Qt.Key_Tab)
@@ -138,7 +143,7 @@ def test_keyboard_only_navigation(ui):
 @pytest.mark.test_id("TEST-P-003")
 def test_settings_apply_with_keyboard_only(ui):
     ui.window.requestActivate()
-    QTest.keyClick(ui.window, Qt.Key_F3)
+    QTest.keyClick(ui.window, Qt.Key_F6)
     spin = obj(ui, "timeoutSpin")
     spin.forceActiveFocus()
     QTest.keyClick(ui.window, Qt.Key_Up)          # 300 → 330
@@ -158,7 +163,7 @@ def test_settings_apply_with_keyboard_only(ui):
 
 def test_mouse_click_switches_tab(ui):
     QTest.mouseClick(ui.window, Qt.LeftButton, Qt.NoModifier, center(obj(ui, "tabDiagnostics")))
-    assert page(ui) == 1
+    assert page(ui) == "diagnostics"
 
 
 def test_touch_tap_switches_tab(ui):
@@ -167,7 +172,7 @@ def test_touch_tap_switches_tab(ui):
     QTest.touchEvent(ui.window, device).press(0, pos, ui.window).commit()
     QTest.touchEvent(ui.window, device).release(0, pos, ui.window).commit()
     QTest.qWait(20)
-    assert page(ui) == 2
+    assert page(ui) == "settings"
 
 
 # ---------------- темы и масштаб (REQ-UI-002) ----------------
@@ -195,7 +200,7 @@ def _overflow(ui):
 def test_theme_and_scale_layout_fits(ui, theme, scale, tmp_path):
     set_appearance(ui, theme=theme, ui_scale=scale)
     assert ui.backend.uiScale == scale and ui.backend.theme == theme
-    for idx in range(3):
+    for idx in range(len(PAGES)):
         ui.window.setProperty("currentPage", idx)
         QTest.qWait(30)
         assert _overflow(ui) == [], f"страница {idx}: элементы за границей окна"

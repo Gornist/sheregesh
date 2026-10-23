@@ -263,3 +263,21 @@ def test_agent_refuses_non_loopback_bind():
 def test_client_refuses_non_loopback_target():
     with pytest.raises(ValueError):
         PeerClient(host="192.168.77.2")
+
+
+def test_video_sender_dies_with_crashed_agent():
+    """Аварийное завершение блока не оставляет живой видеогенератор (дефект S1.5)."""
+    from sheregesh import video as gst
+    if gst.choose_codec() is None:
+        pytest.skip("нет кодека")
+    import subprocess as sp
+    a = Agent("--video", "--video-port", str(free_port(kind=2)), "--video-width", "320", "--video-height", "180")
+    try:
+        children = wait_for(lambda: sp.run(["pgrep", "-P", str(a.proc.pid)], capture_output=True, text=True).stdout.split(), 5)
+        assert children, "видеогенератор не запущен"
+        a.signal(signal.SIGKILL)
+        a.proc.wait(5)
+        gone = wait_for(lambda: all(sp.run(["kill", "-0", c], capture_output=True).returncode != 0 for c in children), 5)
+        assert gone, "видеогенератор пережил свой процесс"
+    finally:
+        a.stop()
