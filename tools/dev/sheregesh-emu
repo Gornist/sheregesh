@@ -11,11 +11,11 @@
 #   tools/dev/sheregesh-emu --soak SECONDS      длительный прогон двух процессов с контролем памяти
 #   tools/dev/sheregesh-emu --test              все автотесты
 # Связь между процессами — только 127.0.0.1. Окружение .venv создаётся при первом запуске.
-# SHEREGESH_SYSTEM_PYTHON=1 — использовать уже установленные пакеты вместо .venv.
+# SHEREGESH_SYSTEM_PYTHON=1 — использовать уже установленные пакеты вместо .venv; SHEREGESH_PYTHON — явный интерпретатор.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PY=python3
-if [[ "${SHEREGESH_SYSTEM_PYTHON:-0}" != 1 ]]; then
+PY="${SHEREGESH_PYTHON:-python3}"
+if [[ "${SHEREGESH_SYSTEM_PYTHON:-0}" != 1 && -z "${SHEREGESH_PYTHON:-}" ]]; then
   if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
     echo "Создаю окружение $ROOT/.venv ..." >&2
     python3 -m venv "$ROOT/.venv"

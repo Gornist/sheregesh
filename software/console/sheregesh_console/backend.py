@@ -76,6 +76,7 @@ class Backend(QObject):
     eventsChanged = Signal()
     configChanged = Signal()
     appearanceChanged = Signal()
+    logsChanged = Signal()
     message = Signal(str, str)          # уровень (info/warning/error), текст
 
     def __init__(self, data_dir, demo=False, speed=1.0, autostart=True, peer=None, local_video=False,
@@ -175,6 +176,7 @@ class Backend(QObject):
         self._log_seq += 1
         self._logs.append({"id": self._log_seq, "time": time.strftime("%H:%M:%S"), "level": level,
                            "source": source, "text": text})
+        self._logs_dirty = True
 
     # ---------- представление ----------
     @property
@@ -238,6 +240,9 @@ class Backend(QObject):
             self._active = [self._render_event(e) for e in s.active]
             self._events = [self._render_event(e) for e in reversed(events)]
             self.eventsChanged.emit()
+        if getattr(self, "_logs_dirty", False):     # журнал — в QML только при новых записях
+            self._logs_dirty = False
+            self.logsChanged.emit()
         self.statusChanged.emit()
 
     def _link_status(self, s):
@@ -298,7 +303,7 @@ class Backend(QObject):
     def powerHistory(self):
         return list(self._power_history)
 
-    @Property(list, notify=statusChanged)
+    @Property(list, notify=logsChanged)
     def logs(self):
         return list(reversed(self._logs))
 

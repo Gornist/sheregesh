@@ -5,6 +5,7 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import time
 
 from procs import ROOT, free_port, wait_for
@@ -17,7 +18,7 @@ def children_of(pgid):
 
 def test_one_command_starts_two_processes_and_stops_cleanly():
     port, vport = free_port(), free_port(socket.SOCK_DGRAM)
-    env = {**os.environ, "SHEREGESH_SYSTEM_PYTHON": "1", "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software",
+    env = {**os.environ, "SHEREGESH_PYTHON": sys.executable, "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software",
            "SHEREGESH_PORT": str(port), "SHEREGESH_VIDEO_PORT": str(vport)}
     p = subprocess.Popen([str(ROOT / "tools/dev/sheregesh-emu"), "--demo"], env=env, stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, text=True, start_new_session=True)
@@ -25,7 +26,9 @@ def test_one_command_starts_two_processes_and_stops_cleanly():
         def listening():
             with socket.socket() as s:
                 return s.connect_ex(("127.0.0.1", port)) == 0
-        assert wait_for(listening, 15), "процесс удалённого блока не слушает порт"
+        if not wait_for(listening, 15):
+            os.killpg(p.pid, signal.SIGKILL)
+            raise AssertionError("процесс удалённого блока не слушает порт:\n" + p.stdout.read())
         comms = lambda: {c[2] for c in children_of(p.pid)}           # noqa: E731
         assert wait_for(lambda: sum(1 for c in children_of(p.pid) if c[2].startswith("python")) >= 2, 15), comms()
         time.sleep(3)
