@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Запуск пульта «Шерегеш» на эмуляторах одной командой (x86/Linux, без Raspberry Pi).
+#   tools/dev/sheregesh-emu --demo              демонстрационный сценарий в окне
+#   tools/dev/sheregesh-emu --demo --speed 10   ускорение модельного времени
+#   tools/dev/sheregesh-emu --screenshots DIR   снимки экранов без дисплея и выход
+#   tools/dev/sheregesh-emu --test              все автотесты
+# Окружение: .venv в корне репозитория создаётся при первом запуске из tools/ci/requirements-dev.txt.
+# SHEREGESH_SYSTEM_PYTHON=1 — использовать уже установленные пакеты вместо .venv.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PY=python3
+if [[ "${SHEREGESH_SYSTEM_PYTHON:-0}" != 1 ]]; then
+  if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
+    echo "Создаю окружение $ROOT/.venv ..." >&2
+    python3 -m venv "$ROOT/.venv"
+    "$ROOT/.venv/bin/pip" install --quiet -r "$ROOT/tools/ci/requirements-dev.txt"
+  fi
+  PY="$ROOT/.venv/bin/python"
+fi
+export PYTHONPATH="$ROOT/software:$ROOT/software/emulators:$ROOT/software/console${PYTHONPATH:+:$PYTHONPATH}"
+if [[ "${1:-}" == "--test" ]]; then
+  shift
+  cd "$ROOT"
+  exec env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software "$PY" -m pytest "$@"
+fi
+exec "$PY" -m sheregesh_console "$@"

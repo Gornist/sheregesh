@@ -8,6 +8,7 @@
   reqgen.py validate            — проверить целостность реестра
   reqgen.py generate [--check]  — сгенерировать (или проверить актуальность) производные файлы
   reqgen.py gate                — GO/NO-GO по REQ-REL-001 (код возврата 0 = GO)
+  reqgen.py evidence [REPORT]   — автотесты против реестра (уровень CI против требуемого)
 """
 import argparse
 import csv
@@ -150,6 +151,35 @@ def gate(doc):
     return blockers
 
 
+def evidence_report(doc, evidence):
+    """Сопоставляет отчёт автотестов (reports/evidence.json) с реестром. Реестр НЕ изменяется.
+
+    Возвращает (markdown, ошибки). Ошибка — проваленный тест или ссылка на неизвестный TEST-ID.
+    """
+    tests = {t["id"]: t for t in doc["tests"]}
+    covers = {r["id"]: r for r in doc["requirements"]}
+    rows, errors = [], []
+    for tid, e in sorted(evidence["tests"].items()):
+        t = tests.get(tid)
+        if t is None:
+            errors.append(f"{tid}: в реестре нет такого теста")
+            continue
+        if e["failed"]:
+            errors.append(f"{tid}: {e['failed']} автотест(ов) не пройдено")
+        need = t["level_required"]
+        enough = level_ok(e["level"], need)
+        must = any(covers[r]["priority"] == "Must" for r in t["covers"])
+        verdict = ("уровня достаточно — требуется оформление доказательства" if enough
+                   else f"нужен {need}: статус остаётся {t['status']}")
+        rows.append(f"| {tid} | {', '.join(t['covers'])} | {'Must' if must else '—'} | {e['passed']}/{e['passed'] + e['failed']} "
+                    f"| {e['level']} | {need} | {verdict} |")
+    head = [f"# Автотесты против реестра требований", "",
+            f"Коммит `{evidence.get('git')}`, оборудование `{evidence.get('hw')}`, {evidence.get('generated')}.", "",
+            "Отчёт не меняет статусы реестра. PASS для требования ставится только с доказательством требуемого уровня (TEST-SPEC).", "",
+            "| TEST-ID | Требования | Must | Пройдено | Уровень CI | Требуется | Вывод |", "|---|---|---|---|---|---|---|"]
+    return "\n".join(head + rows) + "\n", errors
+
+
 def _cell(text):
     return str(text).replace("|", "\\|").replace("\n", " ")
 
@@ -272,6 +302,9 @@ def main(argv=None):
     g = sub.add_parser("generate")
     g.add_argument("--check", action="store_true", help="не писать файлы, только проверить актуальность")
     sub.add_parser("gate")
+    ev = sub.add_parser("evidence", help="сопоставить reports/evidence.json с реестром (без изменения реестра)")
+    ev.add_argument("report", nargs="?", default=str(ROOT / "reports/evidence.json"))
+    ev.add_argument("--out", help="записать отчёт Markdown в файл")
     args = ap.parse_args(argv)
 
     doc = load()
@@ -298,6 +331,15 @@ def main(argv=None):
                   *map(str, stale), sep="\n  ", file=sys.stderr)
             return 1
         print("Актуально" if not stale else "Обновлено: " + ", ".join(map(str, stale)))
+        return 0
+    if args.cmd == "evidence":
+        md, problems = evidence_report(doc, json.loads(Path(args.report).read_text(encoding="utf-8")))
+        if args.out:
+            Path(args.out).write_text(md, encoding="utf-8")
+        print(md)
+        if problems:
+            print("Ошибки:", *problems, sep="\n  ", file=sys.stderr)
+            return 1
         return 0
     blockers = gate(doc)
     if blockers:

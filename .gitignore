@@ -5,3 +5,4 @@ __pycache__/
 reports/
 .pytest_cache/
 software/console/sheregesh_console/i18n/*.qm
+.venv/

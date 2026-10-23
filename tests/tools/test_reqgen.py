@@ -86,5 +86,25 @@ class RegistryTest(unittest.TestCase):
         self.assertTrue(any("несуществующий тест" in e for e in reqgen.validate(doc)))
 
 
+
+class EvidenceTest(unittest.TestCase):
+    """Отчёт автотестов не превращается в PASS и ловит опечатки в TEST-ID."""
+
+    def test_ci_level_below_required_keeps_not_tested(self):
+        doc = reqgen.load()
+        ev = {"git": "x", "hw": "emulated", "generated": "t",
+              "tests": {"TEST-CFG-002": {"level": "L2", "passed": 3, "failed": 0}}}
+        md, errors = reqgen.evidence_report(doc, ev)
+        self.assertEqual(errors, [])
+        self.assertIn("нужен L4: статус остаётся NOT TESTED", md)
+        self.assertTrue(reqgen.gate(doc), "гейт по-прежнему NO-GO")
+
+    def test_unknown_test_id_and_failures_reported(self):
+        ev = {"tests": {"TEST-NOPE-1": {"level": "L2", "passed": 1, "failed": 0},
+                        "TEST-CFG-001": {"level": "L2", "passed": 1, "failed": 2}}}
+        _, errors = reqgen.evidence_report(reqgen.load(), ev)
+        self.assertEqual(len(errors), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
