@@ -2,13 +2,16 @@
 # X-Env-Layer-Name: sheregesh-dev-access
 # X-Env-Layer-Category: net
 # X-Env-Layer-Desc: Developer access for S2 probes on the owner's LAN: DHCP on eth0
-#  and SSH with public key only (no passwords, root locked). Not for release images.
+#  and SSH with public key only (no passwords, root locked, no sudo). polkit lets
+#  sheregesh-ui only start/stop the two lab services and reboot. Not for release.
 # X-Env-Layer-Version: 0.1.0
 # X-Env-Layer-Requires: systemd-net-min,openssh-server
 # X-Env-Layer-Provides: sheregesh-net
 # METAEND
 ---
 mmdebstrap:
+  packages:
+    - polkitd
   customize-hooks:
     - |-
       mkdir -p $1/etc/systemd/network $1/etc/ssh/sshd_config.d $1/etc/sheregesh
@@ -17,6 +20,8 @@ mmdebstrap:
       printf 'PermitRootLogin no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nAuthenticationMethods publickey\n' \
         > $1/etc/ssh/sshd_config.d/00-sheregesh-dev.conf
       echo "DEV image: SSH by public key on the owner's LAN. Not a release image." > $1/etc/sheregesh/DEV-MODE
+      install -D -m 0644 "$IGconf_sheregesh_assetdir/../sheregesh-dev-access.d/50-sheregesh-dev.rules" \
+        $1/etc/polkit-1/rules.d/50-sheregesh-dev.rules
     - |-
       test -s $1/home/${IGconf_device_user1}/.ssh/authorized_keys || \
         { echo "sheregesh-dev-access: не задан IGconf_ssh_pubkey_user1 — вход по SSH невозможен" >&2; exit 1; }
