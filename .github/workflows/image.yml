@@ -1,0 +1,102 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Сборка лабораторного образа Raspberry Pi 4B (S2-1, ADR-0002/0006) на нативном arm64-раннере.
+# Без секретов и продуктивных ключей; права только на чтение; официальный релиз не публикуется.
+# Строгий вариант (без SSH) собирается всегда. Dev-вариант — только если задана переменная репозитория
+# SHEREGESH_DEV_PUBKEY (открытый SSH-ключ, не секрет).
+# Успешная сборка не равна загрузке Pi: tryboot, A/B-откат, дисплей, производительность — NOT TESTED.
+name: image
+
+on:
+  push:
+    branches: [v2]
+    paths: ["os/**", "tools/image/**", ".github/workflows/image.yml"]
+    tags: ["image-*"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: Образ Pi 4 (${{ matrix.variant }})
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [sheregesh-lab-pi4, sheregesh-lab-dev-pi4]
+    env:
+      DEV_PUBKEY: ${{ vars.SHEREGESH_DEV_PUBKEY }}
+    steps:
+      - name: Пропуск dev-варианта без открытого ключа
+        id: gate
+        run: |
+          if [[ "${{ matrix.variant }}" == *-dev-* && -z "$DEV_PUBKEY" ]]; then
+            echo "skip=1" >> "$GITHUB_OUTPUT"; echo "::notice::dev-вариант пропущен: нет vars.SHEREGESH_DEV_PUBKEY"
+          fi
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        if: steps.gate.outputs.skip != '1'
+        with:
+          persist-credentials: false
+      - name: Место на диске
+        if: steps.gate.outputs.skip != '1'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache /usr/local/share/boost || true
+          df -h /
+      - name: Зависимости сборки
+        if: steps.gate.outputs.skip != '1'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qt6-l10n-tools zstd python3-yaml e2fsprogs mtools git
+          sudo chmod o+x /home/runner
+          WORK="$PWD/build/sheregesh-image-work"
+          mkdir -p "$WORK"
+          git init -q "$WORK/rpi-image-gen"
+          git -C "$WORK/rpi-image-gen" remote add origin https://github.com/raspberrypi/rpi-image-gen.git
+          git -C "$WORK/rpi-image-gen" fetch -q --depth 1 origin "$(cat os/rpi-image-gen.ref)"
+          git -C "$WORK/rpi-image-gen" checkout -q FETCH_HEAD
+          sudo "$WORK/rpi-image-gen/install_deps.sh"
+      - name: Сборка и проверка структуры
+        if: steps.gate.outputs.skip != '1'
+        run: |
+          if [[ "${{ matrix.variant }}" == *-dev-* ]]; then
+            printf '%s\n' "$DEV_PUBKEY" > "$RUNNER_TEMP/dev.pub"; export SSH_PUBKEY="$RUNNER_TEMP/dev.pub"
+          fi
+          OUT="$PWD/build/image/${{ matrix.variant }}" os/build.sh "${{ matrix.variant }}"
+      - name: Сводка
+        if: always() && steps.gate.outputs.skip != '1'
+        run: |
+          d="build/image/${{ matrix.variant }}"
+          ls -la "$d" || true
+          df -h /
+          python3 -I - "$d/verify.json" <<'EOF' >> "$GITHUB_STEP_SUMMARY" || true
+          import json, sys
+          r = json.load(open(sys.argv[1]))
+          print(f"## {r['image']}: {r['verdict']} {r['counts']}\n")
+          print("| Проверка | Итог | Подробности |\n|---|---|---|")
+          for c in r["checks"]:
+              print(f"| {c['desc']} | {c['status']} | {c['detail'][:80]} |")
+          print("\nNOT TESTED: " + ", ".join(r["not_tested"]))
+          EOF
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always() && steps.gate.outputs.skip != '1'
+        with:
+          name: ${{ matrix.variant }}-${{ github.sha }}
+          path: |
+            build/image/${{ matrix.variant }}/*.img.zst
+            build/image/${{ matrix.variant }}/*.deb
+            build/image/${{ matrix.variant }}/*.packages.tsv
+            build/image/${{ matrix.variant }}/verify.json
+            build/image/${{ matrix.variant }}/build-report.json
+            build/image/${{ matrix.variant }}/SHA256SUMS
+            build/image/${{ matrix.variant }}/build.log
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: warn
