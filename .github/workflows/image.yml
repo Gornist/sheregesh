@@ -105,6 +105,6 @@ jobs:
             build/image/${{ matrix.variant }}/build-report.json
             build/image/${{ matrix.variant }}/SHA256SUMS
             build/image/${{ matrix.variant }}/build.log
-          retention-days: 7
+          retention-days: 3   # образы по ~760 МБ: квота хранилища артефактов (2026-10-25 исчерпана)
           compression-level: 0
           if-no-files-found: warn
