@@ -11,6 +11,9 @@
 # (git bundle HEAD), рабочие файлы — как есть (rsync). build_deb.py (git ls-files, версия) и build-report.json
 # (commit, dirty) видят тот же коммит, что и в обычном клоне.
 # SHEREGESH_SRC=каталог — собрать другое дерево (например, чистый checkout нужного коммита) этим же сценарием.
+# Сборочный хост без клона (devbox): SHEREGESH_SRC=распакованный git archive КОММИТ, SHEREGESH_BUNDLE=пакет git
+# с этим коммитом, SOURCE_DATE_EPOCH=время коммита (git log -1 --format=%ct КОММИТ). На хосте x86_64 нужен
+# зарегистрированный qemu-aarch64 (binfmt, флаг F) — контейнер arm64 исполняется в эмуляции.
 set -euo pipefail
 ROOT="$(cd "${SHEREGESH_SRC:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd)"
 CFG="${1:-sheregesh-lab-pi4}"
@@ -23,13 +26,17 @@ if [[ -n "${DEPLOY_PUBKEY:-}" ]]; then
 fi
 mkdir -p "$ROOT/build/image"
 rm -f "$ROOT/build/image/.src.bundle"
-if [[ -f "$ROOT/.git" ]]; then
+if [[ -n "${SHEREGESH_BUNDLE:-}" ]]; then        # дерево без .git (git archive) + пакет git того же коммита
+  cp "$SHEREGESH_BUNDLE" "$ROOT/build/image/.src.bundle"
+  : "${SOURCE_DATE_EPOCH:?с SHEREGESH_BUNDLE задайте SOURCE_DATE_EPOCH (время коммита)}"
+elif [[ -f "$ROOT/.git" ]]; then
   git -C "$ROOT" bundle create -q "$ROOT/build/image/.src.bundle" HEAD
 fi
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --format=%ct)}"
 docker volume create sheregesh-image-work >/dev/null
 exec docker run --rm --privileged --platform linux/arm64 \
   -v "$ROOT":/src:ro -v "$ROOT/build/image":/out -v sheregesh-image-work:/work ${KEYARGS[@]+"${KEYARGS[@]}"} \
-  -e CFG="$CFG" -e SHEREGESH_POST_ONLY="${SHEREGESH_POST_ONLY:-}" -e SOURCE_DATE_EPOCH="$(git -C "$ROOT" log -1 --format=%ct)" \
+  -e CFG="$CFG" -e SHEREGESH_POST_ONLY="${SHEREGESH_POST_ONLY:-}" -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
   debian:trixie bash -euo pipefail -c '
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq && apt-get install -y -qq --no-install-recommends sudo git ca-certificates python3 python3-yaml \
@@ -42,8 +49,9 @@ exec docker run --rm --privileged --platform linux/arm64 \
     if [ -f /out/.src.bundle ]; then
       rm -rf /work/src/.git
       git -C /work/src init -q
-      git -C /work/src fetch -q /out/.src.bundle HEAD
-      git -C /work/src update-ref --no-deref HEAD FETCH_HEAD
+      set -- $(git bundle list-heads /out/.src.bundle | head -n1)
+      git -C /work/src fetch -q /out/.src.bundle "$2"
+      git -C /work/src update-ref --no-deref HEAD "$1"
       git -C /work/src reset -q
     fi
     chown -R builder /work/src
