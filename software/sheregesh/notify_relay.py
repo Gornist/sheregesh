@@ -8,8 +8,13 @@
 
 Ретранслятор — главный PID службы: создаёт свой сокет уведомлений в каталоге выполнения, передаёт его детям через
 NOTIFY_SOCKET (WATCHDOG_PID снимается — пингует приложение) и пересылает systemd разрешённые строки от своего имени.
-MAINPID, FDSTORE и прочие строки не пересылаются. Сигналы останова передаются ребёнку; при гибели ретранслятора
-ребёнок получает SIGTERM (PR_SET_PDEATHSIG). Код выхода — код ребёнка.
+MAINPID, FDSTORE и прочие строки не пересылаются. Код выхода — код ребёнка.
+
+Останов. Процессы сеанса не входят в cgroup службы, и systemd при останове или срабатывании watchdog убивает только
+главный PID: старые cage и зависшее приложение оставались, держали DRM и tty1, и новые запуски падали до лимита
+перезапусков (pi1, ee56bf1). Поэтому ребёнок запускается в своей группе процессов; по SIGTERM/SIGINT и по SIGABRT
+(сигнал watchdog) группа получает SIGTERM, через GRACE_S — SIGKILL, а после выхода ребёнка добиваются оставшиеся
+в группе. При гибели самого ретранслятора cage получает SIGKILL (PR_SET_PDEATHSIG).
 
   sheregesh-notify-relay -- /usr/bin/cage -s -- /usr/bin/sheregesh-console ...
 """
@@ -21,11 +26,14 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 
 from sheregesh import sdnotify
 
 ALLOWED = ("READY=1", "WATCHDOG=1", "STOPPING=1", "RELOADING=1", "STATUS=", "ERRNO=", "EXTEND_TIMEOUT_USEC=")
 PR_SET_PDEATHSIG = 1
+GRACE_S = float(os.environ.get("SHEREGESH_RELAY_GRACE_S", "5"))
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGABRT)
 
 
 def filter_lines(data: bytes) -> list[str]:
@@ -38,9 +46,16 @@ def filter_lines(data: bytes) -> list[str]:
 
 def _pdeathsig():
     try:
-        ctypes.CDLL(None, use_errno=True).prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
+        ctypes.CDLL(None, use_errno=True).prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
     except (OSError, AttributeError):
-        pass                                           # не Linux: только пересылка сигналов
+        pass                                           # не Linux: только останов группы по сигналу
+
+
+def _killpg(pgid, sig):
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
 
 
 def main(argv=None) -> int:
@@ -62,31 +77,48 @@ def main(argv=None) -> int:
         sock.bind(path)
         os.chmod(path, 0o600)
         env["NOTIFY_SOCKET"] = path
-    child = subprocess.Popen(argv, env=env, preexec_fn=_pdeathsig if sys.platform.startswith("linux") else None)
+    child = subprocess.Popen(argv, env=env, process_group=0,
+                             preexec_fn=_pdeathsig if sys.platform.startswith("linux") else None)
+    stop = {"sig": None, "at": 0.0, "killed": False}
 
-    def forward(signum, _frame):
-        try:
-            child.send_signal(signum)
-        except ProcessLookupError:
-            pass
-    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(s, forward)
+    def on_signal(signum, _frame):
+        if signum in STOP_SIGNALS:
+            if stop["sig"] is None:
+                stop["sig"], stop["at"] = signum, time.monotonic()
+                print(f"notify-relay: signal {signal.Signals(signum).name} — stopping process group {child.pid}",
+                      file=sys.stderr, flush=True)
+                _killpg(child.pid, signal.SIGTERM)
+        else:
+            try:
+                child.send_signal(signum)
+            except ProcessLookupError:
+                pass
+    for s in (*STOP_SIGNALS, signal.SIGHUP):
+        signal.signal(s, on_signal)
     try:
         while child.poll() is None:
+            if stop["sig"] is not None and not stop["killed"] and time.monotonic() - stop["at"] > GRACE_S:
+                print(f"notify-relay: group {child.pid} still alive after {GRACE_S:g} s — SIGKILL", file=sys.stderr,
+                      flush=True)
+                _killpg(child.pid, signal.SIGKILL)
+                stop["killed"] = True
             if sock is None:
                 try:
-                    child.wait(1.0)
+                    child.wait(0.5)
                 except subprocess.TimeoutExpired:
                     pass
                 continue
             try:
-                ready, _, _ = select.select([sock], [], [], 1.0)
+                ready, _, _ = select.select([sock], [], [], 0.5)
             except InterruptedError:
                 continue
             if ready:
                 lines = filter_lines(sock.recv(4096))
                 if lines:
                     sdnotify.notify(*lines)
+        _killpg(child.pid, signal.SIGKILL)             # оставшиеся в группе (например, зависшее приложение)
+        if stop["sig"] is not None:
+            return 128 + stop["sig"]
         return child.returncode if child.returncode >= 0 else 128 - child.returncode
     finally:
         if sock is not None:

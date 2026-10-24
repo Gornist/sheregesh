@@ -67,8 +67,7 @@ def test_sigterm_forwarded_to_child():
         assert s.recv(512).decode().startswith("READY=1")
         p.send_signal(signal.SIGTERM)
         t0 = time.monotonic()
-        rc = p.wait(15)
-        assert rc != 0 and time.monotonic() - t0 < 10
+        assert p.wait(15) == 128 + signal.SIGTERM and time.monotonic() - t0 < 10
     finally:
         p.kill()
         s.close()
@@ -79,3 +78,31 @@ def test_without_systemd_just_runs_command():
     r = subprocess.run([sys.executable, "-m", "sheregesh.notify_relay", "--", sys.executable, "-c", "raise SystemExit(3)"],
                        env={k: v for k, v in ENV.items() if k != "NOTIFY_SOCKET"}, timeout=20)
     assert r.returncode == 3
+
+
+def test_watchdog_abort_kills_frozen_grandchild():
+    """pi1, ee56bf1: после SIGABRT watchdog старые cage и замороженное приложение не должны пережить ретранслятор."""
+    d, s = upstream()
+    p = relay(d, 120, SHEREGESH_RELAY_GRACE_S="1")
+    try:
+        assert s.recv(512).decode().startswith("READY=1")
+        pgid = os.getpgid(p.pid)
+        members = [int(x) for x in subprocess.run(["pgrep", "-P", str(p.pid)], capture_output=True,
+                                                    text=True).stdout.split()]
+        assert members, "нет дочернего процесса"
+        group = os.getpgid(members[0])
+        assert group != pgid                                       # ребёнок — в своей группе
+        grand = [int(x) for x in subprocess.run(["pgrep", "-g", str(group)], capture_output=True, text=True).stdout.split()]
+        assert len(grand) >= 2
+        for pid in grand:
+            os.kill(pid, signal.SIGSTOP)                           # «зависли» и cage, и приложение
+        p.send_signal(signal.SIGABRT)
+        assert p.wait(15) == 128 + signal.SIGABRT
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and subprocess.run(["pgrep", "-g", str(group)], capture_output=True).returncode == 0:
+            time.sleep(0.1)
+        assert subprocess.run(["pgrep", "-g", str(group)], capture_output=True).returncode != 0
+    finally:
+        p.kill()
+        s.close()
+        shutil.rmtree(d)
