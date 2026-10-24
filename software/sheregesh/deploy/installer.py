@@ -10,7 +10,7 @@
 
 install: копия пакета читается в память (O_NOFOLLOW, владелец sheregesh-ui, предел размера) → подпись
 ssh-keygen -Y по /etc/sheregesh/deploy/allowed_signers (пространство sheregesh-deploy) → строгий разбор и SHA-256
-каждого файла → распаковка в /var/lib/sheregesh-deploy/releases/.tmp-* (root, 0755/0644), байт-код, RELEASE.json
+каждого файла → распаковка в /var/lib/sheregesh-deploy/releases/.tmp-* (root, 0755/0644), RELEASE.json
 последним, rename в releases/<id> → атомарное переключение symlink current (rename) с отметкой pending →
 перезапуск только служб роли платы (пульт: sheregesh-console; блок: sheregesh-remote-net; без роли: эмулятор и
 пульт) → ожидание READY (Type=notify) и окно наблюдения без перезапусков → pending снимается.
@@ -19,8 +19,11 @@ ssh-keygen -Y по /etc/sheregesh/deploy/allowed_signers (пространств
 прежний выпуск (pending с другим boot_id).
 rollback: переключение на предыдущий выпуск с той же проверкой; factory: снять current (заводской /usr).
 
-Установщик не выполняет присланный код от root (байт-код компилируется, не исполняется), не принимает путей,
-команд и имён служб извне; SSH, sheregesh-health, sheregesh-link и ретранслятор всегда работают из /usr.
+Установщик не исполняет и не компилирует присланный код от root: с ним работают только ssh-keygen -Y verify
+(до разбора), строгий разбор tar в памяти и запись обычных файлов. Байт-код не создаётся — Python компилирует
+выпуск в памяти уже в непривилегированной службе (0,2 с на Pi 4 для всего кода); компилятор CPython от root на
+недоверенном входе (ошибки разбора, исчерпание памяти с угрозой OOM для sshd) исключён (аудит S3.1-DEPLOY).
+Путей, команд и имён служб извне не принимает; SSH, sheregesh-health, sheregesh-link и ретранслятор — из /usr.
 """
 import fcntl
 import json
@@ -54,7 +57,6 @@ class Settings:
     config_dir: Path = Path("/home/sheregesh-ui/.config/sheregesh")
     owner: str = "sheregesh-ui"
     require_root: bool = True          # владелец каталогов выпуска — root (в тестах выключается)
-    compile: bool = True
     restart_timeout: float = 180.0     # TimeoutStartSec пульта 90 с + остановка
     window: float = 40.0               # окно наблюдения: больше WatchdogSec=20 пульта
     rollback_window: float = 20.0
@@ -154,9 +156,10 @@ class Installer:
         return "remote" if (c / "remote.role").exists() else "console" if (c / "console.role").exists() else "standalone"
 
     # ---------- входящий пакет ----------
-    def _read_owned(self, path, limit):
+    def _read_owned(self, path, limit, dir_fd=None):
         try:
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            fd = os.open(path.name if dir_fd is not None else path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         dir_fd=dir_fd)
         except OSError as e:
             raise DeployError(f"нет файла {path.name}: {e.strerror}") from None
         with os.fdopen(fd, "rb") as f:
@@ -173,16 +176,27 @@ class Installer:
         return data
 
     def _take_incoming(self):
+        """Каталог входящих — настоящий каталог владельца (не ссылка); файлы открываются и удаляются через его fd,
+        так что подмена каталога или пути между проверкой и действием root ничего не даёт."""
         inc = Path(self.cfg.incoming)
         try:
-            return self._read_owned(inc / "bundle.tar.xz", MAX_BUNDLE), self._read_owned(inc / "bundle.tar.xz.sig",
-                                                                                         sig.MAX_SIG)
+            dfd = os.open(inc, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError as e:
+            raise DeployError(f"каталог входящих {inc}: {e.strerror} (ссылка или нет каталога)") from None
+        try:
+            if os.fstat(dfd).st_uid != pwd.getpwnam(self.cfg.owner).pw_uid:
+                raise DeployError(f"каталог входящих: владелец не {self.cfg.owner}")
+            try:
+                return (self._read_owned(inc / "bundle.tar.xz", MAX_BUNDLE, dfd),
+                        self._read_owned(inc / "bundle.tar.xz.sig", sig.MAX_SIG, dfd))
+            finally:
+                for name in ("bundle.tar.xz", "bundle.tar.xz.sig"):
+                    try:
+                        os.unlink(name, dir_fd=dfd)
+                    except OSError:
+                        pass
         finally:
-            for name in ("bundle.tar.xz", "bundle.tar.xz.sig"):
-                try:
-                    (inc / name).unlink()
-                except OSError:
-                    pass
+            os.close(dfd)
 
     # ---------- выпуск на диске ----------
     def _materialize(self, manifest, files):
@@ -216,11 +230,6 @@ class Installer:
                     f.flush()
                     os.fsync(f.fileno())
                 os.chmod(dst, manifest["files"][path]["mode"])
-            if self.cfg.compile:
-                r = subprocess.run([sys.executable, "-m", "compileall", "-q", "-j", "0", str(tmp)],
-                                   capture_output=True, text=True, timeout=300)
-                if r.returncode:
-                    self.out(f"предупреждение: байт-код собран не полностью: {r.stdout.strip()[-200:]}")
             record = dict(manifest, installed_at=_now())
             with open(tmp / "RELEASE.json", "w") as f:
                 json.dump(record, f, ensure_ascii=False, indent=1)

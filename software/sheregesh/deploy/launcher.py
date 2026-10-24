@@ -86,8 +86,8 @@ def verify_release(rel, require_root=True):
                 raise Rejected(f"символическая ссылка в выпуске: {relp}")
             if require_root and (st.st_uid != 0 or st.st_mode & 0o022):
                 raise Rejected(f"файл не принадлежит root или доступен на запись: {relp}")
-            if stat.S_ISREG(st.st_mode) and relp not in files and relp != "RELEASE.json" and not (
-                    os.path.basename(os.path.dirname(relp)) == "__pycache__" and relp.endswith(".pyc")):
+            # Байт-код установщик не создаёт; непроверенный .pyc Python предпочёл бы исходнику — отказ.
+            if stat.S_ISREG(st.st_mode) and relp not in files and relp != "RELEASE.json":
                 raise Rejected(f"посторонний файл в выпуске: {relp}")
     return manifest
 

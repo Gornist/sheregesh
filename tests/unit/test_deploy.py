@@ -8,6 +8,8 @@
 import io
 import json
 import os
+import shutil
+import subprocess
 import tarfile
 from pathlib import Path
 from unittest import mock
@@ -152,7 +154,7 @@ class Board:
         self.clock = FakeClock()
         self.settings = installer.Settings(
             deploy_dir=self.tmp / "var/lib/sheregesh-deploy", incoming=self.tmp / "home/.cache/incoming",
-            signers=self.signers, config_dir=self.cfgdir, owner=_me(), require_root=False, compile=False,
+            signers=self.signers, config_dir=self.cfgdir, owner=_me(), require_root=False,
             boot_id="boot-1")
         self.svc = FakeSystemd(self.settings.deploy_dir, self.factory, self.clock, skip)
         self.log = []
@@ -363,7 +365,10 @@ def test_launcher_rejects_tampered_or_foreign_files(tmp_path):
     (rel / "software/sheregesh/json.py").unlink()
     (rel / "software/sheregesh/__pycache__").mkdir()
     (rel / "software/sheregesh/__pycache__/x.cpython-313.pyc").write_bytes(b"pyc")
-    assert b.code()[1] == "0.1.0+a"                                       # байт-код допустим
+    root, rid, why = b.code()                                             # непроверенный байт-код — отказ
+    assert rid is None and "посторонний файл" in why
+    shutil.rmtree(rel / "software/sheregesh/__pycache__")
+    assert b.code()[1] == "0.1.0+a"
     os.symlink("/etc", rel / "software/sheregesh/etc")
     assert b.code()[1] is None
 
@@ -397,3 +402,47 @@ def test_launcher_without_release_uses_factory(tmp_path):
     os.symlink("/etc", tmp_path / "current")
     root, rid, why = launcher.select(str(tmp_path), "/usr/lib/sheregesh", "b")
     assert rid is None and "releases/" in why
+
+
+# ---------------------------------------------------------------- аудит привилегий (S3.1-DEPLOY)
+
+
+@needs_ssh_keygen
+def test_installer_never_compiles_or_runs_release_code_as_root(tmp_path, monkeypatch):
+    """Установщик (root на плате) запускает только ssh-keygen; ни python, ни compileall по выпуску. Код выпуска с
+    побочным эффектом при импорте/компиляции не срабатывает при установке, байт-кода в выпуске нет."""
+    b = Board(tmp_path, role="console")
+    marker = tmp_path / "pwned"
+    files = app_files("ok", "0.1.0+evil")
+    files["software/sheregesh/deploy_evil.py"] = (f"open({str(marker)!r}, 'w').write('x')\n".encode(), 0o644)
+    b.push(bundle.build_bundle(files, "0.1.0+evil", "a" * 40, 1790000000))
+    calls = []
+    real = subprocess.run
+
+    def spy(cmd, *a, **k):
+        calls.append([str(x) for x in cmd])
+        return real(cmd, *a, **k)
+    monkeypatch.setattr(subprocess, "run", spy)
+    assert b.run("install")[0] == 0
+    assert not marker.exists()
+    progs = {Path(c[0]).name for c in calls}
+    assert progs <= {"ssh-keygen"}, calls                                  # FakeSystemd вместо systemctl
+    assert not any("compileall" in " ".join(c) or "py_compile" in " ".join(c) for c in calls)
+    rel = b.settings.deploy_dir / "releases/0.1.0+evil"
+    assert not list(rel.rglob("*.pyc")) and not list(rel.rglob("__pycache__"))
+
+
+@needs_ssh_keygen
+def test_incoming_symlink_is_refused(tmp_path):
+    """Каталог входящих — ссылка (например, на чужой каталог): отказ без чтения и удаления по ссылке."""
+    b = Board(tmp_path, role="console")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    data = make_bundle("0.1.0+s")
+    (elsewhere / "bundle.tar.xz").write_bytes(data)
+    (elsewhere / "bundle.tar.xz.sig").write_bytes(sig.sign(data, b.key, sig.NS_APP))
+    b.settings.incoming.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink(elsewhere, b.settings.incoming)
+    rc, st = b.run("install")
+    assert rc == 2 and st["last"]["result"] == "REJECTED" and "ссылка" in st["last"]["reason"]
+    assert (elsewhere / "bundle.tar.xz").exists()                         # по ссылке ничего не удалено

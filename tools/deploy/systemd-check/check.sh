@@ -61,7 +61,7 @@ check "install good1: пульт работает из выпуска (SHEREGESH
 check "выпуск принадлежит root, sheregesh-ui не может его менять" \
   bash -c "! runuser -u sheregesh-ui -- touch /var/lib/sheregesh-deploy/releases/$(id_of good1)/software/x 2>/dev/null"
 check "входящие удалены после установки" test ! -e "$INC/bundle.tar.xz"
-check "байт-код собран установщиком" bash -c "ls /var/lib/sheregesh-deploy/releases/$(id_of good1)/software/sheregesh/__pycache__/*.pyc >/dev/null"
+check "установщик не компилирует от root: байт-кода в выпуске нет" bash -c "! find /var/lib/sheregesh-deploy/releases/$(id_of good1) -name '*.pyc' -o -name __pycache__ | grep -q ."
 
 # --- good2, затем плохой выпуск → автоматический возврат
 push good2
