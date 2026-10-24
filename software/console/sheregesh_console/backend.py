@@ -92,6 +92,17 @@ def peer_link(peer_state, snap):
     return "DISCONNECTED"
 
 
+def peer_role(snap):
+    """Роль второй стороны: из hello, если канал её передаёт, иначе из проверенного URI сертификата (mTLS)
+    urn:sheregesh:<роль>:<device_id>. В loopback без TLS роль не известна — пусто."""
+    role = (snap.get("peer") or {}).get("role")
+    if role:
+        return str(role)
+    uri = snap.get("peer_uri") or ""
+    parts = uri.split(":")
+    return parts[2] if snap.get("secure") and uri.startswith("urn:sheregesh:") and len(parts) >= 4 else ""
+
+
 def link_view(peer_state, link):
     """Обобщённое состояние канала для индикатора на всех экранах (E2E): CONNECTING | CONNECTED | DISCONNECTED | ERROR.
     Только отображение состояний ADR-0007 (peer_link), новых состояний протокола нет:
@@ -372,7 +383,7 @@ class Backend(QObject):
         return {
             "peerMode": ("network" if snap.get("secure") else "process") if self.client is not None else "emulated",
             "peerLink": link, "linkView": link_view(s.peer_state, link),
-            "peerRole": (snap.get("peer") or {}).get("role") or "",
+            "peerRole": peer_role(snap) if s.peer_state == "connected" else "",
             "linkAuthFailures": cnt.get("auth_failures", self._auth_episodes),
             "linkSecure": bool(snap.get("secure")), "linkTls": snap.get("tls") or "", "linkHost": snap.get("host") or "",
             "linkPeerUri": snap.get("peer_uri") or "",

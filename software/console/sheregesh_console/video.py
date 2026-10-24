@@ -28,7 +28,8 @@ FRAME_W, FRAME_H = 640, 360
 NO_VIDEO_AFTER_S = 1.5
 RESTART_BACKOFF_S = (1.0, 2.0, 4.0)
 RESCAN_S = 2.0               # локальный вход: повторный поиск устройства (нет устройства / режим не поддерживается)
-STALL_RESTART_S = 5.0        # локальный вход: нет кадров дольше — перезапуск захвата с новым поиском устройства
+REAP_WAIT_S = 0.05           # остановка: сколько поток GUI ждёт завершения убитого декодера, остальное — в фоне
+STALL_RESTART_S = 5.0       # локальный вход: нет кадров дольше — перезапуск захвата с новым поиском устройства
 
 
 class VideoReceiver(QObject):
@@ -49,6 +50,8 @@ class VideoReceiver(QObject):
         self._decoded = deque(maxlen=300)
         self._proc = None
         self._thread = None
+        self._reaper = None
+        self._gen = 0                      # поколение конвейера: потоки остановленного не трогают новый
         self._lock = threading.Lock()
         self._latest = None                # bytes последнего полного кадра
         self._seq = 0
@@ -197,54 +200,78 @@ class VideoReceiver(QObject):
         if remote:
             self._client = self._remote[1]()
             self._sessions += 1
-            self._feeder = threading.Thread(target=self._feed, args=(self._client, self._proc), name="video-link",
-                                            daemon=True)
+            self._feeder = threading.Thread(target=self._feed, args=(self._client, self._proc, self._gen),
+                                            name="video-link", daemon=True)
             self._feeder.start()
         self._error = ""
         self._started_at = time.monotonic()
         with self._lock:
             self._last_frame_t = None
         self._set_state("waiting")
-        self._thread = threading.Thread(target=self._reader, args=(self._proc,), name="video-reader", daemon=True)
+        self._thread = threading.Thread(target=self._reader, args=(self._proc, self._gen), name="video-reader",
+                                        daemon=True)
         self._thread.start()
 
-    def _feed(self, client, proc):
+    def _feed(self, client, proc, gen):
         """Видеоканал → stdin декодера. Конец канала (разрыв, отказ аутентификации) закрывает stdin — декодер
         завершается, и _poll перезапускает его с новым подключением."""
         why = client.run(proc.stdin.fileno())
-        self._error = f"video link: {why}"
+        if gen == self._gen:                # причина остановленного сеанса не затирает состояние нового
+            self._error = f"video link: {why}"
         try:
             proc.stdin.close()
         except OSError:
             pass
 
     def stop(self):
+        """Остановка без ожидания в потоке GUI (E2E-08). Вызывается из таймера бэкенда при потере связи: прежде
+        здесь были join(2 с) потока видеоканала и wait() декодера, и подключение видеоканала, ещё не завершённое
+        (TCP/TLS к пропавшему блоку), или декодер, переставший читать stdin, останавливали интерфейс на секунды.
+        Теперь: декодер — SIGKILL (запись в его stdin сразу получает EPIPE), канал — close(), а ожидание потоков и
+        процесса — в фоновом потоке. Поколение _gen отсекает запоздалые кадры и ошибки остановленного конвейера."""
+        with self._lock:
+            self._gen += 1
+            self._latest = None
         client, self._client = self._client, None
-        if client is not None:
-            client.close()
-        if self._feeder is not None:
-            self._feeder.join(timeout=2)
-            self._feeder = None
         proc, self._proc = self._proc, None
+        threads = [t for t in (self._feeder, self._thread) if t is not None]
+        self._feeder = self._thread = None
         if proc is not None:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+        if client is not None:
+            client.close()
+        if proc is not None:
+            try:                            # после SIGKILL процесс обычно завершается за миллисекунды; зависший
+                proc.wait(timeout=REAP_WAIT_S)   # в ядре (драйвер V4L2) дождётся фоновый поток, а не интерфейс
+                proc = None
+            except subprocess.TimeoutExpired:
+                pass
+        if proc is not None or threads:
+            self._reaper = threading.Thread(target=self._reap, args=(proc, threads, self._reaper),
+                                            name="video-reaper", daemon=True)
+            self._reaper.start()
+
+    @staticmethod
+    def _reap(proc, threads, previous):
+        if proc is not None:
             proc.wait()
-        if self._thread is not None:
-            self._thread.join(timeout=2)
-            self._thread = None
-        with self._lock:
-            self._latest = None
+        for t in threads:
+            t.join()
+        if previous is not None:
+            previous.join()
 
     @Slot()
     def shutdown(self):
         self._timer.stop()
         self.stop()
+        if self._reaper is not None:          # при выходе можно подождать: интерфейса уже нет
+            self._reaper.join(timeout=3)
 
     # ---------- фоновое чтение ----------
-    def _reader(self, proc):
+    def _reader(self, proc, gen):
         size = FRAME_W * FRAME_H * 4
         buf = bytearray()
         fd = proc.stdout.fileno()
@@ -270,6 +297,8 @@ class VideoReceiver(QObject):
                 del buf[: full * size]
                 now = time.monotonic()
                 with self._lock:
+                    if gen != self._gen:            # конвейер уже остановлен
+                        return
                     self._latest = frame
                     self._seq += full
                     self._last_frame_t = now
