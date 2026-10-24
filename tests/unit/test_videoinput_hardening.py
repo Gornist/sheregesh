@@ -202,13 +202,20 @@ def test_stepwise_intervals_within_range(v4l2):
     assert [(m.width, m.height, m.fps) for m in modes] == [(640, 480, 30), (640, 480, 60)]
 
 
-@pytest.mark.xfail(strict=True, reason="риск для L4: интервал 1001/30000 (29,97 к/с) округляется до 30, а caps "
-                                       "v4l2src просят framerate=30/1 — с таким устройством caps не согласуются")
 def test_ntsc_interval_is_requested_exactly(v4l2):
+    """Интервал 1001/30000 (29,97 к/с): caps v4l2src — ровно 30000/1001, иначе не согласуются (риск L4, исправлен)."""
     v4l2.add("video0", "uvcvideo", "NTSC", 0, ("1234", "0005", ""),
              formats=[("MJPG", "discrete", [((1280, 720), [(1001, 30000)])])])
     src = vi.open_uvc("", "1280x720@30", "auto", **v4l2.scan_kw())
     assert "framerate=30000/1001" in " ".join(src.capture())
+
+
+def test_integer_rate_preferred_over_ntsc_when_both_offered(v4l2):
+    v4l2.add("video0", "uvcvideo", "Both", 0, ("1234", "0006", ""),
+             formats=[("MJPG", "discrete", [((1280, 720), [(1001, 30000), (1, 30)])])])
+    src = vi.open_uvc("", "1280x720@30", "auto", **v4l2.scan_kw())
+    caps = " ".join(src.capture())
+    assert "framerate=30/1" in caps and "30000/1001" not in caps
 
 
 def test_several_devices_and_identical_adapters(v4l2):

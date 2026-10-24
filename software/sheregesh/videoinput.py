@@ -20,6 +20,7 @@ import os
 import re
 import struct
 from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
 
 # ---------- V4L2 (linux/videodev2.h) ----------
@@ -70,6 +71,11 @@ class Mode:
     height: int
     fps: int
     pixfmt: str = ""      # FourCC: YUYV | MJPG | H264 | …
+    rate: str = ""        # точная частота «числитель/знаменатель», если не целая (NTSC 30000/1001); иначе fps/1
+
+    @property
+    def framerate(self):
+        return self.rate or f"{self.fps}/1"
 
     def __str__(self):
         return f"{FORMATS.get(self.pixfmt, self.pixfmt).upper()} {self.width}×{self.height}@{self.fps}"
@@ -123,7 +129,8 @@ def enum_modes(fd, ioctl=fcntl.ioctl):
                 for _i, _pf, _w, _h, ikind, *iv in _enum(ioctl, fd, VIDIOC_ENUM_FRAMEINTERVALS, FRMIVAL, pixfmt, w, h):
                     if ikind == V4L2_FRMIVAL_TYPE_DISCRETE:
                         if iv[0]:
-                            modes.add(Mode(w, h, round(iv[1] / iv[0]), code))
+                            r = Fraction(iv[1], iv[0])     # 1001/30000 с → 30000/1001 к/с: caps — ровно как у устройства
+                            modes.add(Mode(w, h, round(r), code, "" if r.denominator == 1 else f"{r.numerator}/{r.denominator}"))
                     else:                            # интервал min..max: частота = 1/интервал
                         lo = iv[0] / iv[1] if iv[1] else 0
                         hi = iv[2] / iv[3] if iv[3] else 0
@@ -293,7 +300,7 @@ class UVCSource(VideoSource):
 
     def capture(self):
         m = self.mode
-        size = f"width={m.width},height={m.height},framerate={m.fps}/1"
+        size = f"width={m.width},height={m.height},framerate={m.framerate}"
         caps = {"YUYV": f"video/x-raw,format=YUY2,{size}", "MJPG": f"image/jpeg,{size}",
                 "H264": f"video/x-h264,stream-format=byte-stream,{size}"}[m.pixfmt]
         return ["v4l2src", f"device={self.node.dev}", "do-timestamp=true", "!", caps, "!"]
@@ -312,7 +319,7 @@ def select_mode(modes, width, height, fps, fmt="auto"):
     Без совпадения — None (режим не подменяется молча другим)."""
     order = FORMAT_ORDER if fmt == "auto" else tuple(k for k, v in FORMATS.items() if v == fmt)
     for code in order:
-        for m in modes:
+        for m in sorted(modes, key=lambda m: m.rate != ""):     # целая частота устройства — в первую очередь
             if (m.pixfmt, m.width, m.height, m.fps) == (code, width, height, fps):
                 return m
     return None
