@@ -2,9 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Поддельные sysfs /sys/class/video4linux, /dev и ioctl V4L2 для испытаний видеовхода S3.3 без устройств.
 
-Дерево повторяет устройство Raspberry Pi 4 с подключённым HDMI→USB-адаптером класса UVC: узел захвата uvcvideo
-(index 0), узел метаданных UVC (index 1), кодек bcm2835-codec (/dev/video10–12), ISP (/dev/video13–16) и unicam.
+Дерево повторяет Raspberry Pi 4 (системные узлы сняты с pi1/pi2, docs/acceptance/s3.3-video-input/hw/v4l2-discovery.txt):
+bcm2835-codec /dev/video10, 11, 12, 18, 31; два экземпляра bcm2835-isp /dev/video13–16 и /dev/video20–23; rpi-hevc-dec
+/dev/video19 — и, по желанию, HDMI→USB-адаптер класса UVC: узел захвата uvcvideo (index 0) и узел метаданных (index 1).
 ioctl отвечает настоящими структурами videodev2.h, поэтому разбор в sheregesh.videoinput проверяется полностью.
+Открытие служебного (не uvcvideo) узла — ошибка испытания: такой узел записывается в aux_opened, и open() падает.
+Сбои: open_errors {videoN: errno} — отказ open(); hooks — функции hook(videoN, request), вызываемые перед каждым ioctl
+(отключить устройство посреди опроса, вернуть ошибку).
 """
 import errno
 import os
@@ -15,6 +19,27 @@ from sheregesh import videoinput as vi
 
 MJPEG_HDMI = [("MJPG", "discrete", [((640, 480), [30, 60]), ((1280, 720), [30, 60]), ((1920, 1080), [30, 60])]),
               ("YUYV", "discrete", [((640, 480), [30, 60]), ((1280, 720), [10]), ((1920, 1080), [5])])]
+
+
+_M2M, _CAP, _OUT, _META = 0x00004000, vi.V4L2_CAP_VIDEO_CAPTURE, 0x00000002, vi.V4L2_CAP_META_CAPTURE
+# (N, драйвер, имя sysfs, index, возможности) — /dev/videoN pi1 и pi2 (одинаковы). Номера, драйверы и имена сняты с плат;
+# возможности приблизительные (узлы не открывались и не должны открываться).
+PI4_SYSTEM_NODES = (
+    (10, "bcm2835-codec", "bcm2835-codec-decode", 0, _M2M),
+    (11, "bcm2835-codec", "bcm2835-codec-encode", 0, _M2M),
+    (12, "bcm2835-codec", "bcm2835-codec-isp", 0, _M2M),
+    (13, "bcm2835-isp", "bcm2835-isp-output0", 0, _OUT),
+    (14, "bcm2835-isp", "bcm2835-isp-capture0", 1, _CAP),
+    (15, "bcm2835-isp", "bcm2835-isp-capture1", 2, _CAP),
+    (16, "bcm2835-isp", "bcm2835-isp-stats2", 3, _META),
+    (18, "bcm2835-codec", "bcm2835-codec-image_fx", 0, _M2M),
+    (19, "rpi-hevc-dec", "rpi-hevc-dec", 0, _M2M),
+    (20, "bcm2835-isp", "bcm2835-isp-output0", 0, _OUT),
+    (21, "bcm2835-isp", "bcm2835-isp-capture0", 1, _CAP),
+    (22, "bcm2835-isp", "bcm2835-isp-capture1", 2, _CAP),
+    (23, "bcm2835-isp", "bcm2835-isp-stats2", 3, _META),
+    (31, "bcm2835-codec", "bcm2835-codec-encode_image", 0, _M2M),
+)
 
 
 class FakeV4L2:
@@ -29,6 +54,9 @@ class FakeV4L2:
         self.fds = {}
         self.opened = []
         self.deny = set()
+        self.open_errors = {}
+        self.aux_opened = []
+        self.hooks = []
         self.dev.mkdir(parents=True, exist_ok=True)
         (self.sys / "class" / "video4linux").mkdir(parents=True, exist_ok=True)
 
@@ -75,18 +103,15 @@ class FakeV4L2:
             (self.dev / "v4l" / "by-id" / d["by_id"]).unlink()
 
     def pi4(self, with_uvc=True, formats=MJPEG_HDMI, usb=("534d", "2109", "")):
-        """Типичный набор узлов Pi 4 (Raspberry Pi OS / Armbian) и, по желанию, HDMI→USB-адаптер."""
-        cap = vi.V4L2_CAP_VIDEO_CAPTURE
+        """Ровно 14 системных узлов Pi 4 (как на pi1/pi2) и, по желанию, HDMI→USB-адаптер. Возможности служебных
+        узлов нарочно «опасные» (у ISP — V4L2_CAP_VIDEO_CAPTURE): классификация обязана опираться на драйвер."""
         if with_uvc:
             self.add("video0", "uvcvideo", "USB Video: USB Video", 0, usb, formats=formats,
                      by_id="usb-MACROSILICON_USB_Video-video-index0")
             self.add("video1", "uvcvideo", "USB Video: USB Video", 1, usb, caps=vi.V4L2_CAP_META_CAPTURE,
                      by_id="usb-MACROSILICON_USB_Video-video-index1")
-        for n, name in ((10, "bcm2835-codec-decode"), (11, "bcm2835-codec-encode"), (12, "bcm2835-codec-isp")):
-            self.add(f"video{n}", "bcm2835-codec", name, 0, caps=0x00004000)     # V4L2_CAP_VIDEO_M2M_MPLANE
-        for n in (13, 14, 15, 16):
-            self.add(f"video{n}", "bcm2835-isp", "bcm2835-isp", n - 13, caps=cap)
-        self.add("video19", "unicam", "unicam-image", 0, caps=cap)
+        for n, driver, name, index, caps in PI4_SYSTEM_NODES:
+            self.add(f"video{n}", driver, name, index, caps=caps)
         return self
 
     def scan_kw(self):
@@ -95,14 +120,23 @@ class FakeV4L2:
     # ---------- ioctl ----------
     def open(self, path, flags):
         name = os.path.basename(path)
+        d = self.devices.get(name)
+        if d is not None and d["driver"] != "uvcvideo":
+            self.aux_opened.append(name)
+            raise AssertionError(f"auxiliary V4L2 node {name} ({d['driver']}) must not be opened")
         if name in self.deny:
             raise PermissionError(errno.EACCES, "Permission denied", path)
+        if name in self.open_errors:
+            code = self.open_errors[name]
+            raise OSError(code, os.strerror(code), path)
         fd = os.open(path, os.O_RDONLY)        # настоящий дескриптор: sheregesh.videoinput закрывает его сам
         self.fds[fd] = name
         self.opened.append(name)
         return fd
 
     def ioctl(self, fd, req, buf):
+        for hook in list(self.hooks):
+            hook(self.fds.get(fd), req)
         d = self.devices.get(self.fds.get(fd))
         if d is None:
             raise OSError(errno.ENODEV, "No such device")
@@ -119,10 +153,10 @@ class FakeV4L2:
             index, pixfmt, *_ = vi.FRMSIZE.unpack(buf)
             fmt = self._fmt(d, pixfmt)
             code, kind, sizes = fmt
-            if kind == "stepwise":                 # (min_w, max_w, step_w, min_h, max_h, step_h)
+            if kind in ("stepwise", "continuous"):    # (min_w, max_w, step_w, min_h, max_h, step_h)
                 if index:
                     raise OSError(errno.EINVAL, "Invalid argument")
-                return vi.FRMSIZE.pack(0, pixfmt, 3, *sizes[0][0])
+                return vi.FRMSIZE.pack(0, pixfmt, 3 if kind == "stepwise" else 2, *sizes[0][0])
             if index >= len(sizes):
                 raise OSError(errno.EINVAL, "Invalid argument")
             (w, h), _ = sizes[index]
@@ -130,14 +164,17 @@ class FakeV4L2:
         if req == vi.VIDIOC_ENUM_FRAMEINTERVALS:
             index, pixfmt, w, h, *_ = vi.FRMIVAL.unpack(buf)
             code, kind, sizes = self._fmt(d, pixfmt)
-            if kind == "stepwise":                 # непрерывный интервал 1/60…1/5 с
+            if kind in ("stepwise", "continuous"):   # по умолчанию непрерывный интервал 1/60…1/5 с
                 if index:
                     raise OSError(errno.EINVAL, "Invalid argument")
-                return vi.FRMIVAL.pack(0, pixfmt, w, h, 2, 1, 60, 1, 5, 1, 1)
+                ival = sizes[0][1] or (2, 1, 60, 1, 5, 1, 1)     # (тип, min n/d, max n/d, step n/d)
+                return vi.FRMIVAL.pack(0, pixfmt, w, h, *ival)
             rates = next((r for (sw, sh), r in sizes if (sw, sh) == (w, h)), None)
             if rates is None or index >= len(rates):
                 raise OSError(errno.EINVAL, "Invalid argument")
-            return vi.FRMIVAL.pack(index, pixfmt, w, h, vi.V4L2_FRMIVAL_TYPE_DISCRETE, 1, rates[index], 0, 0, 0, 0)
+            rate = rates[index]                    # к/с или (числитель, знаменатель) интервала, напр. (1001, 30000)
+            num, den = rate if isinstance(rate, tuple) else (1, rate)
+            return vi.FRMIVAL.pack(index, pixfmt, w, h, vi.V4L2_FRMIVAL_TYPE_DISCRETE, num, den, 0, 0, 0, 0)
         raise OSError(errno.ENOTTY, "Inappropriate ioctl")
 
     @staticmethod

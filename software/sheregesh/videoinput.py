@@ -29,6 +29,7 @@ V4L2_CAP_STREAMING = 0x04000000
 V4L2_CAP_DEVICE_CAPS = 0x80000000
 V4L2_BUF_TYPE_VIDEO_CAPTURE = 1
 V4L2_FRMSIZE_TYPE_DISCRETE = 1
+V4L2_FRMSIZE_TYPE_STEPWISE = 3
 V4L2_FRMIVAL_TYPE_DISCRETE = 1
 
 
@@ -115,7 +116,9 @@ def enum_modes(fd, ioctl=fcntl.ioctl):
             if kind == V4L2_FRMSIZE_TYPE_DISCRETE:
                 sizes = [(u[0], u[1])]
             else:                                    # min_w, max_w, step_w, min_h, max_h, step_h
-                sizes = [(w, h) for w, h in _SIZES if u[0] <= w <= u[1] and u[3] <= h <= u[4]]
+                step = kind == V4L2_FRMSIZE_TYPE_STEPWISE   # ступенчатый: размер = min + k·step
+                sizes = [(w, h) for w, h in _SIZES if u[0] <= w <= u[1] and u[3] <= h <= u[4] and
+                         not (step and ((u[2] > 1 and (w - u[0]) % u[2]) or (u[5] > 1 and (h - u[3]) % u[5])))]
             for w, h in sizes:
                 for _i, _pf, _w, _h, ikind, *iv in _enum(ioctl, fd, VIDIOC_ENUM_FRAMEINTERVALS, FRMIVAL, pixfmt, w, h):
                     if ikind == V4L2_FRMIVAL_TYPE_DISCRETE:
@@ -318,11 +321,15 @@ def select_mode(modes, width, height, fps, fmt="auto"):
 def open_uvc(device="", mode="1280x720@30", fmt="auto", **scan_kw):
     """Источник UVC по конфигурации. device — vvvv:pppp[:serial], имя videoN или «» (единственное устройство)."""
     width, height, fps = parse_mode(mode)
-    nodes = capture_devices(**scan_kw)
-    if device:
-        nodes = [n for n in nodes if device in (n.usb_id, n.name) or n.usb_id.startswith(device + ":")]
+    scanned = scan(**scan_kw)
+    match = lambda n: not device or device in (n.usb_id, n.name) or n.usb_id.startswith(device + ":")  # noqa: E731
+    nodes = [n for n in scanned if n.capture and match(n)]
     if not nodes:
-        return Unavailable("uvc", f"UVC device {device + ' ' if device else ''}not found", missing=True)
+        # Узел UVC есть, но не опрошен (нет прав, занят, исчез во время опроса) — причина видна оператору.
+        why = "; ".join(f"{n.name}: {n.reason}" for n in scanned if n.driver == "uvcvideo" and match(n) and
+                        n.reason and "metadata" not in n.reason)
+        return Unavailable("uvc", f"UVC device {device + ' ' if device else ''}not found" + (f" ({why})" if why else ""),
+                           missing=True)
     if len(nodes) > 1:
         return Unavailable("uvc", "several UVC devices found (" +
                            ", ".join(f"{n.usb_id or n.name} {n.card}" for n in nodes) + "); set video_device")
