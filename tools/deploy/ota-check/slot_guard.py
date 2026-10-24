@@ -6,6 +6,7 @@
 
   python3 tools/deploy/ota-check/slot_guard.py snap pi2 HOST OUT.json
   python3 tools/deploy/ota-check/slot_guard.py compare BEFORE.json AFTER.json --mode install|trial|unchanged --version V
+  python3 tools/deploy/ota-check/slot_guard.py compare BEFORE.json AFTER.json --mode rollback --version V [--trial T.json]
 
 Вердикты: PASS (0), FAIL (1) — доказано несоответствие, ERROR (2) — доказательств недостаточно (снимок неполон,
 команда не выполнилась, SSH не удался, серийный номер чужой, активный слот неоднозначен). ERROR никогда не PASS.
@@ -249,8 +250,9 @@ def validate(s):
     return [], {"role": role, "active": act.pop(), "io": io}
 
 
-def compare(before, after, mode, version):
-    """→ (вердикт, проверки). Отсутствующее поле или недостоверный снимок — ERROR, не PASS."""
+def compare(before, after, mode, version, trial=None):
+    """→ (вердикт, проверки). Отсутствующее поле или недостоверный снимок — ERROR, не PASS.
+    trial — снимок пробной загрузки (только mode=rollback): доказательство, что возврат — новая загрузка после неё."""
     out = []
 
     def add(cid, ok, detail="", status=None):
@@ -302,6 +304,31 @@ def compare(before, after, mode, version):
             add("ota.state", st.get("state") == "INSTALLED" and st.get("target") == "B"
                 and st.get("version_target") == version,
                 f"{st.get('state')} → {st.get('target')} {st.get('version_target')}")
+    elif mode == "rollback":                                    # возврат на A после abort/сбоя пробной загрузки
+        add("slot.back_on_A", db["active"] == da["active"] == "A", f"{db['active']} → {da['active']} "
+            "(корень, boot, by-slot, device-tree — согласованно)")
+        add("dt.tryboot", a["dt.tryboot"] == "0", f"флаг пробной загрузки {a['dt.tryboot']}")
+        add("rebooted", b["boot_id"] != a["boot_id"], "boot_id сменился относительно снимка «до»")
+        if trial is not None:                                   # снимок пробной загрузки: B, и после неё — новая загрузка
+            et, dt = validate(trial)
+            add("trial.evidence", not et and dt.get("active") == "B" and trial["meta"]["board"] == before["meta"][
+                "board"], "; ".join(et) or f"пробная загрузка: активный {dt.get('active')}",
+                status=None if not et else "ERROR")
+            if not et:
+                add("rebooted_after_trial", trial["fields"]["boot_id"] != a["boot_id"], "boot_id ≠ пробной загрузки")
+        # Содержимое A и его /var (выпуск DEV deploy) — прежние: слот A не переписывался, конфигурация не терялась.
+        for k in ("package", "build", "slot.root", "slot.boot", "slot.dt", "mnt.root", "mnt.boot", "mounts",
+                  "tree.boot", "tree.system", "deploy.status"):
+            same(k)
+        add("mnt.root_ro", "ro" in a["mnt.root"].split(","), a["mnt.root"])
+        for p in SLOT_PARTS["B"]:                              # отвергнутый слот с начала этой загрузки не писался
+            w, d = da["io"][p]
+            add(f"untouched_since_boot.{p}.{LAYOUT[p]}", w == 0 and d == 0, f"записано {w}, отброшено {d}")
+        add("ota.state", st.get("state") in ("ROLLED_BACK", "IDLE") and not st.get("target"),
+            f"{st.get('state')} → {st.get('target')}")
+        for u in ("ssh", unit):
+            s = dict(x.split("=", 1) for x in a[f"unit.{u}"].strip(";").split(";") if "=" in x)
+            add(f"unit.{u}", s.get("ActiveState") == "active" and s.get("NRestarts") == "0", a[f"unit.{u}"])
     else:                                                       # trial: шаг 4, после пробной загрузки слота B
         add("slot.trial_B", db["active"] == "A" and da["active"] == "B", f"{db['active']} → {da['active']} "
             "(корень, boot, by-slot, device-tree — согласованно)")
@@ -316,13 +343,18 @@ def compare(before, after, mode, version):
         for u in ("ssh", unit):
             s = dict(x.split("=", 1) for x in a[f"unit.{u}"].strip(";").split(";") if "=" in x)
             add(f"unit.{u}", s.get("ActiveState") == "active" and s.get("NRestarts") == "0", a[f"unit.{u}"])
-    want = "YES" if mode == "trial" else "no"
-    add("ota.enable_" + ("present" if mode == "trial" else "absent"), a["ota.enable_present"] == want,
-        a["ota.enable_present"])
+    if mode == "rollback":                                      # abort разрешение не отзывает: отзыв — ota-disable
+        add("ota.enable", True, f"{a['ota.enable_present']} (сведения; отзыв разрешения — отдельное решение)",
+            status="INFO")
+    else:
+        want = "YES" if mode == "trial" else "no"
+        add("ota.enable_" + ("present" if mode == "trial" else "absent"), a["ota.enable_present"] == want,
+            a["ota.enable_present"])
     act_other = SLOT_PARTS["B" if da["active"] == "A" else "A"]
     mounted = [p for p in act_other if f"/dev/mmcblk0{p} " in a["mounts"].replace(";", " ;")]
     add("other_slot_not_mounted", not mounted, ",".join(mounted) or "нет")
-    verdict = "FAIL" if any(r["status"] == "FAIL" for r in out) else "PASS"
+    verdict = "ERROR" if any(r["status"] == "ERROR" for r in out) else \
+        "FAIL" if any(r["status"] == "FAIL" for r in out) else "PASS"
     return verdict, out
 
 
@@ -336,7 +368,8 @@ def main(argv=None):
     c = sub.add_parser("compare")
     c.add_argument("before")
     c.add_argument("after")
-    c.add_argument("--mode", choices=("install", "trial", "unchanged"), required=True)
+    c.add_argument("--mode", choices=("install", "trial", "unchanged", "rollback"), required=True)
+    c.add_argument("--trial", help="rollback: снимок пробной загрузки (boot_id после возврата должен отличаться)")
     c.add_argument("--version", required=True)
     a = ap.parse_args(argv)
     if a.cmd == "snap":
@@ -350,7 +383,7 @@ def main(argv=None):
         print(f"OK {a.board} ({a.host}): {len(d['fields'])} полей, активный слот {info['active']} → {a.out}")
         return 0
     verdict, res = compare(json.loads(Path(a.before).read_text()), json.loads(Path(a.after).read_text()),
-                           a.mode, a.version)
+                           a.mode, a.version, json.loads(Path(a.trial).read_text()) if a.trial else None)
     for r in res:
         print(f"{r['status']} {r['id']}" + (f" — {r['detail']}" if r["detail"] else ""))
     n = {v: sum(r["status"] == v for r in res) for v in ("PASS", "FAIL", "ERROR")}
