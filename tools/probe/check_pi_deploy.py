@@ -17,8 +17,13 @@
   deploy-bad-start выпуск, падающий при старте (временный коммит, не публикуется) → ROLLED_BACK, прежний выпуск
   deploy-crash-window  выпуск, падающий через 15 с после READY → ROLLED_BACK
   rollback | factory  ручной возврат и заводской код
-  corrupt          повреждение выпуска на плате требует root — SKIP (защита — tamper, переход на заводской код —
-                   контейнерное испытание tools/deploy/systemd-check)
+  foreign-sig      пакет, подписанный посторонним ключом → REJECTED, current и службы не тронуты
+  tampered         подписанный пакет, изменённый после подписи → REJECTED, current и службы не тронуты
+  login-key-sig    пакет, подписанный ключом SSH-входа (~/.ssh/id_ed25519) → REJECTED: вход ≠ право установки
+  no-bytecode      в установленных выпусках нет __pycache__/.pyc (от root ничего не компилировалось), владелец root
+  reboot           штатная перезагрузка → SSH, служба active, тот же выпуск (новый boot_id)
+  corrupt          повреждение выпуска (посторонний .pyc/файл) на плате требует root — SKIP (защита — tamper;
+                   отказ launcher и переход на заводской код — контейнер systemd 257 и тесты launcher)
 Во всех сценариях с отказами параллельно каждые 2 с открывается НОВОЕ соединение SSH (systemctl is-active ssh):
 любой отказ — FAIL. Только синтетические эмуляторы; удалённых команд через лабораторный канал нет.
 """
@@ -331,6 +336,112 @@ def sc_factory(a):
     return {**r, "verdict": "PASS" if ok else "FAIL"}
 
 
+def _upload_install(a, data, signature):
+    """Загрузка пакета и подписи как это делает shdeploy, запуск install; итог — из state.json."""
+    h = a.host
+    inc = ".cache/sheregesh-deploy/incoming"
+    ssh(h, f"mkdir -p ~/{inc} && rm -f ~/{inc}/bundle.*")
+    for name, blob in (("bundle.tar.xz.sig", signature), ("bundle.tar.xz", data)):
+        r = subprocess.run(["ssh", "-o", "BatchMode=yes", f"sheregesh-ui@{h}",
+                            f"cat > ~/{inc}/{name}.part && mv ~/{inc}/{name}.part ~/{inc}/{name}"],
+                           input=blob, capture_output=True, timeout=120)
+        if r.returncode:
+            raise RuntimeError(f"загрузка {name}: {r.stderr.decode()[-200:]}")
+    return ssh(h, "systemctl start sheregesh-deploy@install.service; echo rc=$?")
+
+
+def _reject_case(a, make):
+    sys.path[:0] = [str(ROOT / "software"), str(ROOT / "tools/deploy"), str(ROOT / "tools/image")]
+    import shdeploy  # noqa: E402
+    from sheregesh.deploy import sig  # noqa: E402
+    h = a.host
+    data, version, commit, _ = shdeploy.build_release("HEAD")
+    with tempfile.TemporaryDirectory() as tmp:
+        data, signature = make(data, sig, Path(tmp))
+    s0, v0 = state(h), svc(h)
+    with SshProbe(h) as p:
+        rc, out, err = _upload_install(a, data, signature)
+        time.sleep(3)
+    s1, v1 = state(h), svc(h)
+    last = s1.get("last") or {}
+    untouched = (s1.get("current") == s0.get("current") and v1.get("MainPID") == v0.get("MainPID")
+                 and v1.get("NRestarts") == v0.get("NRestarts"))
+    ran = s1.get("history") != s0.get("history")
+    res = {"result": last.get("result"), "reason": last.get("reason"), "installer_ran": ran, "unit_output": out,
+           "current_before": s0.get("current"), "current_after": s1.get("current"),
+           "service_untouched": untouched, **p.result()}
+    ok = ran and last.get("result") == "REJECTED" and untouched and not p.fail
+    return {**res, "verdict": "PASS" if ok else "FAIL"}
+
+
+def sc_foreign_sig(a):
+    def make(data, sig, tmp):
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(tmp / "foreign")], check=True)
+        return data, sig.sign(data, tmp / "foreign", sig.NS_APP)
+    return _reject_case(a, make)
+
+
+def sc_tampered(a):
+    key = Path("~/.ssh/sheregesh-deploy").expanduser()
+
+    def make(data, sig, tmp):
+        signature = sig.sign(data, key, sig.NS_APP)                   # подпись владельца над исходными байтами
+        bad = bytearray(data)
+        bad[len(bad) // 2] ^= 0x01                                     # затем пакет изменён
+        return bytes(bad), signature
+    return _reject_case(a, make)
+
+
+def sc_login_key_sig(a):
+    login = Path("~/.ssh/id_ed25519").expanduser()
+    if not login.exists():
+        return {"verdict": "SKIP", "reason": f"нет {login}"}
+    return _reject_case(a, lambda data, sig, tmp: (data, sig.sign(data, login, sig.NS_APP)))
+
+
+def sc_no_bytecode(a):
+    _, out, _ = ssh(a.host, "d=/var/lib/sheregesh-deploy/releases; ls $d 2>/dev/null | wc -l; "
+                            "find $d \\( -name '*.pyc' -o -name __pycache__ \\) 2>/dev/null | head -5; echo ---; "
+                            "find $d -maxdepth 1 -mindepth 1 -printf '%u %m %f\\n' 2>/dev/null")
+    count, rest = out.split("\n", 1) if "\n" in out else (out, "")
+    found, owners = rest.split("---", 1) if "---" in rest else (rest, "")
+    owners = [x for x in owners.strip().splitlines() if x]
+    if int(count or 0) == 0:
+        return {"verdict": "SKIP", "reason": "выпусков на плате нет (сначала deploy-good)"}
+    ok = not found.strip() and owners and all(x.split()[0] == "root" and x.split()[1] == "755" for x in owners)
+    return {"releases": owners, "bytecode_found": found.strip().splitlines(), "verdict": "PASS" if ok else "FAIL"}
+
+
+def sc_reboot(a):
+    h = a.host
+    _, boot0, _ = ssh(h, "cat /proc/sys/kernel/random/boot_id")
+    s0, rel0 = state(h), app_release(h)
+    ssh(h, "systemctl reboot", timeout=30)
+    t0 = time.monotonic()
+    down = up = None
+    while time.monotonic() - t0 < 300:
+        try:
+            rc, b, _ = ssh(h, "cat /proc/sys/kernel/random/boot_id", timeout=15)
+        except subprocess.TimeoutExpired:
+            rc, b = 255, ""
+        if rc != 0 and down is None:
+            down = round(time.monotonic() - t0, 1)
+        if rc == 0 and b and b != boot0:
+            up = round(time.monotonic() - t0, 1)
+            break
+        time.sleep(3)
+    if up is None:
+        return {"verdict": "FAIL", "reason": "плата не вернулась по SSH за 300 с (нужен физический доступ)"}
+    active = wait_active(h, timeout=150)
+    s1, rel1 = state(h), app_release(h)
+    _, sysstate, _ = ssh(h, "systemctl is-system-running; systemd-analyze | head -1")
+    ok = (active is not None and rel1.get("SHEREGESH_RELEASE") == rel0.get("SHEREGESH_RELEASE")
+          and s1.get("current") == s0.get("current"))
+    return {"ssh_down_after_s": down, "ssh_back_after_s": up, "console_active_after_s": active,
+            "release_before": rel0, "release_after": rel1, "system": sysstate.splitlines(),
+            "verdict": "PASS" if ok else "FAIL"}
+
+
 def sc_corrupt(a):
     return {"verdict": "SKIP", "reason": "повреждение выпуска на плате требует root (sheregesh-ui не может — см. tamper); "
                                          "переход на заводской код подтверждён контейнерным испытанием systemd 257"}
@@ -342,7 +453,8 @@ SCENARIOS = {"image": sc_image, "polkit": sc_polkit, "tamper": sc_tamper,
              "watchdog-freeze": lambda a: _wd(a, "freeze"), "relay-kill-frozen": lambda a: _wd(a, "relay-kill-frozen"),
              "deploy-good": sc_deploy_good, "deploy-bad-start": sc_deploy_bad_start,
              "deploy-crash-window": sc_deploy_crash_window, "rollback": sc_rollback, "factory": sc_factory,
-             "corrupt": sc_corrupt}
+             "foreign-sig": sc_foreign_sig, "tampered": sc_tampered, "login-key-sig": sc_login_key_sig, "no-bytecode": sc_no_bytecode,
+             "reboot": sc_reboot, "corrupt": sc_corrupt}
 
 
 def main(argv=None):
