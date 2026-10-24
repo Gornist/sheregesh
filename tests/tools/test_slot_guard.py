@@ -263,6 +263,59 @@ def check_trial_negative_cases():
 
 # ---------------------------------------------------------------- сбор снимка
 
+# ---------------------------------------------------------------- возврат на A после abort (pi1, процедура §6)
+
+def rolled_back(board="pi2"):
+    f = fields_a(board)
+    f.update({"boot_id": "b-3", "ota.status": ota("ROLLED_BACK"), "ota.enable_present": "YES"})
+    f.update({f"unit.{u}": UNIT.format(u + "-3") for u in g.UNITS})
+    io = {"p1": (0, 0), "p2": (0, 0), "p3": (0, 0), "p4": (16, 0), "p5": (0, 0), "p6": (7000, 0)}
+    f.update({f"io.{p}": f"{w} {d}" for p, (w, d) in io.items()})
+    f["io.disk"] = f"{sum(w for w, _ in io.values())} 0"
+    return f
+
+
+def run_rb(after, trial_fields=None, before=None):
+    t = snapshot(trial_fields) if trial_fields else None
+    verdict, res = g.compare(snapshot(before or fields_a()), snapshot(after), "rollback", V, t)
+    return verdict, sorted({r["id"] for r in res if r["status"] not in ("PASS", "INFO")})
+
+
+def check_rollback_after_trial_passes():
+    assert run_rb(rolled_back(), trial()) == ("PASS", [])
+    assert run_rb(rolled_back()) == ("PASS", [])
+
+
+@cases(*[("dt.tryboot", "1", "dt.tryboot"), ("boot_id", "b-1", "rebooted"), ("failed", "sheregesh-ota-boot.service ",
+         "failed"), ("tree.system", H("system_b") + " 1600", "same.tree.system"),
+         ("ota.status", ota("HEALTH_PENDING", "B", V), "ota.state"),
+         ("deploy.status", json.dumps({"role": "remote", "current": "factory"}), "same.deploy.status"),
+         ("fp./etc/machine-id", H("other"), "same.fp./etc/machine-id")])
+def check_rollback_negative_cases(key, value, bad):
+    a = rolled_back()
+    a[key] = value
+    v, ids = run_rb(a)
+    assert v == "FAIL" and bad in ids, (v, ids)
+
+
+def check_rollback_still_on_b_or_same_boot_as_trial_fails():
+    v, ids = run_rb(trial())
+    assert v == "FAIL" and "slot.back_on_A" in ids
+    a, t = rolled_back(), trial()
+    t["boot_id"] = a["boot_id"]
+    assert run_rb(a, t) == ("FAIL", ["rebooted_after_trial"])
+    a = rolled_back()
+    set_io(a, "p5", 8)
+    assert run_rb(a) == ("FAIL", ["untouched_since_boot.p5.system_b"])
+
+
+def check_rollback_bad_trial_snapshot_is_error():
+    t = trial()
+    del t["health"]
+    assert run_rb(rolled_back(), t)[0] == "ERROR"
+    assert run_rb(rolled_back(), fields_a())[0] == "FAIL"           # «пробная» на A — не доказательство
+
+
 def check_parse_detects_interruption_errors_and_duplicates():
     f, e, done = g.parse("serial\t1\n!ERR\ttree.boot\tкод 1\nserial\t2\n")
     assert not done and any("tree.boot" in x for x in e) and any("повторяется" in x for x in e)
