@@ -143,10 +143,11 @@ def app_release(host):
 
 def journal(host, since, unit="sheregesh-console", pattern="."):
     """Записи службы и её процессов в сеансе входа: пульт под PAMName пишет из session-N.scope под идентификатором
-    ретранслятора/cage, поэтому одного -u мало."""
+    ретранслятора/cage, поэтому одного -u мало. ExecStopPost («stopped: result=…») тоже идёт через PAM — его
+    идентификатор sh (проверено с systemd 257, tests/systemd/app_stop)."""
     sel = f"_SYSTEMD_UNIT={unit}.service + UNIT={unit}.service"
     if unit == "sheregesh-console":
-        sel += " + SYSLOG_IDENTIFIER=sheregesh-notify-relay + SYSLOG_IDENTIFIER=cage"
+        sel += " + SYSLOG_IDENTIFIER=sheregesh-notify-relay + SYSLOG_IDENTIFIER=cage + SYSLOG_IDENTIFIER=sh"
     _, out, _ = ssh(host, f"journalctl --since @{int(since)} -o short-monotonic --no-pager {sel} "
                           f"| grep -E '{pattern}' | tail -10")
     return out.splitlines()

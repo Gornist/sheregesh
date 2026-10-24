@@ -61,7 +61,9 @@ python3 tools/probe/check_pi_deploy.py --board pi2 --host 192.168.1.171 --out do
 ```
 T=$(date +%s); systemctl stop sheregesh-console; sleep 8
 systemctl show sheregesh-console -p ActiveState,SubState,Result,ExecMainStatus
-journalctl --since @$T -o cat --no-pager -u sheregesh-console + SYSLOG_IDENTIFIER=sheregesh-notify-relay
+journalctl --since @$T -o cat --no-pager _SYSTEMD_UNIT=sheregesh-console.service + UNIT=sheregesh-console.service \
+  + SYSLOG_IDENTIFIER=sheregesh-notify-relay + SYSLOG_IDENTIFIER=sh
+# (исправлено: «-u X + …» journalctl 257 отвергает; ExecStopPost под PAM — идентификатор sh; см. app-stop-closure.md)
 pgrep -a 'cage|sheregesh_console'; systemctl start sheregesh-console
 ```
 
