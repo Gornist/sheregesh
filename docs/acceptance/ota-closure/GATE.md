@@ -68,8 +68,8 @@ Root-входа нет: root и пароли заблокированы (S2-1 `v
 
 **A. Кандидат**
 - [ ] Полный SHA коммита в `v2`. `git merge-base --is-ancestor` для 6353c70 и d1258f3 → 0. Изменения `software/sheregesh/update` после d1258f3 перечислены и проверены.
-- [ ] CI на этом SHA — success. Полный pytest на ubuntu, включая var-seed с GNU tar.
-- [ ] Локально на SHA — целевые тесты §2 без FAIL.
+- [ ] CI success на последнем коммите с изменениями кода не позже SHA. Сейчас это 68bed74. Коммиты после него — только `docs/` и `tests/`: `git diff --stat 68bed74 SHA -- software tools os` должен быть пуст. Тесты, добавленные после 68bed74, прогнаны локально на SHA. `software/` в abd9d68 = c4e2d33 (содержит 6353c70 и d1258f3).
+- [ ] Локально на SHA без FAIL: `tests/unit/test_ota*.py test_update*.py test_confirm*.py`, `tests/tools/test_slot_guard.py test_repair_ota_state.py`. На d728ca4 (`software` = abd9d68): 193 passed, 1 skipped (var-seed без GNU tar).
 - [ ] Образ собран на devbox (решение владельца 2026-10-25: сборки образов только там) из этого SHA: в `build-report.json` `commit` = SHA, в `verify.json` нет FAIL, `image_sha256` записан.
 
 **B. Пакет**
@@ -84,7 +84,7 @@ Root-входа нет: root и пароли заблокированы (S2-1 `v
 - [ ] Подпись: `pi1-preflight/tools/verify_payload.py` с `allowed_signers` плат (SHA `74c95610…00c0`, ключ `SHA256:5wJfw7Qw…`) → `Good "sheregesh-ota" signature`, SHA-256 сжатых образов = манифест, лишних байт нет.
 - [ ] Не a7f1b74 (`f6e19234…6edb`) и не пакет из образа < d1258f3.
 
-**C. Файловые испытания L3** (`ota-check/run.py`, база `ci-57e8fe4-dev`, пакет кандидата)
+**C. Файловые испытания L3** (`ota-check/run.py`, база — образ 57e8fe4, тот же, что на A pi2; пакет кандидата. Нет базы — STOP, другим образом не подменять)
 - [ ] `--agent-rev 57e8fe4` (реальный путь pi1 и pi2) — все PASS (ожидается 39/39).
 - [ ] Агент кандидата — все PASS.
 - [ ] В обоих режимах PASS:
@@ -95,20 +95,20 @@ Root-входа нет: root и пароли заблокированы (S2-1 `v
   - abort → A;
   - общие данные не изменились.
 
-**D. slot_guard и наблюдение**
+**D. slot_guard и наблюдение** (подробно — [`HW-PLAN.md`](HW-PLAN.md))
 - [ ] `tests/tools/test_slot_guard.py` PASS.
+- [ ] Снимок «до» — свежий: после `ota-disable`, в той же загрузке, что `ota-install`. `hardware/pi2-after-repair.json` не годится: `ota.enable_present=YES` → FAIL `ota.enable_absent`. `.Spotlight-V100` на p2 есть в обоих снимках, поэтому `same.tree.boot` не даёт ложного FAIL.
 - [ ] Шаг 1: `install` pi2 + `unchanged` pi1.
-- [ ] Шаг 4: `trial` (`build.version` = V).
-- [ ] При откате: `rollback --trial`.
-- [ ] После confirm (режима нет) — вручную по `snap` после обычной перезагрузки:
-  - `autoboot` `[all]=3`, `[tryboot]=2`;
-  - активный B по всем признакам, `dt.tryboot=0`;
-  - OTA COMMITTED, `active=B`, `version_active=V`;
-  - health PASS, failed none;
-  - поля идентичности = снимку шага 1.
+- [ ] Шаг 4: `trial` (`build.version` = V) после стабилизации + сухая проверка фактов критериев confirm.
+- [ ] При откате: `rollback --trial` против «до» шага 0 (не `s3.2-ota/step1`).
+- [ ] После confirm и после контрольной перезагрузки: `--mode trial` против «до».
+  - Допустимы только FAIL `same.autoboot.sha256`, `bootconfig.autoboot`, `ota.state`; после перезагрузки ещё `dt.tryboot`.
+  - Эти поля сверить вручную: `[all]=3`, `[tryboot]=2`; COMMITTED/B/V; `dt.tryboot=0` после перезагрузки.
 
 **E. Предусловия pi2**
-- [ ] R2a выполнен и доказан (§4): A, ROLLED_BACK/IDLE, `consistent: true`, `ota-status` работает, health PASS, разрешение переключения есть.
+- [x] R2a выполнен ([`hardware/REPAIR.md`](hardware/REPAIR.md)): A, IDLE, `consistent: true`, `ota-boot` success, health 14/14.
+- [ ] `rollback` против `s3.2-ota/step1`: 37 PASS, 1 FAIL `same.tree.boot` — `.Spotlight-V100` на p2 от macOS. Закрыть доказательством: файлы p2 вне `.Spotlight-V100` = образ 57e8fe4. **До закрытия — STOP.**
+- [ ] Разрешение переключения отозвать на шаге 0 (`ota-disable`) и выдать снова на шаге 2 (`ota-enable`), как в s3.2.
 - [ ] pi1 не меняется (`unchanged`).
 
 **F. Процедура и восстановление**
@@ -117,3 +117,24 @@ Root-входа нет: root и пароли заблокированы (S2-1 `v
 - [ ] Отказ на шаге 1–3: основной A не тронут (`install`/`untouched`). `ota-abort`, повтор только с тем же утверждённым SHA.
 - [ ] Отключать питание запрещено только на время записи (шаг 1). На пробной загрузке сбой питания штатно возвращает A.
 - [ ] Решение владельца по пути pi2 (R2a / R4) и утверждённый SHA пакета записаны.
+
+## 6. Шаблон аудита кандидата (QA заполняет по журналам PACKAGE)
+
+| # | Проверка | Ожидается | Факт | Итог |
+|---|---|---|---|---|
+| 1 | SHA коммита; предки 6353c70 и d1258f3; `git diff 68bed74 SHA -- software tools os` | abd9d68; предки — да; diff пуст или разобран | | |
+| 2 | Дерево сборки = `git archive SHA` | совпадает побайтно | | |
+| 3 | `build-report.json`: `commit`, `source_date_epoch`, `config` | SHA; epoch → V; `sheregesh-lab-dev-pi4` | | |
+| 4 | `verify.json` | 0 FAIL | | |
+| 5 | SHA-256 образа | = `image_sha256` отчёта | | |
+| 6 | SHA-256 `.shota` (devbox и Mac) | совпадают; утверждён владельцем | | |
+| 7 | Манифест: `commit`, `version`, `compatible`, `layout`, `images`, `units`, `image_verify.failed` | SHA; V > 0.1.1792865618; dev-1; `image-rota-gpt-ab-1`; boot+system; = .deb; [] | | |
+| 8 | `verify_payload.py` с `allowed_signers` плат | Good `sheregesh-ota`, ключ `SHA256:5wJfw7Qw…`; сжатые SHA = манифест; лишних байт нет | | |
+| 9 | Пакет не из запрещённых | ≠ `f6e19234…6edb` (a7f1b74) | | |
+| 10 | L3 `--agent-rev 57e8fe4` | все PASS (ожидается 39/39) | | |
+| 11 | L3, агент кандидата | все PASS | | |
+| 12 | Новый слот: `build.json` = SHA и V; confirm с `--link-config`; `model.py` не пишет пустой `expect` | да | | |
+| 13 | Локальные тесты на SHA (§5 A) | 0 FAIL | | |
+| 14 | Предусловия pi2 (§5 E), в т. ч. закрытие FAIL `tree.boot` | закрыты | | |
+
+Вердикт: GO — только если все 14 строк PASS. Иначе NO-GO с номерами строк.
