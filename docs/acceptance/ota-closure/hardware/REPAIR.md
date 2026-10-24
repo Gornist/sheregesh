@@ -27,3 +27,27 @@
   создан агентом 57e8fe4 (поля expect нет), прежний сохранён как `state.json.a7f1b74`.
 - `sheregesh-health`: PASS 14/0/0/0 (канал, сертификаты, службы). DEV-выпуск `0.1.0~dev0+ga0ba6311bee4` работает.
 - Снимок slot_guard: [`pi2-after-repair.json`](pi2-after-repair.json) (53 поля, активный A) — «до» для шага 1 нового цикла.
+
+## Как pi2 перешла с неподтверждённого B на A и на каком основании
+- **Основание:** сообщения владельца в сессии 2026-10-25 ~01:15–01:20 — «это чини сам без моего вмешательства» (на
+  вывод, что сетевого пути нет и нужен ремонт state.json на карте) и «выключай Я выключаю pi2 штатно (systemctl
+  poweroff)». Сетевого пути нет: тест `test_pi2_no_agent_action_on_b_makes_state_safe`, root заблокирован, deployd —
+  `ProtectSystem=strict` (GATE.md §4).
+- **Механизм:** `systemctl poweroff` от sheregesh-ui на B (polkit разрешает). Ни `ota-abort`, ни `ota-tryboot`, ни
+  `ota-confirm` не вызывались, `autoboot.txt` не менялся (SHA `f336517a…` до и после). B был пробной загрузкой
+  (tryboot одноразовый), основной в `[all]` — `boot_partition=2`, поэтому после включения прошивка загрузила A.
+  Это штатный путь отката модели (инвариант 2: до COMMITTED любая перезагрузка/отключение → прежний слот).
+- **Независимая сверка** `slot_guard compare --mode rollback` (до = `s3.2-ota/step1/pi2-before.json`, пробная =
+  `pi2-before-poweroff.json`, после = `pi2-after-repair.json`) → [`pi2-compare-rollback.txt`](pi2-compare-rollback.txt):
+  **PASS 37, FAIL 1** — `same.tree.boot` (см. ниже), ERROR 0. A, `dt.tryboot=0`, boot_id сменился, p3/p5 после
+  загрузки не писались, пакет/сборка/деплой те же, ssh и remote-net активны.
+
+## FAIL same.tree.boot: индекс Spotlight macOS на boot_a (p2, vfat) — не изменение загрузочных файлов
+- Раздел boot_a образа 57e8fe4 содержит ровно 2 файла: `boot.img` и `config.txt`. На pi2 SHA-256 обоих побайтно
+  равны образу (`4e6da3f9…5067`, `c4318a93…4f45`; извлечение p2 из `build/image/ci-57e8fe4-dev/*.img.zst`, mtools).
+- Остальные файлы — `/boot/firmware/.Spotlight-V100/…`: 78 в снимке шага 1 (каталог создан 2026-10-24 17:29 — при
+  прошлой работе с картой на маке), 93 сейчас; новые/изменённые — 2026-10-25 01:22–01:23, когда карта стояла в
+  картридере: macOS автоматически монтирует FAT-разделы при вставке, до `diskutil unmountDisk` инструмента.
+- На p1 (`/bootfs`, autoboot.txt) скрытых файлов нет; p3 (boot_b) будет перезаписан установкой нового пакета.
+- Вывод: загрузочные файлы слота A не изменены; FAIL slot_guard корректен как сигнал (дерево изменилось) и объяснён.
+  Урок: при любой будущей работе с картой на маке FAT-разделы будут изменены Spotlight — учитывать в «до/после».
