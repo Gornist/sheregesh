@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Синтетический видеопоток (REQ-SW-002, ADR-0003/0007): конвейеры gst-launch-1.0.
 
-Источник — только встроенный генератор videotestsrc. Передача — RTP/UDP на 127.0.0.1 (автономный режим) или
+Источник — встроенный генератор videotestsrc или стандартное устройство V4L2/UVC (S3.3, sheregesh.videoinput: один
+интерфейс VideoSource; конвейеры собираются только здесь). Передача — RTP/UDP на 127.0.0.1 (автономный режим) или
 RTP поверх канала процесса (RFC 4571, rtpstreampay/rtpstreamdepay) для защищённого видеоканала между платами
 (sheregesh.videolink, ADR-0011): тогда RTP не попадает ни в один сокет.
 Кодек: H.264 — аппаратный v4l2h264enc/v4l2h264dec (Pi 4), иначе openh264enc → avdec_h264/openh264dec;
@@ -17,6 +18,8 @@ import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
+
+from .videoinput import SyntheticSource
 
 GST_LAUNCH = "gst-launch-1.0"
 _PR_SET_PDEATHSIG = 1
@@ -149,29 +152,65 @@ def choose_codec(prefer="h264"):
     return "h264" if h264 else None
 
 
-def _source(width, height, fps, pattern):
-    src = [GST_LAUNCH, "-q", "videotestsrc", "is-live=true", f"pattern={pattern}", "!",
-           f"video/x-raw,width={width},height={height},framerate={fps}/1", "!"]
+def synthetic(width=1280, height=720, fps=30, pattern="smpte"):
+    """Синтетический источник (sheregesh.videoinput.SyntheticSource) с надписями, если есть элементы pango."""
     # Надписи — элементы pango (в Debian — пакет gstreamer1.0-x). Без них поток идёт без надписей, а не падает.
+    overlays = []
     if has_element("timeoverlay"):
-        src += ["timeoverlay", "halignment=right", "valignment=bottom", "font-desc=Sans 28", "!"]
+        overlays += ["timeoverlay", "halignment=right", "valignment=bottom", "font-desc=Sans 28", "!"]
     if has_element("textoverlay"):
-        src += ["textoverlay", "text=SHEREGESH SYNTHETIC TEST PATTERN", "valignment=top", "font-desc=Sans 24", "!"]
-    src += ["videoconvert", "!", "video/x-raw,format=I420", "!"]   # rtpjpegpay принимает только 4:2:0/4:2:2
-    return src
+        overlays += ["textoverlay", "text=SHEREGESH SYNTHETIC TEST PATTERN", "valignment=top", "font-desc=Sans 24", "!"]
+    return SyntheticSource(width, height, fps, pattern, overlays)
 
 
-def sender_args(codec, port, width=1280, height=720, fps=30, host="127.0.0.1", pattern="smpte"):
+def _source(width, height, fps, pattern, src=None):
+    """Сырые кадры I420 от источника (по умолчанию — синтетического) для кодера."""
+    return _raw(src or synthetic(width, height, fps, pattern)) + \
+        ["videoconvert", "!", "video/x-raw,format=I420", "!"]   # rtpjpegpay принимает только 4:2:0/4:2:2
+
+
+def _raw(src):
+    """gst-launch-1.0 + захват + декодирование формата источника до сырых кадров. Декодер H.264 — тот же, что выбрала
+    проба кодеков (v4l2h264dec на Pi 4); проба запускается, только если источник действительно отдаёт H.264."""
+    mode = getattr(src, "mode", None)
+    dec = None
+    if mode is not None and mode.pixfmt == "H264":
+        h = h264_elements()
+        dec = h[1] if h else "avdec_h264"
+    return [GST_LAUNCH, "-q", *src.capture(), *src.decode(dec)]
+
+
+# Сквозная передача без перекодирования: формат устройства совпадает с кодеком канала.
+_PASSTHROUGH = {("MJPG", "jpeg"): ["rtpjpegpay"],
+                ("H264", "h264"): ["h264parse", "config-interval=-1", "!", "video/x-h264,alignment=au", *RTP_H264]}
+
+
+def _encoded(codec, width, height, fps, pattern, src):
+    """Кодированный RTP от источника: сквозной, если устройство уже отдаёт кодек канала, иначе — кодер."""
+    mode = getattr(src, "mode", None)
+    through = _PASSTHROUGH.get((mode.pixfmt, codec)) if mode is not None else None
+    if through:
+        return [GST_LAUNCH, "-q", *src.capture(), *through]
+    return _source(width, height, fps, pattern, src) + encoder_args(codec)
+
+
+def capture_args(src, width, height):
+    """Локальный видеовход (S3.3): источник → декодирование формата устройства → RGBx в stdout. Без кодирования
+    и без сети: тот же хвост _to_rgbx, что у приёмника потока."""
+    return _raw(src) + _to_rgbx(width, height)
+
+
+def sender_args(codec, port, width=1280, height=720, fps=30, host="127.0.0.1", pattern="smpte", src=None):
     # bind-address: передающий сокет тоже только на loopback (иначе udpsink привязывается к 0.0.0.0:<случайный>, S2-BOOT).
     bind = ["bind-address=127.0.0.1"] if host.startswith("127.") else []
-    return _source(width, height, fps, pattern) + encoder_args(codec) + \
+    return _encoded(codec, width, height, fps, pattern, src) + \
         ["!", "udpsink", f"host={host}", f"port={port}", *bind, "sync=false"]
 
 
-def stream_sender_args(codec, width=1280, height=720, fps=30, pattern="smpte"):
+def stream_sender_args(codec, width=1280, height=720, fps=30, pattern="smpte", src=None):
     """RTP в stdout с кадрированием RFC 4571 (2 байта длины + пакет) — для защищённого канала, без сокетов."""
-    return _source(width, height, fps, pattern) + encoder_args(codec) + ["!", "rtpstreampay", "!", "fdsink", "fd=1",
-                                                                          "sync=false"]
+    return _encoded(codec, width, height, fps, pattern, src) + ["!", "rtpstreampay", "!", "fdsink", "fd=1",
+                                                                 "sync=false"]
 
 
 def stream_receiver_args(codec, width, height):
