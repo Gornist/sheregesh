@@ -211,9 +211,13 @@ def main(argv=None):
     run(["diskutil", "unmountDisk", f"/dev/{a.disk}"])
     rc = subprocess.run(["sudo", sys.executable, "-I", str(Path(__file__).resolve()), "--write-as-root",
                          str(a.image.resolve()), a.disk, str(image_bytes), ref, shutil.which("zstd")]).returncode
-    subprocess.run(["diskutil", "eject", f"/dev/{a.disk}"])     # сразу, чтобы macOS не успела смонтировать FAT
+    ej = subprocess.run(["diskutil", "eject", f"/dev/{a.disk}"]).returncode   # сразу, чтобы macOS не смонтировала FAT
     if rc:
         raise SystemExit(f"запись или проверка не удались (код {rc}); карту в плату не ставить")
+    if ej:
+        print(f"Карта проверена, но не извлечена (diskutil eject, код {ej}): извлеките её в Finder перед тем, "
+              "как вынимать.")
+        return 3
     print("Готово: карта проверена и извлечена.")
     return 0
 
