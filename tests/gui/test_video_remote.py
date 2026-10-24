@@ -26,7 +26,7 @@ pytestmark = pytest.mark.skipif(not shutil.which("openssl"), reason="нет open
 
 @pytest.fixture(scope="module")
 def lab(tmp_path_factory):
-    root = tmp_path_factory.mktemp("vrx")
+    root = tmp_path_factory.mktemp("vrecv")
     pki.ca_init(root / "ca")
 
     def device(name, role, did, peer):
