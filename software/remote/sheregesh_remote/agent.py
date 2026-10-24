@@ -56,6 +56,8 @@ class Agent:
         self.video_off_until = 0.0
         self.alerts = []
         self.writer = None
+        self.hb_wait = None                          # monotonic первого heartbeat, на который пульт ещё не ответил
+        self.written_connected = None                # «connected» в последнем записанном файле состояния
         self.seq = 0
         self.ignored = 0
         self.bad = 0
@@ -86,7 +88,8 @@ class Agent:
         self.peer_desc = None
         self.event_k = 0
         self.next_event = time.monotonic() + (args.event_interval or 0)
-        self.stats = {"sessions": 0, "auth_failures": 0, "rejected_addr": 0, "acks": 0, "events_sent": 0,
+        self.stats = {"sessions": 0, "auth_failures": 0, "rejected_addr": 0, "peer_timeouts": 0, "acks": 0,
+                      "events_sent": 0,
                       "events_acked": 0, "rtt_last_ms": None, "rtt_avg_ms": None, "rtt_max_ms": None}
         faults = list(args.fault) + (DEMO_FAULTS if args.scenario == "demo-s1" else [])
         self.faults = sorted((self._parse_fault(f) for f in faults), key=lambda f: f[0])
@@ -108,6 +111,8 @@ class Agent:
         if self.writer is None:
             return
         self.seq += 1
+        if mtype == "heartbeat" and self.hb_wait is None:
+            self.hb_wait = time.monotonic()
         if mtype in ("heartbeat", "event"):
             self.sent[self.seq] = (mtype, time.monotonic())
             if len(self.sent) > 256:
@@ -190,11 +195,12 @@ class Agent:
         if self.ctx is not None and not await self.secure(writer):
             writer.close()
             return
-        if self.writer is not None:                 # одно соединение: новое заменяет старое
-            self.writer.close()
+        if self.writer is not None:                 # одно соединение: новое заменяет старое (старое могло «повиснуть»)
+            self.writer.transport.abort()
         if self.vserver is not None:                # видеосеанс привязан к сеансу управления — новый сеанс, новое видео
             self.vserver.drop("сеанс управления заменён")
         self.writer = writer
+        self.hb_wait = None
         await self.send("hello", self.info())
         dec = Decoder()
         try:
@@ -202,6 +208,8 @@ class Agent:
                 data = await reader.read(65536)
                 if not data:
                     break
+                if self.writer is writer:
+                    self.hb_wait = None             # пульт жив: любой приём от него
                 for msg in dec.feed(data):
                     await self.on_message(msg)
         except ConnectionError:
@@ -255,6 +263,23 @@ class Agent:
         log(f"session from {addr}: {self.tls_cfg.peer_uri} ({version})")
         return True
 
+    def check_peer_alive(self, mono):
+        """Тихая потеря пульта (кабель, зависание): ядро может держать соединение минутами, а TCP не сообщит об обрыве,
+        пока нечего подтверждать. В сессии с ack пульт отвечает на каждый heartbeat; нет ни одного байта от пульта дольше
+        --peer-timeout после отправленного heartbeat — соединение разрывается (REQ-SYS-002: «нет связи» ≤ 5 с на обеих
+        сторонах). abort, а не close: неотправленный буфер на мёртвое соединение не держит сокет до таймаута TCP."""
+        limit = self.args.peer_timeout
+        if not (limit and self.writer is not None and self.hb_wait is not None
+                and "ack" in TYPES.get(self.session or "", ()) and mono - self.hb_wait > limit):
+            return
+        self.stats["peer_timeouts"] += 1
+        log(f"console silent {mono - self.hb_wait:.1f} s (no ack): connection dropped")
+        self.writer.transport.abort()
+        self.writer = None
+        self.hb_wait = None
+        if self.vserver is not None:
+            self.vserver.drop("пульт не отвечает")
+
     async def on_message(self, msg):
         if isinstance(msg, BadMessage):
             self.bad += 1
@@ -304,8 +329,9 @@ class Agent:
             if wd and mono >= next_ping:              # основной цикл жив — подтверждение для WatchdogSec
                 sdnotify.ping()
                 next_ping = mono + wd
-            if self.args.status_file and mono >= next_status:
-                self.write_status()
+            self.check_peer_alive(mono)
+            if self.args.status_file and (mono >= next_status or (self.writer is not None) != self.written_connected):
+                self.write_status()                   # смена «есть/нет пульта» — сразу, иначе раз в 2 с
                 next_status = mono + 2.0
             if self.args.event_interval and self.writer is not None and mono >= self.next_event:
                 self.event_k += 1
@@ -342,6 +368,7 @@ class Agent:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(st, ensure_ascii=False))
         os.replace(tmp, path)
+        self.written_connected = st["connected"]
 
     async def run(self):
         self.handshakes = asyncio.Semaphore(4)
@@ -387,6 +414,8 @@ def main(argv=None):
     ap.add_argument("--hardware", default="HW-1.0 Rev A (emulator)")
     ap.add_argument("--device-id", default="remote-emu-01")
     ap.add_argument("--heartbeat-interval", type=float, default=1.0)
+    ap.add_argument("--peer-timeout", type=float, default=3.0,
+                    help="нет ответа пульта на heartbeat дольше N с (сессия с ack) — соединение потеряно; 0 — не проверять")
     ap.add_argument("--speed", type=float, default=1.0, help="ускорение модельного времени сценария")
     ap.add_argument("--scenario", choices=["none", "demo-s1"], default="none")
     ap.add_argument("--fault", action="append", default=[], metavar="AT:KIND[:ARG]")
