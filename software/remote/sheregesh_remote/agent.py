@@ -17,7 +17,7 @@
   corrupt:KIND  отправить повреждённое сообщение: garbage | json | fields | utf8 | long
   close         закрыть соединение
   crash         аварийно завершить процесс (код 70)
-  video-off:DUR остановить видеопоток на DUR секунд
+  video-off:DUR остановить видеопоток на DUR секунд (и UDP, и защищённый видеоканал сетевого профиля)
   alert:CODE    добавить код события в активные события блока; alert-clear — очистить
 """
 import argparse
@@ -178,6 +178,8 @@ class Agent:
         elif kind == "video-off":
             self.video_stop()
             self.video_off_until = self.now() + float(arg)
+            if self.vserver is not None:            # и защищённый видеоканал: сеанс закрыт, новые отклоняются до конца
+                self.vserver.drop("неисправность video-off")
         elif kind == "alert":
             self.alerts.append(arg)
         elif kind == "alert-clear":
@@ -217,6 +219,8 @@ class Agent:
         """Видеосеанс — только тому же пульту (URI проверен TLS) и с того же адреса, что текущий сеанс управления."""
         if self.writer is None or self.peer_desc is None:
             return "no active control session"
+        if self.now() < self.video_off_until:
+            return "video off (fault)"
         if self.peer_desc.get("addr") != addr:
             return f"control session is from {self.peer_desc.get('addr')}"
         return None
