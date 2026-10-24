@@ -32,6 +32,7 @@ ENV["PYTHONPATH"] = str(ROOT / "software")
 #   exit1         cage по SIGTERM выходит с кодом 1, приложение умирает
 #   leader-exits  cage выходит по SIGTERM с кодом 0, приложение SIGTERM игнорирует и остаётся в группе
 #   crash         cage падает сам (код 70), приложение остаётся в группе
+#   exit0         cage выходит сам с кодом 0, приложение остаётся в группе
 FAKE_CAGE = r"""
 case $1 in
   ignore) trap '' TERM ;;
@@ -42,6 +43,7 @@ if [ "$1" = leader-exits ]; then (trap '' TERM; exec sleep 300) >/dev/null 2>&1 
 else sleep 300 >/dev/null 2>&1 & fi
 echo "pids $$ $!"
 [ "$1" = crash ] && exit 70
+[ "$1" = exit0 ] && exit 0
 while :; do wait; done
 """
 
@@ -72,6 +74,8 @@ class Relay:
     def __init__(self, tmp, mode, grace=1.0, notify=False):
         self.tmp = Path(tmp)
         env = {**ENV, "SHEREGESH_RELAY_GRACE_S": str(grace)}
+        if grace is None:                              # значение ретранслятора по умолчанию (как в юните)
+            del env["SHEREGESH_RELAY_GRACE_S"]
         self.sock = None
         if notify:                                     # путь с select() по сокету уведомлений
             self.sockdir = tempfile.mkdtemp(prefix="sd", dir="/tmp")   # короткий путь AF_UNIX (macOS: 104 байта)
@@ -261,6 +265,24 @@ def test_child_crash_is_failure_and_group_cleaned(relay):
     assert wait_group_gone(r.pgid)                     # «приложение» не пережило упавший cage
 
 
+def test_child_killed_by_foreign_sigterm_is_failure(relay):
+    """Чужой SIGTERM ребёнку (не останов службы) — отказ 143: штатным считается только SIGTERM самому ретранслятору."""
+    r = relay("term")
+    os.kill(r.cage, signal.SIGTERM)
+    assert r.p.wait(15) == 128 + signal.SIGTERM, r.stderr()
+    assert wait_group_gone(r.pgid)
+
+
+def test_child_clean_exit_is_zero(relay):
+    r = relay("exit0")
+    assert r.p.wait(15) == 0, r.stderr()
+    assert wait_group_gone(r.pgid)                     # оставшееся в группе «приложение» добито
+
+
+def test_sigabrt_code_is_134():
+    assert 128 + signal.SIGABRT == 134                 # код, который увидит systemd при срабатывании watchdog
+
+
 def test_child_killed_by_signal_is_failure(relay):
     r = relay("term")
     os.kill(r.cage, signal.SIGKILL)
@@ -279,3 +301,28 @@ def test_unit_stop_timeout_covers_relay_grace():
     grace = 5.0 if "SHEREGESH_RELAY_GRACE_S" in os.environ else notify_relay.GRACE_S
     stop = float(cfg.get("TimeoutAbortSec", cfg["TimeoutStopSec"]).rstrip("s"))
     assert stop >= grace + 2, f"TimeoutStopSec={stop} при GRACE_S={grace}"
+
+
+def test_unit_signals_match_relay():
+    """Ретранслятор различает останов (SIGTERM/SIGINT → 0) и watchdog (SIGABRT → 134) по сигналу от systemd:
+    юнит не должен переопределять KillSignal/WatchdogSignal, отключать SIGKILL по таймауту или маскировать 143."""
+    unit = (ROOT / "tools/image/units/sheregesh-console.service").read_text()
+    cfg = dict(line.split("=", 1) for line in unit.splitlines() if "=" in line and not line.startswith("#"))
+    assert cfg.get("KillSignal", "SIGTERM") in ("SIGTERM", "SIGINT")
+    assert cfg.get("WatchdogSignal", "SIGABRT") == "SIGABRT"
+    assert cfg.get("SendSIGKILL", "yes") == "yes"
+    assert "SuccessExitStatus" not in cfg
+    assert cfg["Type"] == "notify" and cfg["NotifyAccess"] == "main" and "WatchdogSec" in cfg
+
+
+def test_default_grace_stop_fits_unit_timeout(relay):
+    """Значение GRACE_S по умолчанию (как в юните): зависшая группа убита, останов укладывается в TimeoutStopSec."""
+    unit = (ROOT / "tools/image/units/sheregesh-console.service").read_text()
+    stop_s = float(next(line.split("=", 1)[1] for line in unit.splitlines() if line.startswith("TimeoutStopSec=")))
+    grace = 5.0 if "SHEREGESH_RELAY_GRACE_S" in os.environ else notify_relay.GRACE_S
+    r = relay("ignore", grace=None)
+    code, dt = r.stop(signal.SIGTERM, timeout=stop_s)
+    assert code == 0, r.stderr()
+    assert grace - 0.1 <= dt < min(grace + 2, stop_s), dt
+    assert wait_group_gone(r.pgid)
+    assert f"still alive after {grace:g} s — SIGKILL" in r.stderr()
