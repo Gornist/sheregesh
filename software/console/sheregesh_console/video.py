@@ -5,7 +5,11 @@
 Декодирует отдельный процесс gst-launch-1.0; кадры читает фоновый поток и хранит только последний.
 Основной поток GUI лишь забирает кадр по таймеру, поэтому сбой, зависание или отсутствие видео
 не блокируют интерфейс. Источник — только синтетический генератор (sheregesh.video).
+Удалённый блок (S3.1-VIDEO): RTP приходит по защищённому видеоканалу (sheregesh.videolink, TLS 1.3 с взаимной
+аутентификацией) и подаётся декодеру через stdin; разрыв канала завершает декодер, и он перезапускается с новым
+подключением. Незащищённого удалённого источника нет.
 """
+from collections import deque
 import os
 import select
 import signal
@@ -33,6 +37,11 @@ class VideoReceiver(QObject):
         self._command = command            # для испытаний: подмена конвейера
         self._codec = None
         self._port = None
+        self._remote = None                # (ключ, фабрика VideoClient) — удалённый блок по защищённому каналу
+        self._client = None
+        self._feeder = None
+        self._sessions = 0
+        self._decoded = deque(maxlen=300)
         self._proc = None
         self._thread = None
         self._lock = threading.Lock()
@@ -90,9 +99,10 @@ class VideoReceiver(QObject):
     # ---------- управление ----------
     def configure(self, codec, port):
         """Источник сообщил кодек и порт. Перезапуск только при изменении."""
-        if (codec, port) == (self._codec, self._port) and self._proc is not None:
+        if (codec, port) == (self._codec, self._port) and self._remote is None and self._proc is not None:
             return
         self.stop()
+        self._remote = None
         self._codec, self._port = codec, port
         if codec is None or port is None:
             self._set_state("off")
@@ -103,14 +113,51 @@ class VideoReceiver(QObject):
             return
         self._start()
 
+    def configure_remote(self, codec, key, factory):
+        """Удалённый блок: видео только по защищённому каналу. factory() → новый sheregesh.videolink.VideoClient."""
+        if self._remote is not None and self._remote[0] == (codec, key) and self._state != "off":
+            return
+        self.stop()
+        self._remote, self._codec, self._port = ((codec, key), factory), codec, key[1]
+        if self._command is None and not gst.available():
+            self._error = "gst-launch-1.0 not found"
+            self._set_state("unavailable")
+            return
+        self._start()
+
+    def metrics(self):
+        """Для диагностики без дисплея: фактически декодированные кадры и состояние видеоканала."""
+        now = time.monotonic()
+        with self._lock:
+            recent = [t for t in self._decoded if now - t <= 5.0]
+            frames = self._seq
+        out = {"state": self._state, "codec": self._codec, "frames_decoded": frames, "restarts": self._restarts,
+               "decoded_fps_5s": round(len(recent) / 5.0, 1) if recent else 0.0, "output": f"{FRAME_W}x{FRAME_H}",
+               "error": self._error, "mode": "remote-tls" if self._remote else ("local" if self._codec else "off"),
+               "sessions": self._sessions}
+        if self._client is not None:
+            out["link"] = self._client.stats()
+        return out
+
     def _start(self):
-        args = self._command or gst.receiver_args(self._codec, self._port, FRAME_W, FRAME_H)
+        remote = self._remote is not None
+        if remote:
+            args = self._command or gst.stream_receiver_args(self._codec, FRAME_W, FRAME_H)
+        else:
+            args = self._command or gst.receiver_args(self._codec, self._port, FRAME_W, FRAME_H)
         try:
-            self._proc = gst.spawn(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            self._proc = gst.spawn(args, stdin=subprocess.PIPE if remote else subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except OSError as e:
             self._error = str(e)
             self._schedule_restart()
             return
+        if remote:
+            self._client = self._remote[1]()
+            self._sessions += 1
+            self._feeder = threading.Thread(target=self._feed, args=(self._client, self._proc), name="video-link",
+                                            daemon=True)
+            self._feeder.start()
         self._error = ""
         self._started_at = time.monotonic()
         with self._lock:
@@ -119,7 +166,23 @@ class VideoReceiver(QObject):
         self._thread = threading.Thread(target=self._reader, args=(self._proc,), name="video-reader", daemon=True)
         self._thread.start()
 
+    def _feed(self, client, proc):
+        """Видеоканал → stdin декодера. Конец канала (разрыв, отказ аутентификации) закрывает stdin — декодер
+        завершается, и _poll перезапускает его с новым подключением."""
+        why = client.run(proc.stdin.fileno())
+        self._error = f"video link: {why}"
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
+
     def stop(self):
+        client, self._client = self._client, None
+        if client is not None:
+            client.close()
+        if self._feeder is not None:
+            self._feeder.join(timeout=2)
+            self._feeder = None
         proc, self._proc = self._proc, None
         if proc is not None:
             try:
@@ -163,10 +226,12 @@ class VideoReceiver(QObject):
                 full = len(buf) // size
                 frame = bytes(buf[(full - 1) * size: full * size])   # только последний полный кадр
                 del buf[: full * size]
+                now = time.monotonic()
                 with self._lock:
                     self._latest = frame
                     self._seq += full
-                    self._last_frame_t = time.monotonic()
+                    self._last_frame_t = now
+                    self._decoded.extend([now] * full)
 
     # ---------- основной поток: таймер ----------
     def _set_state(self, state):

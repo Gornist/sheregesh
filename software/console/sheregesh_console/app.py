@@ -224,7 +224,8 @@ def main(argv=None):
             data = {"time": time.time(), "peerLink": st.get("peerLink"), "peerState": st.get("peerState"),
                     "peerDetail": st.get("peerDetail"), "linkTls": st.get("linkTls"), "linkHost": st.get("linkHost"),
                     "linkRttMs": st.get("linkRttMs"), "peerValueText": label.property("text") if label else None,
-                    "peerDetailText": detail.property("text") if detail and detail.property("visible") else ""}
+                    "peerDetailText": detail.property("text") if detail and detail.property("visible") else "",
+                    "video": backend.video.metrics()}   # фактически декодированные кадры и видеоканал (S3.1-VIDEO)
             try:
                 tmp = Path(ui_state + ".tmp")
                 tmp.write_text(json.dumps(data, ensure_ascii=False))

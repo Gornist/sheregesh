@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 
 from sheregesh import PROTOCOL_VERSION, __version__, sdnotify, video
+from sheregesh.videolink import VideoServer
 from sheregesh.link import tls
 from sheregesh.link.codec import TYPES, BadMessage, Decoder, encode
 from sheregesh.protocol import negotiate
@@ -62,6 +63,13 @@ class Agent:
         self.video_port = args.video_port
         self.tls_cfg = getattr(args, "tls_cfg", None)
         self.ctx = tls.make_context(self.tls_cfg, server=True) if self.tls_cfg else None
+        # Сетевой профиль: видео — только по защищённому каналу (S3.1-VIDEO, ADR-0011), без UDP-отправителя.
+        self.vserver = None
+        net_video = self.tls_cfg is not None and self.tls_cfg.video and not args.no_video
+        if net_video and args.video_command:          # испытания: подставной генератор, без пробы GStreamer
+            self.net_video_codec = args.video_codec
+        else:
+            self.net_video_codec = video.choose_codec(args.video_codec) if net_video and video.available() else None
         self.handshakes = None                       # asyncio.Semaphore: не более 4 рукопожатий одновременно
         self.sent = {}                               # seq heartbeat/event → (тип, monotonic) для ack
         self.session = None
@@ -110,8 +118,10 @@ class Agent:
         return {"state": "alert" if self.alerts else "normal", "uptime_s": round(self.now(), 1),
                 "temperatures": self.thermal.read(),
                 "power": {"source": p.source, "percent": p.percent, "low_battery": p.low_battery},
-                "video": {"enabled": bool(self.video_codec), "active": self.video_proc is not None,
-                          "codec": self.video_codec, "port": self.video_port},
+                "video": ({"enabled": True, "active": self.vserver.active, "codec": self.net_video_codec,
+                           "port": self.vserver.port, "transport": "tls"} if self.vserver is not None else
+                          {"enabled": bool(self.video_codec), "active": self.video_proc is not None,
+                           "codec": self.video_codec, "port": self.video_port}),
                 "active_events": list(self.alerts),
                 "link": {k: v for k, v in self.stats.items() if isinstance(v, (int, float))}}
 
@@ -169,6 +179,8 @@ class Agent:
             return
         if self.writer is not None:                 # одно соединение: новое заменяет старое
             self.writer.close()
+        if self.vserver is not None:                # видеосеанс привязан к сеансу управления — новый сеанс, новое видео
+            self.vserver.drop("сеанс управления заменён")
         self.writer = writer
         await self.send("hello", self.info())
         dec = Decoder()
@@ -184,7 +196,19 @@ class Agent:
         finally:
             if self.writer is writer:
                 self.writer = None
+            # Сеанс управления кончился любым путём (обрыв, EOF, «bye» — тот уже обнулил writer): если он не заменён
+            # новым, видео закрывается. Новый сеанс сам закрыл видео при подключении.
+            if self.writer is None and self.vserver is not None:
+                self.vserver.drop("сеанс управления завершён")
             writer.close()
+
+    def authorize_video(self, addr):
+        """Видеосеанс — только тому же пульту (URI проверен TLS) и с того же адреса, что текущий сеанс управления."""
+        if self.writer is None or self.peer_desc is None:
+            return "no active control session"
+        if self.peer_desc.get("addr") != addr:
+            return f"control session is from {self.peer_desc.get('addr')}"
+        return None
 
     async def secure(self, writer) -> bool:
         """Сетевой профиль: адрес из локальной подсети → TLS 1.3 с сертификатом пульта → URI пульта из конфигурации."""
@@ -297,7 +321,8 @@ class Agent:
         st = {"role": "remote", "time": time.time(), "software": __version__, "proto": self.proto,
               "tls": self.ctx is not None, "listen": f"{self.args.host}:{self.port}", "connected": self.writer is not None,
               "session": self.session if self.writer is not None else None, "peer": self.peer_desc, "stats": self.stats,
-              "own_uri": self.tls_cfg.own_uri if self.tls_cfg else None}
+              "own_uri": self.tls_cfg.own_uri if self.tls_cfg else None,
+              "video": self.vserver.stats() if self.vserver is not None else None}
         path = Path(self.args.status_file)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(st, ensure_ascii=False))
@@ -308,7 +333,13 @@ class Agent:
         server = await asyncio.start_server(self.handle, self.args.host, self.args.port, limit=128 * 1024)
         self.port = port = server.sockets[0].getsockname()[1]
         print(f"LISTENING port={port}" + (f" tls=1.3 mutual peer={self.tls_cfg.peer_uri}" if self.ctx else ""), flush=True)
-        if self.video_codec:
+        if self.net_video_codec:
+            self.vserver = VideoServer(self.tls_cfg, self.net_video_codec, self.authorize_video, log, bind=self.args.host,
+                                       port=self.args.net_video_port, width=self.args.video_width,
+                                       height=self.args.video_height, fps=self.args.video_fps,
+                                       command=self.args.video_command).start()
+            print(f"VIDEO codec={self.net_video_codec} port={self.vserver.port} transport=tls1.3-mutual", flush=True)
+        elif self.video_codec:
             print(f"VIDEO codec={self.video_codec} port={self.video_port}", flush=True)
         elif self.args.video:
             why = "; ".join(video.PROBE_FAILURES[-4:]) or ("no gst-launch-1.0/videotestsrc/udpsrc" if not video.available()
@@ -342,6 +373,9 @@ def main(argv=None):
     ap.add_argument("--video-width", type=int, default=1280)
     ap.add_argument("--video-height", type=int, default=720)
     ap.add_argument("--video-fps", type=int, default=30)
+    ap.add_argument("--no-video", action="store_true", help="сетевой профиль без видеоканала")
+    ap.add_argument("--net-video-port", type=int, default=None, help="порт видеоканала (по умолчанию video_port профиля)")
+    ap.add_argument("--video-command", nargs="+", default=None, help=argparse.SUPPRESS)   # испытания: подмена генератора
     ap.add_argument("--link-config", help="сетевой лабораторный профиль: TLS 1.3 + взаимная аутентификация (S3.1)")
     ap.add_argument("--event-interval", type=float, default=0, help="синтетическое событие EMU-TEST каждые N с (0 — нет)")
     ap.add_argument("--status-file", help="состояние канала в JSON для sheregesh-health")
@@ -366,6 +400,8 @@ def main(argv=None):
 
     def stop(*_):
         agent.video_stop()
+        if agent.vserver is not None:
+            agent.vserver.close()
         sys.exit(0)
     signal.signal(signal.SIGTERM, stop)
     try:

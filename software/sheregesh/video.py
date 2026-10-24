@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Синтетический видеопоток (REQ-SW-002, ADR-0003/0007): конвейеры gst-launch-1.0.
 
-Источник — только встроенный генератор videotestsrc. Передача — RTP/UDP на 127.0.0.1.
+Источник — только встроенный генератор videotestsrc. Передача — RTP/UDP на 127.0.0.1 (автономный режим) или
+RTP поверх канала процесса (RFC 4571, rtpstreampay/rtpstreamdepay) для защищённого видеоканала между платами
+(sheregesh.videolink, ADR-0011): тогда RTP не попадает ни в один сокет.
 Кодек: H.264 — аппаратный v4l2h264enc/v4l2h264dec (Pi 4), иначе openh264enc → avdec_h264/openh264dec;
 при отсутствии работающей связки — MJPEG (jpegenc → jpegdec). Аппаратный путь подтверждает проба S2-4.
 """
@@ -34,19 +36,19 @@ def die_with_parent():
         pass
 
 
-def spawn(args, **kw):
+def spawn(args, stdin=subprocess.DEVNULL, **kw):
     """Дочерний процесс GStreamer, который завершается вместе с родителем.
 
     Предпочтительно через setpriv --pdeathsig (util-linux): preexec_fn небезопасен в многопоточном процессе.
     Вне Linux pdeathsig нет — через сторож pdeath.py. Во всех случаях процесс — лидер своей группы (killpg).
     """
     if shutil.which("setpriv"):
-        return subprocess.Popen(["setpriv", "--pdeathsig", "KILL", "--", *args], stdin=subprocess.DEVNULL,
+        return subprocess.Popen(["setpriv", "--pdeathsig", "KILL", "--", *args], stdin=stdin,
                                 process_group=0, **kw)
     if sys.platform.startswith("linux"):
-        return subprocess.Popen(args, stdin=subprocess.DEVNULL, preexec_fn=die_with_parent, **kw)
+        return subprocess.Popen(args, stdin=stdin, preexec_fn=die_with_parent, **kw)
     return subprocess.Popen([sys.executable, "-I", str(_PDEATH), "--parent", str(os.getpid()), "--", *args],
-                            stdin=subprocess.DEVNULL, process_group=0, **kw)
+                            stdin=stdin, process_group=0, **kw)
 H264_CAPS = "application/x-rtp,media=video,encoding-name=H264,payload=96,clock-rate=90000"
 JPEG_CAPS = "application/x-rtp,media=video,encoding-name=JPEG,payload=26,clock-rate=90000"
 
@@ -147,7 +149,7 @@ def choose_codec(prefer="h264"):
     return "h264" if h264 else None
 
 
-def sender_args(codec, port, width=1280, height=720, fps=30, host="127.0.0.1", pattern="smpte"):
+def _source(width, height, fps, pattern):
     src = [GST_LAUNCH, "-q", "videotestsrc", "is-live=true", f"pattern={pattern}", "!",
            f"video/x-raw,width={width},height={height},framerate={fps}/1", "!"]
     # Надписи — элементы pango (в Debian — пакет gstreamer1.0-x). Без них поток идёт без надписей, а не падает.
@@ -156,19 +158,43 @@ def sender_args(codec, port, width=1280, height=720, fps=30, host="127.0.0.1", p
     if has_element("textoverlay"):
         src += ["textoverlay", "text=SHEREGESH SYNTHETIC TEST PATTERN", "valignment=top", "font-desc=Sans 24", "!"]
     src += ["videoconvert", "!", "video/x-raw,format=I420", "!"]   # rtpjpegpay принимает только 4:2:0/4:2:2
+    return src
+
+
+def sender_args(codec, port, width=1280, height=720, fps=30, host="127.0.0.1", pattern="smpte"):
     # bind-address: передающий сокет тоже только на loopback (иначе udpsink привязывается к 0.0.0.0:<случайный>, S2-BOOT).
     bind = ["bind-address=127.0.0.1"] if host.startswith("127.") else []
-    return src + encoder_args(codec) + ["!", "udpsink", f"host={host}", f"port={port}", *bind, "sync=false"]
+    return _source(width, height, fps, pattern) + encoder_args(codec) + \
+        ["!", "udpsink", f"host={host}", f"port={port}", *bind, "sync=false"]
+
+
+def stream_sender_args(codec, width=1280, height=720, fps=30, pattern="smpte"):
+    """RTP в stdout с кадрированием RFC 4571 (2 байта длины + пакет) — для защищённого канала, без сокетов."""
+    return _source(width, height, fps, pattern) + encoder_args(codec) + ["!", "rtpstreampay", "!", "fdsink", "fd=1",
+                                                                          "sync=false"]
+
+
+def stream_receiver_args(codec, width, height):
+    """RTP из stdin (RFC 4571) → сырые кадры RGBx фиксированного размера в stdout."""
+    caps = H264_CAPS if codec == "h264" else JPEG_CAPS
+    stream_caps = caps.replace("application/x-rtp,", "application/x-rtp-stream,")
+    return [GST_LAUNCH, "-q", "fdsrc", "fd=0", "!", stream_caps, "!", "rtpstreamdepay", "!", caps, "!"] + \
+        _depay_decode(codec) + _to_rgbx(width, height)
+
+
+def _depay_decode(codec):
+    if codec == "h264":
+        return ["rtpjitterbuffer", "latency=50", "!", "rtph264depay", "!", "h264parse", "!", h264_elements()[1], "!"]
+    return ["rtpjitterbuffer", "latency=50", "!", "rtpjpegdepay", "!", "jpegdec", "!"]
+
+
+def _to_rgbx(width, height):
+    return ["videoconvert", "!", "videoscale", "!", f"video/x-raw,format=RGBx,width={width},height={height}", "!",
+            "fdsink", "fd=1", "sync=false"]
 
 
 def receiver_args(codec, port, width, height):
     """Вывод — сырые кадры RGBx фиксированного размера в stdout (fd=1)."""
-    if codec == "h264":
-        dec = h264_elements()[1]
-        head = [f"caps={H264_CAPS}", "!", "rtpjitterbuffer", "latency=50", "!", "rtph264depay", "!", "h264parse", "!",
-                dec, "!"]
-    else:
-        head = [f"caps={JPEG_CAPS}", "!", "rtpjitterbuffer", "latency=50", "!", "rtpjpegdepay", "!", "jpegdec", "!"]
-    return [GST_LAUNCH, "-q", "udpsrc", f"port={port}", "address=127.0.0.1"] + head + \
-        ["videoconvert", "!", "videoscale", "!", f"video/x-raw,format=RGBx,width={width},height={height}", "!",
-         "fdsink", "fd=1", "sync=false"]
+    caps = H264_CAPS if codec == "h264" else JPEG_CAPS
+    return [GST_LAUNCH, "-q", "udpsrc", f"port={port}", "address=127.0.0.1", f"caps={caps}", "!"] + \
+        _depay_decode(codec) + _to_rgbx(width, height)

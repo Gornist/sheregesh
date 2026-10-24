@@ -46,7 +46,7 @@ def lab(tmp_path_factory):
 
 def net_agent(lab, *extra):
     return Agent("--link-config", str(lab["remote"].source), "--bind", "127.0.0.1", "--event-interval", "0.5",
-                 "--heartbeat-interval", "0.2", *extra)
+                 "--heartbeat-interval", "0.2", "--no-video", *extra)
 
 
 def client(cfg, port, timeout=1.0):
@@ -146,7 +146,7 @@ def test_loss_detection_and_recovery_after_server_restart(lab):
         assert wait_for(lambda: c.snapshot()["lost_s"] is not None, 3)
         a.signal(signal.SIGCONT)
         a.stop()
-        a = Agent("--link-config", str(lab["remote"].source), "--bind", "127.0.0.1", port=port)   # перезапуск службы
+        a = Agent("--link-config", str(lab["remote"].source), "--bind", "127.0.0.1", "--no-video", port=port)
         assert wait_for(lambda: c.snapshot()["phase"] == "connected", 15), c.snapshot()
         assert c.counters.connects >= 2 and c.snapshot()["lost_s"] is None
     finally:

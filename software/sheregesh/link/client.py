@@ -437,7 +437,8 @@ def _sanitize_status(body):
     if isinstance(v, dict):
         out["video"] = {"enabled": bool(v.get("enabled")), "active": bool(v.get("active")),
                         "codec": v.get("codec") if v.get("codec") in ("h264", "jpeg") else None,
-                        "port": int(v["port"]) if isinstance(v.get("port"), int) and 1024 <= v["port"] <= 65535 else None}
+                        "port": int(v["port"]) if isinstance(v.get("port"), int) and 1024 <= v["port"] <= 65535 else None,
+                        "transport": "tls" if v.get("transport") == "tls" else None}
     ev = body.get("active_events")
     out["active_events"] = [str(c)[:32] for c in ev if isinstance(c, str)][:20] if isinstance(ev, list) else []
     if isinstance(body.get("uptime_s"), (int, float)):

@@ -218,7 +218,8 @@ def _decode(proto, addr):
     return f"{proto} {ip}:{int(port, 16)}"
 
 
-ALLOWED = {"console": {"tcp": {22}, "udp": {68, 546}}, "remote": {"tcp": {22, 7443}, "udp": {68, 546}}}
+# 7444 — защищённый видеоканал блока (S3.1-VIDEO, TLS 1.3 с взаимной аутентификацией, ADR-0011)
+ALLOWED = {"console": {"tcp": {22}, "udp": {68, 546}}, "remote": {"tcp": {22, 7443, 7444}, "udp": {68, 546}}}
 
 
 def judge_ports(role, listening, open_tcp, allowed=ALLOWED):

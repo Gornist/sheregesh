@@ -53,6 +53,7 @@ class LinkConfig:
     dir: Path
     port: int = 7443
     video_port: int = 7444
+    video: bool = True                  # защищённый видеоканал (S3.1-VIDEO, ADR-0011)
     peer_hosts: tuple = ()
     discover: str | None = None        # "auto" — подсеть eth0; CIDR — явно; None — не искать
     source: Path | None = field(default=None, compare=False)
@@ -89,7 +90,7 @@ class LinkConfig:
         try:
             cfg = cls(role=raw["role"], device_id=str(raw["device_id"]), peer_id=str(raw["peer_id"]),
                       dir=Path(raw.get("dir", str(DEFAULT_DIR))).expanduser(), port=int(raw.get("port", 7443)),
-                      video_port=int(raw.get("video_port", 7444)),
+                      video_port=int(raw.get("video_port", 7444)), video=bool(raw.get("video", True)),
                       peer_hosts=tuple(str(h) for h in raw.get("peer_hosts", [])), discover=raw.get("discover"),
                       source=path)
         except (KeyError, TypeError, ValueError) as e:

@@ -23,7 +23,7 @@ def main(argv):
         print("usage: pdeath.py --parent PID -- command [args]", file=sys.stderr)
         return 2
     parent, cmd = int(argv[1]), argv[3:]
-    child = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
+    child = subprocess.Popen(cmd)                  # stdin — как у сторожа (spawn: DEVNULL или канал декодера)
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(s, lambda n, _f: child.send_signal(n))
     while child.poll() is None:

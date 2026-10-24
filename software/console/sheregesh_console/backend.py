@@ -22,6 +22,7 @@ from sheregesh import video as gst
 from sheregesh.config import BackupError, ConfigStore, Schema, console_defaults
 from sheregesh.faults import CATALOG, render
 from sheregesh.link.client import PeerClient, RemotePeer
+from sheregesh.videolink import VideoClient
 from sheregesh_emulators import Bench
 from sheregesh_emulators.demo import DEMO
 from sheregesh_emulators.scenario import TICK_S
@@ -117,6 +118,7 @@ class Backend(QObject):
         self._last_video_state = None
         self._power_history = collections.deque(maxlen=POWER_HISTORY)
         self.client = None
+        self.link_cfg = link_cfg
         if link_cfg is not None:                    # сетевой лабораторный профиль: mTLS к удалённому блоку (S3.1)
             peer = (link_cfg.peer_hosts[0] if link_cfg.peer_hosts else "discover", link_cfg.port)
             self.client = PeerClient(None, link_cfg.port, heartbeat_timeout_s=data["link.yaml"]["heartbeat_timeout_s"],
@@ -284,7 +286,16 @@ class Backend(QObject):
                 self.log("warning" if snap["phase"] != "connected" else "info", "link",
                          f"phase {snap['phase']} ({snap['detail']})")
                 self._last_phase = snap["phase"]
-            if vid.get("codec") and vid.get("port") and s.peer_state == "connected":
+            if s.peer_state == "connected" and vid.get("codec") and vid.get("transport") == "tls" \
+                    and self.link_cfg is not None and self.link_cfg.video and snap.get("host"):
+                # Защищённый видеоканал (S3.1-VIDEO): тот же блок, что у сеанса управления; порт — из своей
+                # конфигурации, не из телеметрии. Незащищённого удалённого источника нет.
+                host, port, cfg = snap["host"], self.link_cfg.video_port, self.link_cfg
+                self.video.configure_remote(vid["codec"], (host, port), lambda: VideoClient(cfg, host, port))
+            elif self.link_cfg is not None and (s.peer_state != "connected" or vid.get("transport") != "tls"):
+                if self.video.state != "off":       # сеанс управления потерян — видеоканал закрывается
+                    self.video.configure(None, None)
+            elif vid.get("codec") and vid.get("port") and s.peer_state == "connected":
                 self.video.configure(vid["codec"], vid["port"])
         else:
             cnt = {"connects": 0, "disconnects": 0, "bad_messages": 0, "ignored_messages": 0, "received": 0,
