@@ -57,10 +57,10 @@ Root-входа нет: root и пароли заблокированы (S2-1 `v
 | R1. Держать B | да / да | Прогресса нет (P0-1) | Любой сбой питания, паника или `ota-abort` → R2 без ремонта. `ota-tryboot` → R3. DEV deploy на B теряется при возврате |
 | R2. `ota-abort` → A | да / да | A работает. Падает `sheregesh-ota-boot` (TypeError на `expect`): health FAIL, `ota-*` неработоспособны | Тупик без ремонта state.json |
 | R3. Повторный `ota-tryboot` на B | да / да | Попытка 2. Confirm a7f1b74 снова FAIL → ROLLED_BACK, состояние несогласовано, install REJECTED → abort → R2 | Хуже R2: лишняя перезагрузка, попытки исчерпаны (тест `…second_tryboot…`). **Запрещено** |
-| **R2a. Ремонт карты на Linux (рекомендуется)** | root на внешнем Linux / без перезаписи | `systemctl poweroff` на B (штатно, ФС чистые) → карта в Linux → смонтировать **только p6** (`persistent`) rw → копия `sheregesh-ota/state.json` в доказательства → удалить из JSON **одно поле `expect`** (владелец root:root, 0644) → `sync; umount` → загрузка A. Агент 57e8fe4: on_boot → ROLLED_BACK, состояние согласовано, пакет новее `0.1.1792843040` принимается (тест `…state_repair…`). Альтернатива — удалить state.json: агент создаст IDLE, но история потеряется | Нужен Linux с картридером (Mac не пишет ext4). Ошибка раздела: p1 `autoboot.txt` не трогать, смонтировать только p6. Карта вынимается только после poweroff |
+| **R2a. Ремонт карты (рекомендуется)** | root на маке (sudo, debugfs из e2fsprogs) / без перезаписи | `systemctl poweroff` на B (штатно) → карта в мак → `python3 tools/image/repair_ota_state.py` находит p6 по GUID раздела `45060026-…` → `--dump` (только чтение) → `--disk diskNs6 --confirm diskNs6`: проверка «TRYBOOT/B, есть expect», копия в `docs/acceptance/ota-closure/hardware/state-before-repair.json`, **переименование** `state.json` → `state.json.a7f1b74` (debugfs link+unlink, JSON вручную не правится), `e2fsck -fn`, eject → загрузка A. Агент 57e8fe4 создаёт IDLE на A, `version_active` из build.json A (тесты `test_pi2_repair_then_ota_with_v2_package[remove_file]`, `tests/tools/test_repair_ota_state.py`) | Физическое действие владельца: карта и пароль sudo. Пишется одно имя на p6; p1 `autoboot.txt` не трогается. Карта вынимается только после poweroff |
 | R4. Перезапись microSD | — / нет | Чистое состояние | Потеря ключей устройства и сертификатов mTLS, ключа хоста SSH; повторная регистрация. Крайний случай |
 
-После R2a: снимок `slot_guard snap pi2` и `compare --mode rollback` (до — снимок шага 1). Ожидается A, `dt.tryboot=0`, OTA ROLLED_BACK без target, health PASS, failed none. Затем шаги 1–5 с кандидатом. Первую установку выполняет **агент 57e8fe4**: отпечатков `expect` не будет, confirm проверит наличие, а сравнение «до/после» — по снимкам slot_guard.
+После R2a: снимок `slot_guard snap pi2` и `compare --mode rollback` (до — снимок шага 1). Ожидается A, `dt.tryboot=0`, OTA IDLE без target, health PASS, failed none. Затем шаги 1–5 с кандидатом. Первую установку выполняет **агент 57e8fe4**: отпечатков `expect` не будет, confirm проверит наличие, а сравнение «до/после» — по снимкам slot_guard.
 
 ## 5. Чек-лист допуска к аппаратному OTA pi2
 
@@ -70,7 +70,7 @@ Root-входа нет: root и пароли заблокированы (S2-1 `v
 - [ ] Полный SHA коммита в `v2`. `git merge-base --is-ancestor` для 6353c70 и d1258f3 → 0. Изменения `software/sheregesh/update` после d1258f3 перечислены и проверены.
 - [ ] CI на этом SHA — success. Полный pytest на ubuntu, включая var-seed с GNU tar.
 - [ ] Локально на SHA — целевые тесты §2 без FAIL.
-- [ ] Образ собран CI из этого SHA: в `build-report.json` `commit` = SHA, в `verify.json` нет FAIL, `image_sha256` записан.
+- [ ] Образ собран на devbox (решение владельца 2026-10-25: сборки образов только там) из этого SHA: в `build-report.json` `commit` = SHA, в `verify.json` нет FAIL, `image_sha256` записан.
 
 **B. Пакет**
 - [ ] `shdeploy ota-build --build-report …`. SHA-256 файла `.shota` записан и утверждён владельцем.
