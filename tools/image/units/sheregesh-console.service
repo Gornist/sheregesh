@@ -3,8 +3,10 @@
 # Пульт под cage от непривилегированного пользователя sheregesh-ui (ADR-0002).
 # Канал: сетевой профиль mTLS к удалённому блоку, если настроен (~/.config/sheregesh/link.json, S3.1), иначе
 # эмулятор на 127.0.0.1. Сеть службы — только loopback и частные/link-local диапазоны (не интернет).
-# Type=notify: READY отправляет само приложение после загрузки QML и запуска бэкенда (NotifyAccess=all — оно дочерний
-# процесс cage), а не композитор. WATCHDOG — из цикла Qt; зависание → перезапуск, циклические перезапуски ограничены.
+# Type=notify: READY отправляет само приложение после загрузки QML и запуска бэкенда, а не композитор. WATCHDOG — из
+# цикла Qt; зависание → перезапуск, циклические перезапуски ограничены. PAMName переносит процессы в session-N.scope
+# (вне cgroup службы), где systemd не принимает их уведомления, поэтому главный PID — ретранслятор sd_notify,
+# пересылающий READY/WATCHDOG/STATUS приложения от своего имени (sheregesh.notify_relay).
 # На плате с ролью удалённого блока пульт не запускается (D3: блок без GUI).
 [Unit]
 Description=Sheregesh: laboratory console GUI (cage)
@@ -18,7 +20,7 @@ StartLimitBurst=5
 
 [Service]
 Type=notify
-NotifyAccess=all
+NotifyAccess=main
 User=sheregesh-ui
 PAMName=login
 TTYPath=/dev/tty1
@@ -30,7 +32,7 @@ Environment=QT_QPA_PLATFORM=wayland
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=SHEREGESH_FIRST_FRAME_MARK=/run/sheregesh-ui/first-frame.json
 Environment=SHEREGESH_UI_STATE=/run/sheregesh-ui/ui-state.json
-ExecStart=/usr/bin/cage -s -- /usr/bin/sheregesh-console --link-config /home/sheregesh-ui/.config/sheregesh/link.json --link-status /run/sheregesh-ui/link-status.json --peer 127.0.0.1:7700 --data-dir /var/lib/sheregesh
+ExecStart=/usr/bin/sheregesh-notify-relay -- /usr/bin/cage -s -- /usr/bin/sheregesh-console --link-config /home/sheregesh-ui/.config/sheregesh/link.json --link-status /run/sheregesh-ui/link-status.json --peer 127.0.0.1:7700 --data-dir /var/lib/sheregesh
 ExecStopPost=/bin/sh -c 'echo "sheregesh-console stopped: result=$SERVICE_RESULT code=$EXIT_CODE status=$EXIT_STATUS"'
 TimeoutStartSec=90
 WatchdogSec=20

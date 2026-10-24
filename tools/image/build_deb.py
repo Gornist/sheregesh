@@ -45,6 +45,7 @@ WRAPPERS = {   # команда → модуль (-m) или скрипт из /
     "usr/bin/sheregesh-soak": "tools/dev/soak.py",
     "usr/bin/sheregesh-link": "sheregesh.link.pki",       # ключи и сертификаты устройства (S3.1)
     "usr/bin/sheregesh-health": "sheregesh.health",       # диагностическая проверка здоровья (S3.1)
+    "usr/bin/sheregesh-notify-relay": "sheregesh.notify_relay",   # sd_notify пульта из сеанса входа (S3.1)
 }
 UNITS = Path(__file__).resolve().parent / "units"
 POSTINST = """#!/bin/sh

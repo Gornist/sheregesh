@@ -204,6 +204,10 @@ def verify(img, variant, out):
                 text = root.cat(f"/usr/lib/systemd/system/{u}.service")
                 rep.add(f"unit.{u}.notify", f"{u}: Type=notify, WatchdogSec, ограничение перезапусков (ADR-0002)",
                         "Type=notify" in text and "WatchdogSec=" in text and "StartLimitBurst=" in text)
+            con = root.cat("/usr/lib/systemd/system/sheregesh-console.service")
+            rep.add("console.relay", "пульт: главный PID — ретранслятор sd_notify (PAMName выводит процессы из cgroup)",
+                    "ExecStart=/usr/bin/sheregesh-notify-relay -- /usr/bin/cage" in con and "NotifyAccess=main" in con
+                    and root.exists("/usr/bin/sheregesh-notify-relay"))
             net = root.cat("/usr/lib/systemd/system/sheregesh-remote-net.service")
             rep.add("net.conditions", "sheregesh-remote-net не стартует без роли, ключа, сертификата и CA",
                     all(f"ConditionPathExists=/home/sheregesh-ui/{p}" in net for p in
