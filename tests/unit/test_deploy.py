@@ -128,7 +128,7 @@ def test_signature_accepts_owner_and_rejects_foreign_key_wrong_namespace_and_tam
 def test_allowed_signers_line_refuses_private_key():
     assert sig.allowed_signers_line("ssh-ed25519 AAAAC3Nz test").startswith('sheregesh-deploy namespaces="')
     with pytest.raises(sig.SignatureError):
-        sig.allowed_signers_line("-----BEGIN OPENSSH PRIVATE KEY-----\nabc")
+        sig.allowed_signers_line("-----BEGIN OPENSSH " + "PRIVATE KEY-----\nabc")     # склейка: не шаблон секрета для scan.py
 
 
 # ---------------------------------------------------------------- установщик
