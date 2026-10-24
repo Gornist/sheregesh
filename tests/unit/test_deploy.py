@@ -446,3 +446,17 @@ def test_incoming_symlink_is_refused(tmp_path):
     rc, st = b.run("install")
     assert rc == 2 and st["last"]["result"] == "REJECTED" and "ссылка" in st["last"]["reason"]
     assert (elsewhere / "bundle.tar.xz").exists()                         # по ссылке ничего не удалено
+
+
+@needs_ssh_keygen
+def test_release_files_get_commit_time(tmp_path):
+    """Все файлы выпуска — с временем коммита: .ts не «новее» .qm из-за порядка записи (найдено на pi1)."""
+    b = Board(tmp_path, role="console")
+    files = app_files("ok", "0.1.0+t")
+    files["software/console/sheregesh_console/i18n/sheregesh_ru.qm"] = (b"qm", 0o644)
+    files["software/console/sheregesh_console/i18n/sheregesh_ru.ts"] = (b"<TS/>", 0o644)
+    b.push(bundle.build_bundle(files, "0.1.0+t", "a" * 40, 1790000000))
+    assert b.run("install")[0] == 0
+    rel = b.settings.deploy_dir / "releases/0.1.0+t"
+    stamps = {os.stat(rel / p).st_mtime for p in files}
+    assert stamps == {1790000000}

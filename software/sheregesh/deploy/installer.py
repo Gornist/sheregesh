@@ -230,6 +230,10 @@ class Installer:
                     f.flush()
                     os.fsync(f.fileno())
                 os.chmod(dst, manifest["files"][path]["mode"])
+                # Время коммита у всех файлов: порядок записи не делает .ts «новее» .qm (pi1, 57e8fe4), выпуск
+                # воспроизводим. Подписанное значение из манифеста; без него — 0 (одинаково для всех файлов).
+                stamp = int(manifest.get("commit_time") or 0)
+                os.utime(dst, (stamp, stamp))
             record = dict(manifest, installed_at=_now())
             with open(tmp / "RELEASE.json", "w") as f:
                 json.dump(record, f, ensure_ascii=False, indent=1)

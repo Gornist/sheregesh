@@ -20,7 +20,7 @@ import pytest
 from deploy_helpers import keypair, needs_ssh_keygen, signers_file
 
 from sheregesh.deploy import sig
-from sheregesh.update import ota, slots
+from sheregesh.update import confirm, ota, slots
 from sheregesh.update.model import UpdateError
 
 PARTS = {1: ("bootconfig", 1 << 16), 2: ("boot_a", 1 << 20), 3: ("boot_b", 1 << 20), 4: ("system_a", 2 << 20),
@@ -61,8 +61,20 @@ class Board:
         (self.persistent / "home/sheregesh-ui/.ssh/authorized_keys").write_text("ssh-ed25519 AAAA owner\n")
         (self.persistent / "shared/etc/ssh").mkdir(parents=True)
         (self.persistent / "shared/etc/ssh/ssh_host_ed25519_key").write_text("HOSTKEY\n")
+        (self.persistent / "shared/etc/ssh/ssh_host_ed25519_key.pub").write_text("ssh-ed25519 HOSTKEY-PUB\n")
         (self.persistent / "home/sheregesh-ui/.local/share/sheregesh/link").mkdir(parents=True)
         (self.persistent / "home/sheregesh-ui/.local/share/sheregesh/link/device.crt").write_text("CERT\n")
+        (self.persistent / "common/etc").mkdir(parents=True)
+        (self.persistent / "common/etc/machine-id").write_text("0123456789abcdef0123456789abcdef\n")
+        # Корень, как его видит система: /home, /etc/ssh, /etc/machine-id — с persistent (генераторы image-rota)
+        self.root = self.t / "root"
+        (self.root / "etc").mkdir(parents=True)
+        os.symlink(self.persistent / "home", self.root / "home")
+        os.symlink(self.persistent / "shared/etc/ssh", self.root / "etc/ssh")
+        os.symlink(self.persistent / "common/etc/machine-id", self.root / "etc/machine-id")
+        self.units = {}                          # имя → {"ActiveState", "NRestarts"} поверх «всё active»
+        self.status_files = {}
+        self.uptime = 300.0
         self.etc = self.t / "etc"
         self.etc.mkdir()
         if dev_mode:
@@ -120,7 +132,8 @@ class Board:
     def agent(self):
         cfg = ota.AgentConfig(paths=self.paths(), state_dir=self.persistent / "sheregesh-ota", signers=self.signers,
                               build_json=self.t / "build.json", serial=self.t / "serial", dev_mode=self.etc / "DEV-MODE",
-                              health_cmd=("health",), reboot_cmd=("reboot",), tryboot_cmd=("reboot", "0 tryboot"))
+                              health_cmd=("health",), reboot_cmd=("reboot",), tryboot_cmd=("reboot", "0 tryboot"),
+                              root=self.root, probe=FakeProbe(self))
         return ota.Agent(cfg, run=self.run, seeder=TestSeeder(self))
 
     def run(self, cmd, **kw):
@@ -180,6 +193,40 @@ class Board:
             if p.is_file() and not rel.startswith(("slots/", "sheregesh-ota/")):
                 out[rel] = h(p)
         return out
+
+
+class FakeProbe(confirm.Probe):
+    """Факты загруженного слота тестовой платы: версия — по содержимому активного system, остальное — по полям."""
+
+    __test__ = False
+
+    def __init__(self, board):
+        super().__init__(board.root)
+        self.b = board
+
+    def build(self):
+        sysdev = Path(os.path.realpath(self.b.dev / "disk/by-slot/active/system"))
+        return {"ota_version": sysdev.read_bytes()[:40].split(b"\n")[0].decode().split("-v")[1], "commit": "c" * 40}
+
+    def mount_opts(self, target):
+        return {"/persistent": "/dev/mmcblk0p6 rw,noatime", "/home": "/dev/mmcblk0p6[/home] rw",
+                "/etc/ssh": "/dev/mmcblk0p6[/shared/etc/ssh] rw"}[target]
+
+    def unit(self, name):
+        return {"ActiveState": "active", "SubState": "running", "NRestarts": "0", **self.b.units.get(name, {})}
+
+    def failed_units(self):
+        return [n for n, u in self.b.units.items() if u.get("ActiveState") == "failed"]
+
+    def uptime(self):
+        return self.b.uptime
+
+    def health(self, role_name):
+        net = [{"id": c, "status": "PASS"} for c in confirm.NET_CHECKS]
+        return {"verdict": self.b.health, "counts": {}, "checks": net}
+
+    def json_file(self, path):
+        return self.b.status_files.get(str(path), {})
 
 
 class TestSeeder(slots.VarSeeder):
@@ -336,7 +383,8 @@ def test_full_cycle_tryboot_health_commit(tmp_path):
     assert b.agent().on_boot()["state"] == "TRYBOOT → HEALTH_PENDING"
     res, _ = b.request("confirm")
     assert res["result"] == "OK" and res["state"]["state"] == "COMMITTED" and res["state"]["active"] == "B"
-    assert ["health"] in b.commands
+    ids = {c["id"]: c["status"] for c in res["checks"]}
+    assert ids["health"] == ids["slot"] == ids["version"] == ids["same.machine_id"] == ids["same.ssh_host_key"] == "PASS"
     assert slots.autoboot_parts((b.bootfs / "autoboot.txt").read_text()) == (3, 2)   # mark-good: основной B
     b.firmware_boot(tryboot_flag=False)                                              # обычная перезагрузка
     assert b.slot == "b" and b.agent().on_boot()["state"] == "COMMITTED → COMMITTED"

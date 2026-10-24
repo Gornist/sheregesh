@@ -12,7 +12,8 @@
              пишется ТОЛЬКО в неактивный слот, проверяется повторным чтением; /var целевого слота пересоздаётся.
              Основной слот, autoboot.txt и перезагрузка не затрагиваются.
   tryboot  — однократная пробная загрузка записанного слота (autoboot [tryboot] + reboot "0 tryboot");
-  confirm  — на пробной загрузке: sheregesh-health без FAIL → autoboot [all] на новый слот (mark-good);
+  confirm  — на пробной загрузке: все обязательные критерии confirm.py (слот, версия, persistent, те же ключи и роль,
+             службы роли без перезапусков, health PASS, mTLS, видео стенда) → autoboot [all] на новый слот (mark-good);
   abort    — отказ: с пробной загрузки — обычная перезагрузка (прошивка вернёт прежний слот), иначе сброс в IDLE.
 tryboot и confirm ВЫКЛЮЧЕНЫ, пока на плату не внесено разрешение, подписанное владельцем для серийного номера
 этой платы (enable; пространство sheregesh-ota-enable). Автоматического подтверждения нет: confirm — только
@@ -29,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..deploy import sig
-from . import slots
+from . import confirm, slots
 from .model import STATES, UpdateError, Updater, UpdateState
 
 MAGIC = b"SHRGOTA1\n"
@@ -177,6 +178,9 @@ class AgentConfig:
     health_cmd: tuple = ("/usr/bin/sheregesh-health", "--json")
     reboot_cmd: tuple = ("systemctl", "reboot")
     tryboot_cmd: tuple = ("systemctl", "reboot", "--reboot-argument=0 tryboot")
+    root: Path = Path("/")                                  # для отпечатков expect_from_board (испытания — каталог)
+    probe: object = None                                    # confirm.Probe; испытания подставляют свой
+    lab_video: bool = True                                  # стенд S3.1-VIDEO: видео — обязательный критерий
 
 
 class Agent:
@@ -292,6 +296,9 @@ class Agent:
         u.b = slots.BlockSlots(layout, self.cfg.paths, payload, seeder=self.seeder,
                                progress=lambda part, w, t: emit({"msg": f"{part}: {w * 100 // t}%"}))
         u.verify({"version": m["version"], "compatible": m["compatible"], "signature_ok": True})
+        if u.s.state == "VERIFIED":                          # отпечатки рабочего слота для критериев подтверждения
+            u.s.expect = confirm.expect_from_board(self.cfg.root)
+            u.save()
         if u.s.state == "FAILED":
             return {"result": "FAILED", "reason": u.s.reason, "state": vars(u.s)}
         try:
@@ -305,6 +312,11 @@ class Agent:
 
     def _tryboot(self, layout, u):
         u.b = slots.BlockSlots(layout, self.cfg.paths)
+        if u.s.state in ("INSTALLED", "TRYBOOT") and u.s.target and u.s.target.lower() == layout.other.name:
+            # Конфигурация пульта — с текущего (рабочего, самого свежего) слота непосредственно перед пробной
+            # загрузкой: изменения после установки не теряются; старая копия новую не перезаписывает (S3.2-OTA).
+            seeder = self.seeder or slots.VarSeeder(self.cfg.paths)
+            seeder.carry(seeder.target_var(layout, layout.other.name))
         if u.s.state == "INSTALLED":
             u.request_tryboot()
         elif u.s.state == "TRYBOOT":                         # повтор после health FAIL (UPD-004: не больше 2 попыток)
@@ -318,15 +330,14 @@ class Agent:
         if u.s.state != "HEALTH_PENDING" or not layout.tryboot or layout.active.name.upper() != u.s.target:
             return {"result": "REJECTED", "reason": f"подтверждать можно только на пробной загрузке нового слота "
                                                     f"(состояние {u.s.state}, tryboot={layout.tryboot})"}
-        r = self.run(list(self.cfg.health_cmd), capture_output=True, text=True)
-        try:
-            verdict = json.loads(r.stdout).get("verdict", "FAIL")
-        except ValueError:
-            verdict = "FAIL"
+        probe = self.cfg.probe or confirm.Probe(self.cfg.root, self.run)
+        ok, checks = confirm.gates(layout, u.s, probe, lab_video=self.cfg.lab_video)
+        failed = [c["id"] for c in checks if c["mandatory"] and c["status"] != "PASS"]
         u.b = slots.BlockSlots(layout, self.cfg.paths)
-        u.on_health("PASS" if verdict == "PASS" else "FAIL", layout.active.name.upper())
+        u.on_health("PASS" if ok else "FAIL", layout.active.name.upper())
         res = "OK" if u.s.state == "COMMITTED" else "FAILED"
-        return {"result": res, "reason": f"health {verdict}: {u.s.reason or u.s.state}", "state": vars(u.s)}
+        return {"result": res, "reason": f"критерии подтверждения: {'все PASS' if ok else 'не пройдены ' + ', '.join(failed)}; "
+                                         f"{u.s.reason or u.s.state}", "checks": checks, "state": vars(u.s)}
 
     def committed_part(self):
         return slots.autoboot_parts((Path(self.cfg.paths.bootfs) / "autoboot.txt").read_text())[0]

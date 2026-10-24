@@ -43,6 +43,7 @@ class UpdateState:
     boot_attempts: int = 0
     reason: str = ""
     history: list = field(default_factory=list)
+    expect: dict = field(default_factory=dict)  # отпечатки до переключения (роль, ключи, machine-id) — confirm.py
 
     def other(self, slot=None):
         return {"A": "B", "B": "A"}[slot or self.active]
@@ -176,6 +177,7 @@ class Updater:
         self.s.active, self.s.version_active = active, version_active
         self.s.target = self.s.version_target = None
         self.s.boot_attempts = 0
+        self.s.expect = {}
         self._go("IDLE", reason)
 
     def abort_trial(self, reason):
