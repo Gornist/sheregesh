@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Агент обновления A/B (S3.1-DEPLOY, подготовка OTA): локальный сокет только для root и группы sheregesh-ui.
+# Только dev-образ (нужен открытый ключ подписи владельца). Сетевого доступа нет: клиент — sheregesh-ota-client
+# в сеансе SSH. Переключение слотов (tryboot/confirm) выключено, пока не внесено подписанное разрешение для платы.
+[Unit]
+Description=Sheregesh: A/B system update agent socket (dev image)
+ConditionPathExists=/etc/sheregesh/deploy/allowed_signers
+
+[Socket]
+ListenStream=/run/sheregesh-ota.sock
+SocketUser=root
+SocketGroup=sheregesh-ui
+SocketMode=0660
+Accept=yes
+MaxConnections=2
+
+[Install]
+WantedBy=sockets.target

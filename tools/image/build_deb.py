@@ -12,6 +12,7 @@ SOURCE_DATE_EPOCH (по умолчанию время последнего ко�
 import argparse
 import hashlib
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -38,15 +39,24 @@ DEPENDS = [
     "util-linux",
     "cage", "seatd", "openssl",
 ]
-WRAPPERS = {   # команда → модуль (-m) или скрипт из /usr/lib/sheregesh (пробы S2 и длительный прогон)
+# Службы приложения запускаются через launcher (S3.1-DEPLOY): проверенный выпуск DEV deploy из
+# /var/lib/sheregesh-deploy или заводской код /usr/lib/sheregesh. Системные команды — всегда из /usr.
+LAUNCHER = f"/{PREFIX}/software/sheregesh/deploy/launcher.py"
+LAUNCHED = {
     "usr/bin/sheregesh-console": "sheregesh_console",
     "usr/bin/sheregesh-remote-emu": "sheregesh_remote",
+}
+WRAPPERS = {   # команда → модуль (-m) или скрипт из /usr/lib/sheregesh (пробы S2 и длительный прогон)
     "usr/bin/sheregesh-probe": "tools/probe/s2probe.py",
     "usr/bin/sheregesh-soak": "tools/dev/soak.py",
     "usr/bin/sheregesh-link": "sheregesh.link.pki",       # ключи и сертификаты устройства (S3.1)
     "usr/bin/sheregesh-health": "sheregesh.health",       # диагностическая проверка здоровья (S3.1)
     "usr/bin/sheregesh-notify-relay": "sheregesh.notify_relay",   # sd_notify пульта из сеанса входа (S3.1)
+    "usr/bin/sheregesh-deployd": "sheregesh.deploy.installer",    # установщик выпусков, root (S3.1-DEPLOY)
+    "usr/bin/sheregesh-ota-agent": "sheregesh.update.ota",        # агент обновления A/B, root (S3.1-DEPLOY)
+    "usr/bin/sheregesh-ota-client": "sheregesh.update.ota_client",  # клиент агента для sheregesh-ui
 }
+ISOLATED = {"usr/bin/sheregesh-deployd", "usr/bin/sheregesh-ota-agent", "usr/bin/sheregesh-ota-client"}  # python3 -s
 UNITS = Path(__file__).resolve().parent / "units"
 POSTINST = """#!/bin/sh
 set -e
@@ -73,6 +83,17 @@ def default_version() -> str:
     ver = ver.replace(".dev", "~dev")
     r = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True)
     return f"{ver}+g{r.stdout.strip()}" if r.returncode == 0 else ver
+
+
+def build_info() -> dict:
+    """Версия системной части для OTA (монотонна по времени коммита): «0.1.<SOURCE_DATE_EPOCH>»."""
+    ver = next(line.split('"')[1] for line in (ROOT / "pyproject.toml").read_text().splitlines()
+               if line.startswith("version"))
+    major, minor = ver.split(".")[:2]
+    r = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True)
+    epoch = source_date_epoch()
+    return {"commit": r.stdout.strip() if r.returncode == 0 else "unknown", "source_date_epoch": epoch,
+            "ota_version": f"{int(major)}.{int(minor)}.{epoch}", "app_compatible": "sheregesh-lab-pi4-app-1"}
 
 
 def lrelease():
@@ -104,10 +125,20 @@ def build_tree(stage: Path):
         f = stage / path
         f.parent.mkdir(parents=True, exist_ok=True)
         target = f"/{PREFIX}/{module}" if module.endswith(".py") else f"-m {module}"
+        flags = "-s " if path in ISOLATED else ""
         f.write_text(f"#!/bin/sh\n# {PKG}: запуск {module} из /{PREFIX}\nexport PYTHONPATH={PYTHONPATH}\n"
-                     f"exec /usr/bin/python3 {target} \"$@\"\n")
+                     f"exec /usr/bin/python3 {flags}{target} \"$@\"\n")
         f.chmod(0o755)
-    for unit in sorted([*UNITS.glob("*.service"), *UNITS.glob("*.timer")]):
+    for path, module in LAUNCHED.items():
+        f = stage / path
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(f"#!/bin/sh\n# {PKG}: запуск {module} — выпуск DEV deploy или /{PREFIX} (launcher, S3.1-DEPLOY)\n"
+                     f"exec /usr/bin/python3 -I {LAUNCHER} {module} \"$@\"\n")
+        f.chmod(0o755)
+    info = stage / "usr/share/sheregesh/build.json"
+    info.parent.mkdir(parents=True, exist_ok=True)
+    info.write_text(json.dumps(build_info(), ensure_ascii=False, indent=1) + "\n")
+    for unit in sorted([*UNITS.glob("*.service"), *UNITS.glob("*.timer"), *UNITS.glob("*.socket")]):
         dst = stage / "usr/lib/systemd/system" / unit.name
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(unit, dst)

@@ -3,7 +3,8 @@
 # X-Env-Layer-Category: net
 # X-Env-Layer-Desc: Developer access for S2 probes on the owner's LAN: DHCP on eth0
 #  and SSH with public key only (no passwords, root locked, no sudo). polkit lets
-#  sheregesh-ui only start/stop the two lab services and reboot. Not for release.
+#  sheregesh-ui only start/stop the lab services, start the signed-release
+#  installer (DEV deploy) and reboot. Not for release.
 # X-Env-Layer-Version: 0.1.0
 # X-Env-Layer-Requires: systemd-net-min,openssh-server
 # X-Env-Layer-Provides: sheregesh-net
@@ -22,6 +23,14 @@ mmdebstrap:
       echo "DEV image: SSH by public key on the owner's LAN. Not a release image." > $1/etc/sheregesh/DEV-MODE
       install -D -m 0644 "$IGconf_sheregesh_assetdir/../sheregesh-dev-access.d/50-sheregesh-dev.rules" \
         $1/etc/polkit-1/rules.d/50-sheregesh-dev.rules
+    - |-
+      # S3.1-DEPLOY: открытый ключ подписи выпусков владельца (allowed_signers ssh-keygen -Y). Файл готовит
+      # os/build.sh из DEPLOY_PUBKEY (или ключа входа) — закрытого ключа в образе и в CI нет. Без него
+      # DEV deploy и агент OTA не запускаются (ConditionPathExists), поэтому dev-образ без ключа не собирается.
+      signers="$IGconf_sheregesh_assetdir/../sheregesh-dev-access.d/deploy/allowed_signers"
+      test -s "$signers" || { echo "sheregesh-dev-access: нет $signers (os/build.sh, DEPLOY_PUBKEY)" >&2; exit 1; }
+      ! grep -q "PRIVATE KEY" "$signers" || { echo "sheregesh-dev-access: в allowed_signers закрытый ключ" >&2; exit 1; }
+      install -D -m 0644 "$signers" $1/etc/sheregesh/deploy/allowed_signers
     - |-
       test -s $1/home/${IGconf_device_user1}/.ssh/authorized_keys || \
         { echo "sheregesh-dev-access: не задан IGconf_ssh_pubkey_user1 — вход по SSH невозможен" >&2; exit 1; }

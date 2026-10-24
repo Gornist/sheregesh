@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# DEV deploy (S3.1-DEPLOY): установка подписанного выпуска приложения без перестановки microSD. Только dev-образ:
+# без открытого ключа подписи владельца (/etc/sheregesh/deploy/allowed_signers) юнит не запускается.
+# Экземпляры: install | rollback | factory (другие имена установщик отвергает). polkit разрешает sheregesh-ui только
+# «start» этих экземпляров; параметров нет — пакет берётся из ~sheregesh-ui/.cache/sheregesh-deploy/incoming.
+# Код установщика — всегда из /usr (корень только для чтения); присланный код от root не исполняется.
+[Unit]
+Description=Sheregesh: DEV deploy %i (signed application release)
+ConditionPathExists=/etc/sheregesh/deploy/allowed_signers
+RequiresMountsFor=/home/sheregesh-ui /var/lib
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sheregesh-deployd %i
+StateDirectory=sheregesh-deploy
+StateDirectoryMode=0755
+TimeoutStartSec=15min
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=-/home/sheregesh-ui/.cache/sheregesh-deploy
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+Environment=PYTHONDONTWRITEBYTECODE=1

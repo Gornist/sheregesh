@@ -36,7 +36,9 @@ mmdebstrap:
       # ADR-0002: версия 1.0 работает только по проводу — Wi-Fi и Bluetooth выключены оверлеями.
       printf '\n[all]\n# Sheregesh (ADR-0002): wired only\ndtoverlay=disable-wifi\ndtoverlay=disable-bt\n' \
         >> $1/boot/firmware/config.txt
-    - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console sheregesh-remote-net sheregesh-health.timer
+    # sheregesh-ota.socket и sheregesh-ota-boot (S3.1-DEPLOY) включены всегда, но работают только при открытом
+    # ключе подписи владельца (/etc/sheregesh/deploy/allowed_signers — только dev-образ).
+    - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console sheregesh-remote-net sheregesh-health.timer sheregesh-ota.socket sheregesh-ota-boot
     - |-
       set -eu
       # Найдено при первой загрузке на Pi 4 (S2-BOOT), корень только для чтения:
