@@ -281,7 +281,9 @@ def _compress_range(img, offset, size, dst):
     with open(img, "rb") as src, open(dst, "wb") as out:
         src.seek(offset)
         if xz:
-            p = subprocess.Popen([xz, "-T0", "-6", "-c", "--check=crc64"], stdin=subprocess.PIPE, stdout=out)
+            # Фиксированные потоки и размер блока: результат не зависит от числа ядер машины (воспроизводимость).
+            p = subprocess.Popen([xz, "--threads=4", "--block-size=16MiB", "-6", "-c", "--check=crc64"],
+                                 stdin=subprocess.PIPE, stdout=out)
         else:
             import lzma
             comp = lzma.LZMACompressor(format=lzma.FORMAT_XZ, preset=6)
@@ -309,7 +311,21 @@ def _compress_range(img, offset, size, dst):
             "compressed_sha256": h_comp.hexdigest(), "compression": "xz"}
 
 
-def build_ota(image, variant, version, commit, out_dir, key, source=""):
+def deb_units(deb):
+    """Юниты systemd пакета sheregesh из .deb (ar + tar) с SHA-256 — проверенный набор в манифесте обновления."""
+    import tarfile
+    out = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["ar", "x", str(Path(deb).resolve())], cwd=tmp, check=True, capture_output=True)
+        data = next(Path(tmp).glob("data.tar.*"))
+        with tarfile.open(data) as tar:
+            for m in tar.getmembers():
+                if m.isfile() and m.name.lstrip("./").startswith("usr/lib/systemd/system/sheregesh"):
+                    out[Path(m.name).name] = hashlib.sha256(tar.extractfile(m).read()).hexdigest()
+    return dict(sorted(out.items()))
+
+
+def build_ota(image, variant, version, commit, out_dir, key, source="", created=None, extra=None):
     import verify_image as vi
     dev = "-dev-" in variant
     with tempfile.TemporaryDirectory() as tmp:
@@ -328,8 +344,8 @@ def build_ota(image, variant, version, commit, out_dir, key, source=""):
             imgs.append({"part": part, **_compress_range(img, by[name]["offset"], by[name]["size"], dst)})
         manifest = {"format": ota.FORMAT, "kind": ota.KIND, "layout": ota.LAYOUT,
                     "compatible": ota.device_compatible(dev), "version": version, "commit": commit, "variant": variant,
-                    "source": source, "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "images": imgs}
+                    "source": source, "images": imgs, **(extra or {}),
+                    "created": created or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
         raw = json.dumps(manifest, ensure_ascii=False, indent=1, sort_keys=True).encode()
         signature = sig.sign(raw, key, sig.NS_OTA)
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -346,11 +362,27 @@ def cmd_ota_build(a):
         commit, epoch, variant = rep["commit"], int(rep["source_date_epoch"]), rep["config"]
         major, minor = build_deb.default_version().split("~")[0].split(".")[:2]
         version = f"{int(major)}.{int(minor)}.{epoch}"
+        created = datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")   # воспроизводимо
+        art = Path(a.build_report).parent
+        extra = {"image_sha256": rep.get("image_sha256")}
+        debs = sorted(art.glob("sheregesh_*.deb"))
+        if debs:
+            extra["package"] = debs[0].name
+            extra["units"] = deb_units(debs[0])
+        if (art / "verify.json").exists():
+            v = json.loads((art / "verify.json").read_text())
+            checks = v.get("checks", [])
+            extra["image_verify"] = {"sha256": hashlib.sha256((art / "verify.json").read_bytes()).hexdigest(),
+                                     "checks": len(checks), "failed": [c["id"] for c in checks if c["status"] != "PASS"]}
+            if extra["image_verify"]["failed"]:
+                raise CliError(f"проверка структуры образа не пройдена: {extra['image_verify']['failed']}")
     else:
+        created, extra = None, None
         if not (a.version and a.commit and a.variant):
             raise CliError("нужен --build-report или --version, --commit и --variant")
         version, commit, variant = a.version, a.commit, a.variant
-    out, m = build_ota(a.image, variant, version, commit, a.out, signing_key(a.key), source=Path(a.image).name)
+    out, m = build_ota(a.image, variant, version, commit, a.out, signing_key(a.key), source=Path(a.image).name,
+                       created=created, extra=extra)
     h = hashlib.sha256(out.read_bytes()).hexdigest()
     print(f"{out}\n  версия {version} ({m['compatible']}), коммит {commit}\n  sha256 {h}")
     for i in m["images"]:
