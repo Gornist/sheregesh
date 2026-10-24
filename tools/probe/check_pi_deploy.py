@@ -14,6 +14,7 @@
   watchdog-freeze  SIGSTOP приложения → WatchdogSec → перезапуск; не остаётся процессов старой группы, tty1 свободен
   relay-kill-frozen  приложение заморожено, SIGKILL ретранслятора → не остаётся ни cage, ни приложения (ac64aad)
   deploy-good      shdeploy deploy (HEAD) → OK, служба работает из выпуска (SHEREGESH_RELEASE в окружении)
+  deploy-good2     второй исправный выпуск (временный коммит: только комментарий) → OK, предыдущий = первый
   deploy-bad-start выпуск, падающий при старте (временный коммит, не публикуется) → ROLLED_BACK, прежний выпуск
   deploy-crash-window  выпуск, падающий через 15 с после READY → ROLLED_BACK
   rollback | factory  ручной возврат и заводской код
@@ -24,6 +25,8 @@
   reboot           штатная перезагрузка → SSH, служба active, тот же выпуск (новый boot_id)
   corrupt          повреждение выпуска (посторонний .pyc/файл) на плате требует root — SKIP (защита — tamper;
                    отказ launcher и переход на заводской код — контейнер systemd 257 и тесты launcher)
+Перед каждым сценарием с перезапуском пульта стенд делает reset-failed (StartLimitBurst=5/300 с считает и ручные
+запуски; срабатывание лимита при подряд идущих сценариях — защита от цикла, проверяется отдельно, не здесь).
 Во всех сценариях с отказами параллельно каждые 2 с открывается НОВОЕ соединение SSH (systemctl is-active ssh):
 любой отказ — FAIL. Только синтетические эмуляторы; удалённых команд через лабораторный канал нет.
 """
@@ -98,6 +101,25 @@ def wait_active(host, unit="sheregesh-console", timeout=120):
     return None
 
 
+def fresh_budget(host, unit="sheregesh-console"):
+    """Действие стенда, фиксируется в протоколе: StartLimitBurst=5/300 с считает и ручные запуски, и подряд идущие
+    сценарии исчерпали бы лимит (это защита от бесконечного цикла, а не отказ сценария). reset-failed перед
+    сценарием даёт ему собственный бюджет перезапусков."""
+    _, out, _ = ssh(host, f"systemctl reset-failed {unit}; systemctl show {unit} -p NRestarts --value")
+    return out
+
+
+def wait_restarted(host, n0, unit="sheregesh-console", timeout=120):
+    """Ждать, пока systemd перезапустит службу (NRestarts вырос) и она снова active."""
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        s = svc(host, unit)
+        if int(s.get("NRestarts") or 0) > int(n0 or 0) and s.get("ActiveState") == "active":
+            return round(time.monotonic() - t0, 1)
+        time.sleep(1)
+    return None
+
+
 def state(host):
     _, out, _ = ssh(host, f"cat {STATE} 2>/dev/null")
     try:
@@ -114,7 +136,13 @@ def app_release(host):
 
 
 def journal(host, since, unit="sheregesh-console", pattern="."):
-    _, out, _ = ssh(host, f"journalctl -u {unit} --since @{int(since)} -o cat --no-pager | grep -E '{pattern}' | tail -8")
+    """Записи службы и её процессов в сеансе входа: пульт под PAMName пишет из session-N.scope под идентификатором
+    ретранслятора/cage, поэтому одного -u мало."""
+    sel = f"_SYSTEMD_UNIT={unit}.service + UNIT={unit}.service"
+    if unit == "sheregesh-console":
+        sel += " + SYSLOG_IDENTIFIER=sheregesh-notify-relay + SYSLOG_IDENTIFIER=cage"
+    _, out, _ = ssh(host, f"journalctl --since @{int(since)} -o short-monotonic --no-pager {sel} "
+                          f"| grep -E '{pattern}' | tail -10")
     return out.splitlines()
 
 
@@ -129,7 +157,9 @@ def sc_image(a):
                       "cat /sys/class/watchdog/watchdog0/identity /sys/class/watchdog/watchdog0/state 2>/dev/null")
     deploy_pub = Path("~/.ssh/sheregesh-deploy.pub").expanduser().read_text().split()
     login_body = {ln.split()[1] for ln in login.splitlines() if len(ln.split()) > 1}
-    signer_body = signers.split()[2] if len(signers.split()) > 2 else ""
+    # «sheregesh-deploy namespaces="…" ssh-ed25519 ТЕЛО»: тело — токен после типа ключа
+    tok = signers.split()
+    signer_body = next((tok[i + 1] for i, x in enumerate(tok[:-1]) if x.startswith(("ssh-", "ecdsa-", "sk-"))), "")
     st = json.loads(sock[sock.index("{"):]) if "{" in sock else {}
     ok = (signer_body == deploy_pub[1] and signer_body not in login_body and "active" in sock.splitlines()[0]
           and st.get("code_root") == "/usr/lib/sheregesh")
@@ -142,7 +172,7 @@ NEGATIVE = {   # команда от sheregesh-ui → должна быть от
     "start other instance": "systemctl start sheregesh-deploy@shell.service",
     "stop install": "systemctl stop sheregesh-deploy@install.service",
     "restart install": "systemctl restart sheregesh-deploy@install.service",
-    "kill install": "systemctl kill sheregesh-deploy@install.service",
+    "kill ssh": "systemctl kill ssh.service",
     "transient with installer name": "systemd-run --unit=sheregesh-deploy@install --wait /usr/bin/id",
     "transient with console name": "systemd-run --unit=sheregesh-console-x -p User=root --wait /usr/bin/id",
     "transient arbitrary": "systemd-run --wait /usr/bin/id",
@@ -199,6 +229,7 @@ def sc_tamper(a):
 
 def _app_failure(a, action):
     h = a.host
+    fresh_budget(h)
     s0, t0 = svc(h), time.time()
     with SshProbe(h) as p:
         if action == "stop":
@@ -212,7 +243,7 @@ def _app_failure(a, action):
         else:
             ssh(h, "systemctl restart sheregesh-console")
             stopped = None
-        back = wait_active(h)
+        back = wait_restarted(h, s0.get("NRestarts")) if action == "kill" else wait_active(h)
         time.sleep(4)
     s1 = svc(h)
     leftovers = ssh(h, "ps -eo pid,stat,cmd --no-headers | grep -E 'cage|sheregesh_console' | grep -v grep")[1]
@@ -244,6 +275,7 @@ echo "tty1_holders=$(tty1) new_cage=$(pgrep -x cage | tr "\n" " ")"
 
 def _wd(a, mode):
     h = a.host
+    fresh_budget(h)
     t0 = time.time()
     with SshProbe(h) as p:
         rc, out, err = ssh(h, f"sh -s {mode}", data=WD_SCRIPT, timeout=180)
@@ -285,6 +317,7 @@ def _deploy(a, action, rev=None):
 
 def _deploy_case(a, action, rev=None, expect="OK", expect_release=None):
     h = a.host
+    fresh_budget(h)
     s0 = state(h)
     t0 = time.time()
     with SshProbe(h) as p:
@@ -311,6 +344,15 @@ def sc_deploy_good(a):
     rid = r.get("current_after")
     ok = r["verdict"] == "PASS" and rid and commit[:12] in rid and r["app_env"].get("SHEREGESH_RELEASE") == rid
     return {**r, "verdict": "PASS" if ok else "FAIL"}
+
+
+def sc_deploy_good2(a):
+    rev = _variant("good2", "software/console/sheregesh_console/__main__.py",
+                   lambda s: s + "# TEST ONLY: второй исправный выпуск для проверки rollback\n")
+    r = _deploy_case(a, "deploy", rev, "OK")
+    ok = r["verdict"] == "PASS" and r["current_after"] and rev[:12] in r["current_after"] \
+        and r["app_env"].get("SHEREGESH_RELEASE") == r["current_after"] and r["current_before"]
+    return {**r, "previous_expected": r["current_before"], "verdict": "PASS" if ok else "FAIL"}
 
 
 def sc_deploy_bad_start(a):
@@ -451,7 +493,7 @@ SCENARIOS = {"image": sc_image, "polkit": sc_polkit, "tamper": sc_tamper,
              "app-stop": lambda a: _app_failure(a, "stop"), "app-kill": lambda a: _app_failure(a, "kill"),
              "app-restart": lambda a: _app_failure(a, "restart"),
              "watchdog-freeze": lambda a: _wd(a, "freeze"), "relay-kill-frozen": lambda a: _wd(a, "relay-kill-frozen"),
-             "deploy-good": sc_deploy_good, "deploy-bad-start": sc_deploy_bad_start,
+             "deploy-good": sc_deploy_good, "deploy-good2": sc_deploy_good2, "deploy-bad-start": sc_deploy_bad_start,
              "deploy-crash-window": sc_deploy_crash_window, "rollback": sc_rollback, "factory": sc_factory,
              "foreign-sig": sc_foreign_sig, "tampered": sc_tampered, "login-key-sig": sc_login_key_sig, "no-bytecode": sc_no_bytecode,
              "reboot": sc_reboot, "corrupt": sc_corrupt}
