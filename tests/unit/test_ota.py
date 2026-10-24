@@ -456,3 +456,17 @@ def test_client_streams_over_unix_socket(tmp_path):
     os.unlink(path)
     os.rmdir(d)
     assert rc == 0 and json.loads(out.getvalue().splitlines()[-1])["state"]["state"] == "INSTALLED"
+
+
+def test_on_boot_failure_is_unit_failure_only_during_update(tmp_path, capsys):
+    b = Board(tmp_path)
+    agent = b.agent()
+    agent.detect = lambda p: (_ for _ in ()).throw(UpdateError("нет by-slot"))
+    assert ota.on_boot_main(agent) == 0                      # обновления нет: только предупреждение
+    b.request("install", b.payload("1.1.0"))
+    b.enable()
+    b.request("tryboot")
+    agent = b.agent()
+    agent.detect = lambda p: (_ for _ in ()).throw(UpdateError("нет by-slot"))
+    assert ota.on_boot_main(agent) == 1                      # пробная загрузка в процессе: сбой виден
+    assert "слоты не определены" in capsys.readouterr().err

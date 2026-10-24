@@ -9,6 +9,7 @@ RequiresMountsFor=/persistent /bootfs
 
 [Service]
 ExecStart=/usr/bin/sheregesh-ota-agent serve
+SuccessExitStatus=1 2
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal

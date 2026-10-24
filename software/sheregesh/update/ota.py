@@ -415,14 +415,25 @@ def main(argv=None):
     if argv[:1] == ["serve"]:
         return serve(Agent(), sys.stdin.buffer, sys.stdout.buffer)
     if argv[:1] == ["on-boot"]:
-        try:
-            print(json.dumps(Agent().on_boot(), ensure_ascii=False))
-        except UpdateError as e:
-            print(f"sheregesh-ota: слоты не определены: {e}", file=sys.stderr)
-            return 1
-        return 0
+        return on_boot_main(Agent())
     print("использование: sheregesh-ota-agent serve | on-boot", file=sys.stderr)
     return 2
+
+
+def on_boot_main(agent):
+    """Учёт загрузки. Ошибка определения слотов — сбой юнита только если идёт обновление (её нельзя скрыть);
+    без незавершённого обновления — предупреждение в журнале (иначе sheregesh-health видел бы failed-юнит)."""
+    try:
+        print(json.dumps(agent.on_boot(), ensure_ascii=False))
+        return 0
+    except (UpdateError, OSError) as e:
+        try:
+            pending = json.loads((Path(agent.cfg.state_dir) / "state.json").read_text()).get("state")
+        except (OSError, ValueError):
+            pending = None
+        busy = pending in ("INSTALLING", "TRYBOOT", "HEALTH_PENDING")
+        print(f"sheregesh-ota: слоты не определены ({e}); состояние {pending or 'нет'}", file=sys.stderr)
+        return 1 if busy else 0
 
 
 def client_main(argv=None):

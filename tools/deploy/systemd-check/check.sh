@@ -48,7 +48,8 @@ if [ "$POLKIT" = 1 ]; then
 else
   echo "SKIP polkit: в контейнере нет polkitd/D-Bus — действия от root; правило проверяет test_polkit_rule.py"
 fi
-check "иной экземпляр установщика отвергается самим установщиком" bash -c "! systemctl start sheregesh-deploy@shell.service 2>/dev/null"
+check "иной экземпляр установщика отвергается самим установщиком (код 64, юнит failed)" bash -c "! systemctl start sheregesh-deploy@shell.service 2>/dev/null"
+systemctl reset-failed 'sheregesh-deploy@shell.service' 2>/dev/null
 
 # --- установка good1
 push good1
@@ -68,7 +69,7 @@ act install
 check "install good2: OK, previous = good1" test "$(field "d['last']['result'] + ' ' + str(d['previous'])")" = "OK $(id_of good1)"
 push bad
 act install; rc=$?
-check "install bad: код возврата ненулевой" test "$rc" != 0
+check "install bad: юнит установщика не помечен failed (итог — в state.json)" bash -c "! systemctl is-failed -q sheregesh-deploy@install.service"
 check "install bad: итог ROLLED_BACK" test "$(field "d['last']['result']")" = ROLLED_BACK
 check "install bad: current снова good2" test "$(readlink /var/lib/sheregesh-deploy/current)" = "releases/$(id_of good2)"
 wait_active
@@ -77,7 +78,7 @@ echo "   причина: $(field "d['last']['units']")"
 push crash
 act install; rc=$?
 check "install crash (READY, затем падение в окне наблюдения): ROLLED_BACK" \
-  test "$rc" != 0 -a "$(field "d['last']['result']")" = ROLLED_BACK
+  test "$(field "d['last']['result']")" = ROLLED_BACK
 wait_active
 check "install crash: пульт снова работает из good2" test "$(console_release)" = "$(id_of good2)"
 echo "   причина: $(field "d['last']['units']")"

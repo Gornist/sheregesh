@@ -341,10 +341,10 @@ def test_skipped_service_is_not_judged(tmp_path):
 
 
 def test_unknown_action_and_non_root_cli():
-    assert installer.main(["format-disk"]) == 2
-    assert installer.main(["install", "extra"]) == 2
+    assert installer.main(["format-disk"]) == installer.EX_USAGE        # не входит в SuccessExitStatus юнита
+    assert installer.main(["install", "extra"]) == installer.EX_USAGE
     if os.geteuid() != 0:
-        assert installer.main(["install"]) == 2
+        assert installer.main(["install"]) == installer.EX_USAGE
 
 
 # ---------------------------------------------------------------- launcher

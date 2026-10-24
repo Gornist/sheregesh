@@ -42,6 +42,7 @@ ACTIONS = ("install", "rollback", "factory", "status")
 UNITS = {"remote": ["sheregesh-remote-net"], "console": ["sheregesh-console"],
          "standalone": ["sheregesh-remote-emu", "sheregesh-console"]}
 KEEP_RELEASES = 3
+EX_USAGE = 64
 HISTORY = 20
 
 
@@ -377,17 +378,19 @@ class Installer:
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    # Коды: 0 — OK, 1 — возврат/сбой установки, 2 — пакет отвергнут (для юнита это итог, SuccessExitStatus=1 2);
+    # 64 — неверный вызов (иное имя экземпляра, не root): юнит завершается неуспешно.
     if len(argv) != 1 or argv[0] not in ACTIONS:
         print(f"использование: sheregesh-deployd {{{'|'.join(ACTIONS)}}}", file=sys.stderr)
-        return 2
+        return EX_USAGE
     if argv[0] != "status" and os.geteuid() != 0:
         print("sheregesh-deployd: действие выполняется службой sheregesh-deploy@<действие> (root)", file=sys.stderr)
-        return 2
+        return EX_USAGE
     try:
         return Installer(out=lambda m: print(m, flush=True)).run(argv[0])
     except DeployError as e:
         print(f"sheregesh-deployd: {e}", file=sys.stderr)
-        return 2
+        return EX_USAGE
 
 
 if __name__ == "__main__":

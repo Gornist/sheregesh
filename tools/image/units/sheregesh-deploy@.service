@@ -14,6 +14,9 @@ After=local-fs.target
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/sheregesh-deployd %i
+# Отказ (2) и возврат на прежний выпуск (1) — итог действия, а не сбой юнита: в списке failed он испортил бы
+# sheregesh-health. Итог читается из /var/lib/sheregesh-deploy/state.json (shdeploy сверяет историю).
+SuccessExitStatus=1 2
 StateDirectory=sheregesh-deploy
 StateDirectoryMode=0755
 TimeoutStartSec=15min

@@ -40,6 +40,8 @@ def keypair(d, name="owner"):
 class FakeRemote:
     serial = shdeploy.BOARDS["pi1"]["serial"]
     log = []
+    history = []
+    result = "OK"
 
     def __init__(self, host):
         self.host = host
@@ -49,7 +51,11 @@ class FakeRemote:
         if "serial-number" in cmd:
             return 0, FakeRemote.serial + "\n", ""
         if cmd.startswith("systemctl start sheregesh-deploy@"):
-            return 0, json.dumps({"current": "x", "last": {"action": "install", "result": "OK", "reason": "ok"}}), ""
+            last = {"action": "install", "result": FakeRemote.result, "reason": "ok"}
+            FakeRemote.history.append(last)
+            return 0, json.dumps({"current": "x", "last": last, "history": FakeRemote.history}), ""
+        if cmd.startswith("cat /var/lib/sheregesh-deploy/state.json"):
+            return 0, json.dumps({"history": FakeRemote.history}), ""
         return 0, "", ""
 
 
@@ -68,7 +74,7 @@ class DeployCliTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.d = Path(self.tmp.name)
-        FakeRemote.log = []
+        FakeRemote.log, FakeRemote.history, FakeRemote.result = [], [], "OK"
         FakeRemote.serial = shdeploy.BOARDS["pi1"]["serial"]
         self.patches = [mock.patch.object(shdeploy, "CACHE", self.d / "boards.json"),
                         mock.patch.dict(os.environ, {"SHEREGESH_PI1_HOST": "", "SHEREGESH_PI2_HOST": ""})]
@@ -106,8 +112,14 @@ class DeployCliTest(unittest.TestCase):
         for c in cmds:                                                  # никаких sudo/произвольных команд
             self.assertNotIn("sudo", c)
             self.assertRegex(c, r"^(tr -d|mkdir -p ~/\.cache/sheregesh-deploy/incoming|cat > ~/\.cache/sheregesh-deploy/"
-                                r"incoming/|systemctl start sheregesh-deploy@install\.service)")
+                                r"incoming/|cat /var/lib/sheregesh-deploy/state\.json|"
+                                r"systemctl start sheregesh-deploy@install\.service)")
         self.assertIn("выпуск: x", out.getvalue())
+
+    def test_failed_install_is_reported_from_state_not_unit_status(self):
+        FakeRemote.result = "ROLLED_BACK"                              # юнит «успешен» (SuccessExitStatus), итог — нет
+        with mock.patch.object(shdeploy, "Remote", FakeRemote), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(shdeploy.main(["rollback", "pi1", "--host", "h"]), 1)
 
     def test_rollback_and_factory_do_not_upload(self):
         for action in ("rollback", "factory"):

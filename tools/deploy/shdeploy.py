@@ -185,8 +185,20 @@ def deploy_action(remote, action, data=None, signature=None):
         for name, blob in (("bundle.tar.xz.sig", signature), ("bundle.tar.xz", data)):
             remote.run(f"cat > ~/{INCOMING}/{name}.part && mv ~/{INCOMING}/{name}.part ~/{INCOMING}/{name}",
                        data=blob, check=True)
+    _, before, _ = remote.run(f"cat {STATE} 2>/dev/null")
     rc, out, err = remote.run(f"systemctl start sheregesh-deploy@{action}.service; rc=$?; cat {STATE}; exit $rc")
-    return rc, out, err
+    # Неуспех установки — не «упавший юнит» (SuccessExitStatus=1 2, чтобы не портить sheregesh-health):
+    # итог берётся из state.json, а запуск подтверждается новой записью в истории.
+    try:
+        prev = json.loads(before) if before.strip() else {}
+        st = json.loads(out)
+        ran = (len(st.get("history", [])) != len(prev.get("history", []))) or st.get("last") != prev.get("last")
+        ok = ran and st.get("last", {}).get("result") == "OK"
+        if not ran:
+            err = (err + "\nустановщик не выполнил действие (юнит не запускался?)").strip()
+    except (ValueError, AttributeError):
+        ok = False
+    return (0 if rc == 0 and ok else 1), out, err
 
 
 def cmd_build(a):
