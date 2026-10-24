@@ -18,6 +18,7 @@
 Решения об установке, подтверждении и откате записывает RAUC (status mark-good/mark-bad, set-primary бэкенда);
 модули слотов и health только проверяют и исполняют.
 """
+import configparser
 import json
 import os
 import subprocess
@@ -85,6 +86,20 @@ class Hooks:
             raise HookError(f"устройство RAUC {boot[1]} ≠ неактивный boot image-rota {layout.other.boot}")
         return layout, name, dev
 
+    def _bundle_update(self):
+        """[update] манифеста бандла. Системным обработчикам RAUC (1.15) RAUC_MF_* не передаёт (найдено испытанием
+        на файловом образе) — манифест читается из смонтированного бандла RAUC_BUNDLE_MOUNT_POINT."""
+        out = {"version": self.env.get("RAUC_MF_VERSION"), "compatible": self.env.get("RAUC_MF_COMPATIBLE")}
+        mp = self.env.get("RAUC_BUNDLE_MOUNT_POINT")
+        if mp and Path(mp, "manifest.raucm").is_file():
+            cp = configparser.ConfigParser(interpolation=None)
+            cp.read(Path(mp, "manifest.raucm"))
+            if cp.has_section("update"):
+                out = {k: out[k] or cp["update"].get(k) for k in out}
+        if not out["version"]:
+            raise HookError("версия бандла неизвестна (нет RAUC_MF_VERSION и manifest.raucm в RAUC_BUNDLE_MOUNT_POINT)")
+        return out
+
     # ---------- обработчики RAUC ----------
     def pre_install(self):
         ok, why = self.guard.claim(guard_mod.RAUC, "install")
@@ -102,10 +117,11 @@ class Hooks:
     def post_install(self):
         try:
             layout, name, dev = self._layout_target()
+            upd = self._bundle_update()
             self._seeder().seed(layout, layout.other.name, dev)
-            rec = {"target": layout.other.name.upper(), "rauc_slot": name, "version": self.env.get("RAUC_MF_VERSION"),
-                   "compatible": self.env.get("RAUC_MF_COMPATIBLE"), "expect": confirm.expect_from_board(self.cfg.root),
-                   "time": int(time.time())}
+            rec = {"target": layout.other.name.upper(), "rauc_slot": name, **upd,
+                   "expect": confirm.expect_from_board(self.cfg.root), "time": int(time.time()),
+                   "rauc_env": sorted(k for k in self.env if k.startswith("RAUC_"))}
             Path(self.cfg.state_dir).mkdir(parents=True, exist_ok=True)
             slots.write_atomic(self.install_file, json.dumps(rec, ensure_ascii=False, indent=1) + "\n")
         finally:

@@ -222,6 +222,8 @@ class TrybootBackend:
             # исправляет on_boot (пробный слот уже основной → подтверждён).
             self._render(x, self.other(x))
             st["slots"][x] = "good"
+            if st["slots"].get(committed) != "bad":
+                st["slots"][committed] = "good"      # прежний основной работал — остаётся запасным «good»
             st["trial"] = None
             st["committed_from"] = committed
             self.save(st)

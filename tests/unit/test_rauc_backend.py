@@ -51,6 +51,7 @@ def test_mark_good_commits_only_on_trial_boot_of_that_slot(tmp_path):
     assert b.booted() == ("B", True) and b.get_primary() == "A"
     b.set_state("B", "good")
     assert autoboot(board) == (3, 2) and b.get_primary() == "B" and b.get_state("B") == "good"
+    assert b.get_state("A") == "good"                      # прежний основной — запасной, «good»
     assert boot_state(board)["trial"] is None
     board.firmware_boot(tryboot_flag=False)                # обычная перезагрузка → новый основной
     assert backend(board).booted() == ("B", False)

@@ -186,3 +186,24 @@ def test_main_usage_and_refusal_codes(tmp_path, monkeypatch, capsys):
     assert rauc_hooks.main(["tryboot"]) == 1                    # нечего пробовать
     assert rauc_hooks.main(["status"]) == 0
     assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["backend"]["committed"] == "A"
+
+
+def test_post_install_reads_version_from_bundle_manifest(tmp_path):
+    """RAUC 1.15 не передаёт RAUC_MF_* системным обработчикам: версия — из manifest.raucm смонтированного бандла."""
+    board = Board(tmp_path)
+    env = env_for(board)
+    del env["RAUC_MF_VERSION"], env["RAUC_MF_COMPATIBLE"]
+    mp = tmp_path / "bundle"
+    mp.mkdir()
+    (mp / "manifest.raucm").write_text("[update]\ncompatible=sheregesh-lab-pi4-dev-1\nversion=1.1.0\n")
+    env["RAUC_BUNDLE_MOUNT_POINT"] = str(mp)
+    h = hooks(board, env=env)
+    h.pre_install()
+    write_slot(board)
+    h.post_install()
+    rec = json.loads((board.persistent / "sheregesh-rauc/install.json").read_text())
+    assert rec["version"] == "1.1.0" and rec["compatible"] == "sheregesh-lab-pi4-dev-1"
+    (mp / "manifest.raucm").unlink()
+    with pytest.raises(HookError, match="версия бандла неизвестна"):
+        hooks(board, env=env).post_install()
+    assert not (board.persistent / "update-manager.json").exists()      # заявка снята и при отказе

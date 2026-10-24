@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Пример манифеста бандла RAUC (прототип варианта C ADR-0009). Генерируется tools/rauc/build_bundle.py.
+# Образы — те же артефакты rpi-image-gen/image-rota, что и у потока dev-агента: boot.vfat и system.ext4.
+# version = ota_version образа (build.json): по ней health сверяет загруженный слот (критерий version).
+
+[update]
+compatible=sheregesh-lab-pi4-dev-1
+version=0.1.1792860877
+description=Sheregesh lab image (dev)
+build=d1dc93d63f794bed672c77eca56dc5208dfaf54b
+
+[bundle]
+format=verity
+
+[image.rootfs]
+filename=system.ext4
+
+[image.boot]
+filename=boot.vfat
