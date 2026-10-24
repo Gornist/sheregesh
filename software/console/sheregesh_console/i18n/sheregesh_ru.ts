@@ -300,11 +300,6 @@
         <translation>поток прерван</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="13" />
-        <source>decoder restarting</source>
-        <translation>перезапуск декодера</translation>
-    </message>
-    <message>
         <location filename="../qml/DashboardPage.qml" line="14" />
         <source>GStreamer missing</source>
         <translation>нет GStreamer</translation>

@@ -10,8 +10,7 @@ Item {
     readonly property real big: 34 * win.s
 
     function videoState(s) {         // краткая причина для плитки связи (полный текст — на экране «Видео»)
-        return s === "no-video" ? qsTr("stream interrupted") : s === "restarting" ? qsTr("decoder restarting")
-             : s === "unavailable" ? qsTr("GStreamer missing") : s
+        return s === "no-video" ? qsTr("stream interrupted") : s === "unavailable" ? qsTr("GStreamer missing") : s
     }
 
     GridLayout {
@@ -149,10 +148,11 @@ Item {
                 Layout.fillWidth: true; wrapMode: Text.WordWrap
                 readonly property var rx: backend.videoReceiver
                 text: rx.state === "playing" ? qsTr("Video: playing · %1 fps").arg(win.num(rx.fps, 0))
-                    : rx.state === "waiting" ? qsTr("Video: waiting for stream")
+                    : rx.state === "waiting" || rx.state === "restarting" ? qsTr("Video: waiting for stream")
                     : rx.state === "off" ? qsTr("Video: no stream")
                     : qsTr("Video: no frames (%1)").arg(page.videoState(rx.state))
-                color: rx.state === "playing" || rx.state === "off" ? win.p.muted : win.p.warning
+                color: rx.state === "playing" || rx.state === "off" ? win.p.muted
+                     : rx.state === "waiting" || rx.state === "restarting" ? win.p.info : win.p.warning
             }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap;
                 text: st.peerHeartbeatAge >= 0 ? qsTr("Last heartbeat %1\u00a0s ago").arg(win.num(st.peerHeartbeatAge, 1)) : qsTr("No heartbeat")

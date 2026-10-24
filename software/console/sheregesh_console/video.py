@@ -62,7 +62,8 @@ class VideoReceiver(QObject):
         # off | waiting | playing | no-video | restarting | unavailable | no-device | unsupported
         self._state = "off"
         self._error = ""
-        self._restarts = 0
+        self._restarts = 0                 # статистика: перезапусков всего
+        self._backoff = 0                  # перезапусков подряд без восстановления — для паузы перед повтором
         self._next_start = 0.0
         self._started_at = 0.0
         self._last_notify = 0.0
@@ -117,6 +118,7 @@ class VideoReceiver(QObject):
                 self._proc is not None:
             return
         self.stop()
+        self._backoff = 0
         self._remote = self._local = self._source = None
         self._codec, self._port = codec, port
         if codec is None or port is None:
@@ -133,6 +135,7 @@ class VideoReceiver(QObject):
         if self._remote is not None and self._remote[0] == (codec, key) and self._state != "off":
             return
         self.stop()
+        self._backoff = 0
         self._local = self._source = None
         self._remote, self._codec, self._port = ((codec, key), factory), codec, key[1]
         if self._command is None and not gst.available():
@@ -148,6 +151,7 @@ class VideoReceiver(QObject):
         if self._local is not None and self._local[0] == key and self._state != "off":
             return
         self.stop()
+        self._backoff = 0
         self._remote, self._codec, self._port, self._source = None, None, None, None
         self._local = (key, opener)
         if self._command is None and not gst.available():
@@ -197,13 +201,13 @@ class VideoReceiver(QObject):
             self._error = str(e)
             self._schedule_restart()
             return
+        self._error = ""                    # до запуска потока видеоканала: его причина разрыва не затирается
         if remote:
             self._client = self._remote[1]()
             self._sessions += 1
             self._feeder = threading.Thread(target=self._feed, args=(self._client, self._proc, self._gen),
                                             name="video-link", daemon=True)
             self._feeder.start()
-        self._error = ""
         self._started_at = time.monotonic()
         with self._lock:
             self._last_frame_t = None
@@ -239,7 +243,7 @@ class VideoReceiver(QObject):
         if proc is not None:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):   # macOS: группа уже распалась — PermissionError
                 pass
         if client is not None:
             client.close()
@@ -316,7 +320,8 @@ class VideoReceiver(QObject):
 
     def _schedule_restart(self):
         self._restarts += 1
-        self._next_start = time.monotonic() + RESTART_BACKOFF_S[min(self._restarts - 1, len(RESTART_BACKOFF_S) - 1)]
+        self._backoff += 1                 # 1 → 2 → 4 с подряд; после восстановления потока снова с 1 с
+        self._next_start = time.monotonic() + RESTART_BACKOFF_S[min(self._backoff - 1, len(RESTART_BACKOFF_S) - 1)]
         self._set_state("restarting")
 
     def _poll(self):
@@ -326,7 +331,9 @@ class VideoReceiver(QObject):
             self._start()
             return
         if self._proc is not None and self._proc.poll() is not None:
-            self._error = f"{'capture' if self._local else 'decoder'} exited with code {self._proc.returncode}"
+            if not (self._remote is not None and self._error.startswith("video link:")):
+                # причина разрыва видеоканала важнее кода выхода декодера, который она и вызвала
+                self._error = f"{'capture' if self._local else 'decoder'} exited with code {self._proc.returncode}"
             self.stop()
             self._schedule_restart()
             return
@@ -351,6 +358,8 @@ class VideoReceiver(QObject):
                 new = "waiting"
             else:
                 new, self._fps = "no-video", 0.0
+            if new == "playing":
+                self._backoff = 0
             if new != self._state:
                 self._set_state(new)
             elif now - self._last_notify >= 0.5:      # обновить fps и счётчики в QML не чаще 2 раз в секунду
