@@ -84,6 +84,7 @@ jobs:
           python3 -I tools/reqs/reqgen.py gate | tee reports/gate.txt || echo "::notice title=Гейт релиза::NO-GO — ожидаемо до подтверждения всех Must на уровне L4"
       - name: Отчёты
         if: always()
+        continue-on-error: true   # квота хранилища артефактов не должна скрывать результат тестов (2026-10-25)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: reports-${{ github.sha }}

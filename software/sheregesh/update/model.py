@@ -94,12 +94,18 @@ class Updater:
 
     # ---------- персистентность ----------
     def _load(self):
-        return UpdateState(**json.loads(Path(self.path).read_text()))
+        # Состояние общее для слотов (/persistent): его мог записать агент другой версии. Неизвестные поля
+        # пропускаются — иначе после отката на прежний слот агент не запустился бы (pi2, 2026-10-25).
+        known = set(UpdateState.__dataclass_fields__)
+        return UpdateState(**{k: v for k, v in json.loads(Path(self.path).read_text()).items() if k in known})
 
     def save(self):
         if self.path:
+            d = asdict(self.s)
+            if not d["expect"]:     # агент 57e8fe4 (образ pi1/pi2 до S3.2) не знает поля expect и упал бы на нём
+                del d["expect"]
             tmp = Path(self.path).with_suffix(".tmp")
-            tmp.write_text(json.dumps(asdict(self.s), ensure_ascii=False))
+            tmp.write_text(json.dumps(d, ensure_ascii=False))
             tmp.replace(self.path)
 
     def _go(self, state, reason=""):
