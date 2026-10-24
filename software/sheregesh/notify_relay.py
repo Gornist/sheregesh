@@ -14,7 +14,9 @@ MAINPID, FDSTORE и прочие строки не пересылаются. К�
 главный PID: старые cage и зависшее приложение оставались, держали DRM и tty1, и новые запуски падали до лимита
 перезапусков (pi1, ee56bf1). Поэтому ребёнок запускается в своей группе процессов; по SIGTERM/SIGINT и по SIGABRT
 (сигнал watchdog) группа получает SIGTERM, через GRACE_S — SIGKILL, а после выхода ребёнка добиваются оставшиеся
-в группе. При гибели самого ретранслятора cage получает SIGKILL (PR_SET_PDEATHSIG).
+в группе. При гибели самого ретранслятора cage получает SIGKILL (PR_SET_PDEATHSIG), а приложение под cage по
+переменной SHEREGESH_PDEATHSIG само просит SIGKILL при гибели cage (adopt_pdeathsig) — цепочка не оставляет процессов,
+даже если приложение заморожено.
 
   sheregesh-notify-relay -- /usr/bin/cage -s -- /usr/bin/sheregesh-console ...
 """
@@ -51,6 +53,16 @@ def _pdeathsig():
         pass                                           # не Linux: только останов группы по сигналу
 
 
+def adopt_pdeathsig():
+    """Для процесса под ретранслятором (приложение — ребёнок cage): SIGKILL при гибели родителя. Вне Linux — ничего."""
+    if os.environ.get("SHEREGESH_PDEATHSIG") != "1" or not sys.platform.startswith("linux"):
+        return False
+    _pdeathsig()
+    if os.getppid() == 1:                              # родитель умер до prctl
+        os._exit(1)
+    return True
+
+
 def _killpg(pgid, sig):
     try:
         os.killpg(pgid, sig)
@@ -68,6 +80,7 @@ def main(argv=None) -> int:
     upstream = os.environ.get("NOTIFY_SOCKET")
     env = dict(os.environ)
     env.pop("WATCHDOG_PID", None)                      # пингует приложение, а не ретранслятор
+    env["SHEREGESH_PDEATHSIG"] = "1"                   # приложение под cage: SIGKILL при гибели cage
     sock = path = tmpdir = None
     if upstream:
         base = os.environ.get("RUNTIME_DIRECTORY", "").split(":")[0] or None

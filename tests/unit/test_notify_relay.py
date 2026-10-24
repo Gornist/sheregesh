@@ -11,6 +11,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import pytest
+
 from sheregesh.notify_relay import filter_lines
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -106,3 +108,35 @@ def test_watchdog_abort_kills_frozen_grandchild():
         p.kill()
         s.close()
         shutil.rmtree(d)
+
+
+ADOPTING = ("import os, sys, time; sys.path.insert(0, sys.argv[1]); "
+            "from sheregesh.notify_relay import adopt_pdeathsig; print(adopt_pdeathsig(), os.getpid(), flush=True); "
+            "time.sleep(120)")
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="PR_SET_PDEATHSIG только в Linux")
+def test_relay_sigkill_leaves_no_processes_even_with_frozen_app():
+    """Аварийная гибель самого ретранслятора: cage (PDEATHSIG от ретранслятора) и замороженное приложение
+    (adopt_pdeathsig) не остаются."""
+    inner = [sys.executable, "-c", ADOPTING, str(ROOT / "software")]
+    middle = [sys.executable, "-c", "import subprocess, sys; sys.exit(subprocess.call(sys.argv[1:]))", *inner]
+    env = {k: v for k, v in ENV.items() if k != "NOTIFY_SOCKET"}
+    p = subprocess.Popen([sys.executable, "-m", "sheregesh.notify_relay", "--", *middle], env=env,
+                         stdout=subprocess.PIPE, text=True)
+    try:
+        adopted, app = p.stdout.readline().split()
+        assert adopted == "True"
+        app = int(app)
+        cage = int(open(f"/proc/{app}/stat").read().split(")")[1].split()[1])
+        os.kill(app, signal.SIGSTOP)                                # приложение «зависло»
+        p.kill()                                                   # ретранслятор убит аварийно
+        p.wait(5)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and (os.path.exists(f"/proc/{app}") or os.path.exists(f"/proc/{cage}")):
+            time.sleep(0.1)
+        for pid in (cage, app):
+            st = open(f"/proc/{pid}/stat").read().split(")")[1].split()[0] if os.path.exists(f"/proc/{pid}") else None
+            assert st in (None, "Z"), f"процесс {pid} остался: {st}"
+    finally:
+        p.kill()

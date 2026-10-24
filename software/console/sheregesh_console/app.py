@@ -23,6 +23,7 @@ from PySide6.QtQuick import QQuickWindow  # noqa: F401 — регистриру�
 from PySide6.QtQuickControls2 import QQuickStyle
 
 from sheregesh import sdnotify
+from sheregesh.notify_relay import adopt_pdeathsig
 
 from .backend import Backend
 from .video import VideoView
@@ -153,6 +154,7 @@ def main(argv=None):
                     help="сетевой лабораторный профиль (mTLS, S3.1); если файла нет — канал через --peer (loopback)")
     ap.add_argument("--link-status", metavar="FILE", help="состояние канала в JSON для sheregesh-health")
     args = ap.parse_args(argv)
+    adopt_pdeathsig()                                  # под cage в службе: не переживать композитор (S3.1)
     peer = None
     if args.peer:
         host, _, port = args.peer.rpartition(":")
