@@ -396,8 +396,9 @@ def sc_identity(ch, rh):
 
 
 def sc_version(ch, rh):
+    # --no-video: временный сервер 2.0 не занимает видеопорт 7444 рабочей службы (S3.1-VIDEO, ADR-0011).
     rid = json.loads(ssh(rh, "cat ~/.config/sheregesh/link.json"))["device_id"]
-    ssh(rh, "nohup sheregesh-remote-emu --link-config ~/.config/sheregesh/link.json --protocol 2.0 --port 7543 "
+    ssh(rh, "nohup sheregesh-remote-emu --link-config ~/.config/sheregesh/link.json --protocol 2.0 --port 7543 --no-video "
             ">/tmp/v2.log 2>&1 & echo $! > /tmp/v2.pid")
     time.sleep(3)
     try:

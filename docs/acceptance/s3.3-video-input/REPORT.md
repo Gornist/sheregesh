@@ -1,10 +1,12 @@
 # S3.3 — Universal Video Input: результаты испытаний
 
 Архитектура и исследование — [S3.3-universal-video-input.md](../../architecture/S3.3-universal-video-input.md).
-Это не приёмка требований: испытания Must не отмечаются PASS, гейт REQ-REL-001 — **NO-GO**. На платах pi1/pi2 ничего не
-запускалось. Настоящего устройства UVC и HDMI-генератора нет — аппаратные сценарии **NOT TESTED / BLOCKED**.
+Это не приёмка требований: испытания Must не отмечаются PASS, гейт REQ-REL-001 — **NO-GO**. Настоящего устройства UVC
+и HDMI-генератора нет — аппаратные сценарии с UVC **NOT TESTED / BLOCKED** (§3).
 
-Ветка `s3.3-video-input` (база `origin/v2` d44798a).
+Ветка `s3.3-video-input` (база `origin/v2` d44798a) слита в `v2` merge-коммитом **`a0ba631`** (2026-10-24). Выпуск
+`0.1.0~dev0+ga0ba6311bee4` развёрнут штатным DEV Deploy на pi1 и pi2; синтетический режим, защищённый видеоканал и
+телеметрия на платах не деградировали по сравнению с S3.1-VIDEO (§5). Разделы §1–§4 — испытания субагента до слияния.
 
 ## 1. Автоматические испытания (L2/L3, без устройств)
 
@@ -60,12 +62,12 @@
 
 ## 3. Аппаратные испытания — NOT TESTED / BLOCKED
 
-Оборудования нет; запуск на pi1/pi2 этой задаче запрещён. Процедура (после DEV deploy ветки, с разрешения владельца):
+Оборудования (USB UVC-камеры, HDMI→UVC-адаптера, HDMI-генератора) на стенде нет; действующие FPV-системы не подключались. После слияния на платах выполнены только проверки без устройства (§5.4: обнаружение рядом с системными узлами V4L2, поведение без устройства — это часть H1 и H2 без устройства). Аппаратная поддержка UVC **не подтверждена**. Процедура:
 
 | № | Сценарий | Статус | Процедура и критерий |
 |---|---|---|---|
-| H1 | Обнаружение на Pi 4 | NOT TESTED | pi1 от `sheregesh-ui`: `PYTHONPATH=<выпуск>/software python3 -m sheregesh.videoinput` без устройства и с адаптером: `CAPTURE` — только `uvcvideo` index 0; `video10–12`, ISP, unicam — `other` с причиной; режимы перечислены; отдельно `--no-probe` |
-| H2 | Права доступа | NOT TESTED | `id sheregesh-ui`, `ls -l /dev/video*`, `getfacl /dev/video0`: открытие из сеанса cage без `Permission denied` |
+| H1 | Обнаружение на Pi 4 | NOT TESTED с устройством; без устройства — PASS (§5.4) | pi1 от `sheregesh-ui`: `PYTHONPATH=<выпуск>/software python3 -m sheregesh.videoinput` без устройства и с адаптером: `CAPTURE` — только `uvcvideo` index 0; `video10–12`, ISP, unicam — `other` с причиной; режимы перечислены; отдельно `--no-probe` |
+| H2 | Права доступа | NOT TESTED (устройства нет; `sheregesh-ui` в группе `video`, узлы `root:video 660` + ACL) | `id sheregesh-ui`, `ls -l /dev/video*`, `getfacl /dev/video0`: открытие из сеанса cage без `Permission denied` |
 | H3 | Изображение HDMI-генератора | NOT TESTED | генератор 1280×720@30 → адаптер → pi1. В настройках выбрать «Стандартное UVC-устройство» и «1280x720@30». Ожидается: имя устройства, MJPEG 1280×720, 30 к/с, `playing`; `ui-state.json` → `video.mode == "local-input"` |
 | H4 | Частота и нагрузка | NOT TESTED | `python3 tools/dev/video_input_bench.py --device <vvvv:pppp> --mode 1280x720@30 --seconds 60` (+ `1920x1080@30`, `640x480@60`); ≥ 29 к/с; ЦП, `vcgencmd measure_temp`, `get_throttled` |
 | H5 | Задержка «стекло-стекло» | NOT TESTED | счётчик мс генератора на втором мониторе рядом с дисплеем пульта; 20 фото с выдержкой ≤ 1/250 с; задержка — разница показаний |
@@ -88,3 +90,79 @@
 | `tools/security/scan.py scope` / `secrets` | Mac | 0 / 0 |
 | CI `ci.yml` (workflow_dispatch, 42778f5) | GitHub | success — https://github.com/Gornist/sheregesh/actions/runs/40124199991 |
 | `git merge-tree origin/v2 s3.3-video-input` | — | без конфликтов |
+
+## 5. Интеграция в v2 и испытания на платах (основная сессия, 2026-10-24)
+
+### 5.1. Слияние
+
+- Состав ветки: 7 коммитов субагента и отчёт; 19 файлов, +1762/−49. OTA, юниты, PKI, `os/*`, `tools/image/*`, `tools/deploy/*`, `videolink.py`, требования не затронуты.
+- Новых демонов, системных пакетов и Python-зависимостей нет: `videoinput.py` использует только stdlib (`fcntl`, `struct`, `os`), захват — `v4l2src` из уже установленного gst-plugins-good. Конвейеры по-прежнему собирает только `video.py`; удалённый источник идёт тем же `VideoServer` через TLS 1.3 на 7444 — второго видеотракта нет.
+- `git merge --no-ff origin/s3.3-video-input` → **`a0ba631`**, конфликтов нет.
+- После слияния, на Mac: `pytest` — 501 passed, 2 skipped, 53 подтеста; `unittest discover -s tests/tools` (как в CI) — 71 OK; `scan.py scope/secrets` — 0/0. CI — см. итоговую строку в §5.7.
+
+### 5.2. Развёртывание и откат
+
+- Перед развёртыванием: OTA pi2 — `IDLE`, активный A, разрешения переключения нет. Значит, запись слота не начиналась и DEV Deploy pi2 разрешён.
+- Снимки «до»: [`hw/pi1-before.json`](hw/pi1-before.json), [`hw/pi2-before.json`](hw/pi2-before.json) (`slot_guard`); конфигурация приложения — [`hw/*-config-before.txt`](hw).
+- Порядок: pi1 → проверка смешанной пары (pi1 новый, pi2 прежний: session, stream, health — PASS) → pi2. Обе службы READY, без перезапусков 40 с.
+- Откат и повторное развёртывание на каждой плате ([`hw/rollback-pi1.txt`](hw/rollback-pi1.txt), [`hw/rollback-pi2.txt`](hw/rollback-pi2.txt)): `rollback` → `g37adc72c2bb1` READY, `deploy` → `a0ba631` READY. Хеш дерева ревизий `/var/lib/sheregesh/config` (7 файлов), состояние (`current = confirmed = r000001`) и `~/.config/sheregesh` совпадают на всех этапах; полей `video_*` в ревизиях нет — источник по умолчанию **synthetic**.
+
+### 5.3. Физические испытания (синтетический режим) — сравнение с S3.1-VIDEO
+
+| № | Критерий | Результат | Доказательство |
+|---|---|---|---|
+| 1 | Приложение запускается без ошибок | PASS — службы READY; записей журнала уровня err за 90 мин нет на обеих платах | `deploy-*.log`, журнал |
+| 2 | Роли сохранены | PASS — `console.role`/`remote.role`, отпечатки идентичности совпадают со снимком «до» | `hw/*-unchanged-compare.txt` |
+| 3 | SyntheticSource работает | PASS | `video/stream.json` |
+| 4 | Защищённый видеоканал поднимается | PASS — TLSv1.3, `urn:sheregesh:remote:…`, `tls1.3-mutual` | `video/session.json` |
+| 5 | Приём и декодирование ≈ 30 к/с | PASS — 29,79 и 29,91 к/с (S3.1: 29,89) | `video/`, `final-video/stream.json` |
+| 6 | Телеметрия вместе с видео | PASS — 2,16 сообщ./с, потерь событий 0, `seq_gaps` 0 (S3.1: то же) | `video/telemetry.json` |
+| 7 | Health обеих ролей | PASS — 15/15 и 14/14 | `link/health.json`, `final-link/` |
+| 8 | Нет ошибок, перезапусков, остатков GStreamer | PASS — NRestarts 0, по одному `gst-launch-1.0` на плате, `leftovers` PASS (в т. ч. после сценариев восстановления) | `video-recovery/`, `final-video/leftovers.json` |
+| 9 | Нет новых портов | PASS — `ports`: pi2 — 22, 7443, 7444; pi1 — 22 (как в S3.1-VIDEO); `no-plain`: UDP-видео нет | `link/ports.json`, `video/no-plain.json` |
+| 10 | Deploy и rollback не повреждают конфигурацию | PASS | §5.2 |
+| 11 | Нет UVC-устройства | PASS (без устройства) | §5.4 |
+| 12 | Системные узлы video не мешают обнаружению | PASS | §5.4 |
+
+Сценарии восстановления и безопасности (как в S3.1-VIDEO), [`hw/video-recovery/`](hw/video-recovery), [`hw/link-outsider/`](hw/link-outsider): `unauth`, `ctl-loss`, `sender-kill`, `restart`, `leftovers`, `outsider` — PASS; `identity` PASS; `version` — PASS после исправления инструмента (§5.6).
+
+**Фактические показатели** (60 с, `resources`, `latency`):
+
+| Показатель | S3.3 (`a0ba631`) | S3.1-VIDEO |
+|---|---|---|
+| Отправлено / принято / декодировано, к/с | 31,36 / 29,79 / 29,79 | 31,45 / 29,89 / 29,89 |
+| Битрейт, кбит/с | 2008 | 2015 |
+| Разрывы, потери, ошибки RTP, перезапуски декодера | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+| Транспорт pi2→pi1, мс p50 / p95 / max | 1,77 / 33,2 / 39,2 | 1,71 / 34,5 / 43,2 |
+| Приёмная часть pi1, мс p50 / p95 | 22,8 / 30,1 | 22,6 / 30,5 |
+| pi1: ЦП (4 ядра), ОЗУ, температура, троттлинг | 15,4 %, 352 МБ, 49,1→48,7 °C, 0x0 | 15,4 %, 339 МБ, 51,1→50,6 °C, 0x0 |
+| pi1: приложение / декодер, % ядра, RSS | 30,5 % 215 МБ / 27,9 % 16 МБ | 29,5 % 204 МБ / 27,9 % 16 МБ |
+| pi2: ЦП (4 ядра), ОЗУ, температура, троттлинг | 20,3 %, 170 МБ, 54,0→55,0 °C, 0x0 | 20,3 %, 164 МБ, 52,5→52,1 °C, 0x0 |
+| pi2: агент / генератор+кодер, % ядра, RSS | 2,8 % 31 МБ / 74,6 % 22 МБ | 2,9 % 29 МБ / 75,6 % 22 МБ |
+
+Отличия в пределах разброса прогонов. RSS приложения пульта +10 МБ — модуль `videoinput` и новые элементы QML.
+
+### 5.4. V4L2 без устройства на Pi 4 (H1/H2 без устройства)
+
+[`hw/v4l2-discovery.txt`](hw/v4l2-discovery.txt): от `sheregesh-ui` на обеих платах `python3 -m sheregesh.videoinput` с опросом и без. 14 системных узлов (`bcm2835-codec` ×5, `bcm2835-isp` ×8, `rpi-hevc-dec`) классифицированы как вспомогательные, ошибок нет, код 0; устройств захвата нет; `open_uvc()` → «UVC device not found».
+
+- pi1 ([`hw/pi1-console-no-uvc.txt`](hw/pi1-console-no-uvc.txt)): `VideoReceiver` пульта с источником UVC (без дисплея, offscreen). Состояние `no-device`, режим `local-input`, ошибка «UVC device not found»; процессов `v4l2src` 0 во время и после. Настройки pi1 при этом не менялись.
+- pi2 ([`hw/pi2-remote-no-uvc.txt`](hw/pi2-remote-no-uvc.txt)): временный экземпляр удалённого блока `--video-source uvc` только на 127.0.0.1 (порты 7643/7644, свой файл состояния). Работает 12 с, «VIDEO unavailable: UVC device not found», дочерних GStreamer нет; после остановки процессов и портов не осталось, рабочая служба не перезапускалась.
+
+### 5.5. Совместимость с OTA
+
+- Источник видео на обеих платах — **synthetic** (полей `video_*` в конфигурации нет). Сертификаты, роли, TLS и видеотранспорт не менялись (`slot_guard compare --mode unchanged`: идентичность, слоты, `autoboot.txt`, система A — PASS; ни одного записанного сектора на p1–p5; ожидаемые расхождения только `deploy.status` — новый выпуск — и InvocationID службы роли — перезапуск развёртыванием).
+- OTA не включался: pi2 — `IDLE`, разрешения нет, tryboot/confirm не вызывались, watchdog не трогался. Пакет `0.1.1792865618` не изменился: SHA-256 `f6e192346705c21c19a394da09f2e7d221d02c176adc02a3e727f0f1e8046edb`.
+- Влияние на будущий preflight OTA — в [`../s3.2-ota/preflight/PREFLIGHT.md`](../s3.2-ota/preflight/PREFLIGHT.md) §8.
+
+### 5.6. Дефекты и исправления
+
+| Дефект | Статус |
+|---|---|
+| `check_link version`: временный сервер протокола 2.0 занимал видеопорт 7444 рабочей службы (с S3.1-VIDEO, `4d3e9b6`; в паре с видео не запускался) | исправлено: временному серверу `--no-video`; PASS |
+| **app-stop** (OPEN с S3.1): останов пульта → код 143 → юнит `failed`. Воспроизводится и с `a0ba631` (журнал pi1, 20:59 — останов выпуска `a0ba631`). Причина: юнит запускает `/usr/bin/sheregesh-notify-relay` — ретранслятор **образа** `57e8fe4` (`/usr/lib/sheregesh`, sha 72eefcb3…), исправленный ретранслятор `02a9b64` есть в выпуске DEV (sha c991991c…), но DEV Deploy его не доставляет | **OPEN**; исправление придёт только с образом (`a7f1b74`, OTA-пакет `f6e19234…` — проверено на образе диска). К S3.3 не относится |
+| H10: удалённый блок с UVC требует `--video-source uvc` в юните | BLOCKED (юниты не менялись) |
+
+### 5.7. Итог
+
+S3.3 в `v2` (`a0ba631`). Автоматические тесты проходят. Функции S3.1 на платах не деградировали. Синтетический режим, канал, видео, телеметрия, health, порты, deploy/rollback — PASS. Работа без устройства и рядом с системными узлами V4L2 — PASS. Аппаратная поддержка UVC **не подтверждена**: H1–H9 с устройством NOT TESTED, H10 BLOCKED, H11 вне 1.0.
