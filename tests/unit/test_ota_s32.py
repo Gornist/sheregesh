@@ -233,7 +233,7 @@ def test_remote_role_gates(tmp_path):
     (b.persistent / "home/sheregesh-ui/.config/sheregesh/remote.role").write_text("urn\n")
     b.status_files = {"/run/sheregesh-remote/link-status.json": {
         "connected": True, "tls": True, "peer": {"addr": "192.168.1.92"},
-        "video": {"port": 7444, "transport": "tls1.3-mutual", "active": True}}}
+        "video": {"port": 7444, "transport": "tls1.3-mutual", "active": True, "frames": 900, "sender_fps_5s": 30.0}}}
     b.enable()
     assert b.request("install", b.payload("1.1.0"))[0]["result"] == "OK"
     assert b.request("tryboot")[0]["result"] == "OK"
@@ -274,3 +274,68 @@ def test_var_seed_fills_missing_and_keeps_existing(tmp_path):
     assert (dst / "lib/sheregesh/config/active").read_text() == "carried-r8\n"
     assert (dst / "lib/systemd/keep-me").read_text() == "existing\n"
     assert not slots.VarSeeder(slots.Paths()).fill_from_seed(tmp_path / "absent.tar.gz", dst)
+
+
+def _install_like_old_agent(b):
+    """Состояние после установки агентом 57e8fe4: отпечатков (expect) нет."""
+    p = b.persistent / "sheregesh-ota/state.json"
+    st = json.loads(p.read_text())
+    st.pop("expect", None)
+    p.write_text(json.dumps(st))
+
+
+def test_confirm_after_old_agent_install_checks_presence_not_comparison(tmp_path):
+    """Первая установка на платах — агентом образа 57e8fe4 без expect: подтверждение не должно быть невозможным,
+    но обязательна целостность (machine-id, ключ хоста, authorized_keys, ключ и сертификат устройства, роль)."""
+    b = Board(tmp_path)
+    (b.persistent / "home/sheregesh-ui/.config/sheregesh").mkdir(parents=True)
+    (b.persistent / "home/sheregesh-ui/.config/sheregesh/console.role").write_text("urn\n")
+    (b.persistent / "home/sheregesh-ui/.config/sheregesh/link.json").write_text("{}\n")
+    (b.persistent / "home/sheregesh-ui/.local/share/sheregesh/link/device.key").write_text("K\n")
+    b.status_files = {"/run/sheregesh-ui/link-status.json": {"phase": "connected", "tls": "TLSv1.3"},
+                      "/run/sheregesh-ui/ui-state.json": {"video": {"mode": "remote-tls", "state": "playing",
+                                                                    "decoded_fps_5s": 30.0}}}
+    b.enable()
+    assert b.request("install", b.payload("1.1.0"))[0]["result"] == "OK"
+    _install_like_old_agent(b)
+    assert b.request("tryboot")[0]["result"] == "OK"
+    b.firmware_boot(tryboot_flag=True)
+    b.agent().on_boot()
+    res, _ = b.request("confirm")
+    ids = {c["id"]: c["status"] for c in res["checks"]}
+    assert res["result"] == "OK", [c for c in res["checks"] if c["status"] != "PASS"]
+    assert ids["present.machine_id"] == ids["present.device_key"] == ids["present.authorized_keys"] == "PASS"
+    assert not any(k.startswith("same.") for k in ids)
+
+
+def test_old_agent_install_with_missing_key_is_not_confirmed(tmp_path):
+    b = Board(tmp_path)
+    (b.persistent / "home/sheregesh-ui/.config/sheregesh").mkdir(parents=True)
+    (b.persistent / "home/sheregesh-ui/.config/sheregesh/remote.role").write_text("urn\n")
+    b.status_files = {"/run/sheregesh-remote/link-status.json": {"connected": True, "tls": True, "video": {
+        "port": 7444, "transport": "tls1.3-mutual", "active": True, "frames": 10, "sender_fps_5s": 30.0}}}
+    b.enable()
+    assert b.request("install", b.payload("1.1.0"))[0]["result"] == "OK"
+    _install_like_old_agent(b)
+    assert b.request("tryboot")[0]["result"] == "OK"
+    b.firmware_boot(tryboot_flag=True)
+    b.agent().on_boot()
+    (b.persistent / "shared/etc/ssh/ssh_host_ed25519_key.pub").unlink()          # ключ хоста пропал
+    res, _ = b.request("confirm")
+    failed = [c["id"] for c in res["checks"] if c["status"] != "PASS" and c["mandatory"]]
+    assert res["result"] == "FAILED" and "present.ssh_host_key" in failed and "present.device_key" in failed
+
+
+def test_remote_video_gate_requires_frames_not_just_listening(tmp_path):
+    b = Board(tmp_path)
+    (b.persistent / "home/sheregesh-ui/.config/sheregesh").mkdir(parents=True)
+    (b.persistent / "home/sheregesh-ui/.config/sheregesh/remote.role").write_text("urn\n")
+    b.status_files = {"/run/sheregesh-remote/link-status.json": {"connected": True, "tls": True, "video": {
+        "port": 7444, "transport": "tls1.3-mutual", "active": False, "frames": 0, "sender_fps_5s": 0.0}}}
+    b.enable()
+    assert b.request("install", b.payload("1.1.0"))[0]["result"] == "OK"
+    assert b.request("tryboot")[0]["result"] == "OK"
+    b.firmware_boot(tryboot_flag=True)
+    b.agent().on_boot()
+    res, _ = b.request("confirm")
+    assert res["result"] == "FAILED" and "video" in res["reason"]                # сервер слушает, но кадров нет

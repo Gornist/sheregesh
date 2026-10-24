@@ -117,7 +117,17 @@ def gates(layout, state, probe: Probe, lab_video=True):
     add("persistent", ",rw" in f",{pers.split(' ', 1)[-1]}" and "/home" in home and "/shared/etc/ssh" in ssh_dir,
         f"/persistent {pers!r}; /home {home!r}; /etc/ssh {ssh_dir!r}")
     now = probe.now_expect()
-    for k in ("role", "machine_id", "device_key", "device_crt", "link_json", "ssh_host_key", "authorized_keys"):
+    keys = ("role", "machine_id", "device_key", "device_crt", "link_json", "ssh_host_key", "authorized_keys")
+    if not exp:
+        # Установку выполнил агент образа без снятия отпечатков (57e8fe4 — первая установка на платах): сравнивать не
+        # с чем. Обязательна целостность — всё на месте; сравнение «до/после» — по снимку процедуры (preflight).
+        always = ("machine_id", "ssh_host_key", "authorized_keys")
+        for k in keys:
+            need = k in always or (now.get("role") in ("console", "remote") and k != "role")
+            add(f"present.{k}", now.get(k) is not None or not need,
+                f"{'есть' if now.get(k) is not None else 'нет'} (отпечатков установки нет — установка агентом старого "
+                f"образа; сравнение с снимком «до» выполняет процедура)", mandatory=need)
+    for k in keys if exp else ():
         if exp.get(k) is None and k not in ("role",):
             add(f"same.{k}", now.get(k) is None, "не было до обновления — нет и после" if now.get(k) is None
                 else "появилось после обновления", mandatory=k in ("machine_id", "ssh_host_key", "authorized_keys"))
@@ -155,9 +165,13 @@ def gates(layout, state, probe: Probe, lab_video=True):
         add("mtls", bool(ls.get("connected")) and bool(ls.get("tls")),
             f"сеанс {'есть' if ls.get('connected') else 'нет'}, {(ls.get('peer') or {}).get('addr')}")
         if lab_video:
+            # Не только «сервер слушает»: есть видеосеанс с пультом и генератор выдал кадры (счётчик блока).
+            # Приём и декодирование на пульте проверяются независимо процедурой (check_video_link с pi1).
             v = ls.get("video") or {}
-            add("video", v.get("port") == 7444 and v.get("transport") == "tls1.3-mutual",
-                f"видеосервер {v.get('transport')} порт {v.get('port')}, сеанс {'есть' if v.get('active') else 'нет'}")
+            add("video", v.get("port") == 7444 and v.get("transport") == "tls1.3-mutual" and bool(v.get("active"))
+                and (v.get("frames") or 0) > 0 and (v.get("sender_fps_5s") or 0) > 0,
+                f"видеосервер {v.get('transport')} порт {v.get('port')}, сеанс {'есть' if v.get('active') else 'нет'}, "
+                f"кадров {v.get('frames')}, {v.get('sender_fps_5s')} к/с")
     ok = all(c["status"] == "PASS" for c in checks if c["mandatory"])
     return ok, checks
 
