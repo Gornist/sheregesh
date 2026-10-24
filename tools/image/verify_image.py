@@ -196,9 +196,9 @@ def deploy_checks(rep, root, data, dev, groups):
     if dev:
         keys = data.cat("/home/sheregesh-ui/.ssh/authorized_keys").split()
         same = len(keys) >= 2 and keys[1] in signers
-        rep.add("deploy.signers", "dev: открытый ключ подписи выпусков установлен, закрытых ключей нет",
-                signers.startswith("sheregesh-deploy namespaces=") and "PRIVATE KEY" not in signers,
-                ("ВНИМАНИЕ: ключ подписи совпадает с ключом входа" if same else "отдельный ключ подписи"))
+        rep.add("deploy.signers", "dev: отдельный открытый ключ подписи выпусков (не ключ входа), закрытых ключей нет",
+                signers.startswith("sheregesh-deploy namespaces=") and "PRIVATE KEY" not in signers and not same,
+                ("ключ подписи совпадает с ключом входа — отказ" if same else "отдельный ключ подписи"))
         rules = root.cat("/etc/polkit-1/rules.d/50-sheregesh-dev.rules")
         deploy_units = set(re.findall(r'"(sheregesh-deploy@[a-z]+\.service)"', rules))
         rep.add("deploy.polkit", "polkit: sheregesh-ui — только «start» install/rollback/factory установщика",

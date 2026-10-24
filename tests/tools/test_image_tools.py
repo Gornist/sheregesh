@@ -4,6 +4,7 @@
 import contextlib
 import io
 import json
+import os
 import re
 import struct
 import subprocess
@@ -253,7 +254,9 @@ class DeployImageTest(unittest.TestCase):
         self.assertEqual({k: v["status"] for k, v in r.items() if v["status"] != "PASS"}, {})
         self.assertIn("отдельный", r["deploy.signers"]["detail"])
         root, data = self.image_root(dev=True, signer_same=True)
-        self.assertIn("ВНИМАНИЕ", self.run_checks(root, data, True)["deploy.signers"]["detail"])
+        same = self.run_checks(root, data, True)["deploy.signers"]
+        self.assertEqual(same["status"], "FAIL")                 # ключ входа вместо ключа подписи — не принимается
+        self.assertIn("совпадает с ключом входа", same["detail"])
         root, data = self.image_root(dev=False)
         r = self.run_checks(root, data, False)
         self.assertEqual(r["deploy.absent"]["status"], "PASS")
@@ -273,3 +276,31 @@ class DeployImageTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BuildShSignerTest(unittest.TestCase):
+    """os/build.sh: dev-образ без отдельного ключа подписи (или с ключом входа вместо него) не собирается."""
+
+    def run_build(self, deploy):
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            login = Path(d) / "login.pub"
+            login.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILOGINKEYLOGINKEYLOGINKEYLOGINKEYLOGINKEY0 owner\n")
+            env = {**os.environ, "SSH_PUBKEY": str(login), "SHEREGESH_WORK": d, "OUT": d}
+            if deploy is not None:
+                f = Path(d) / "deploy.pub"
+                f.write_text(deploy if deploy != "SAME" else login.read_text())
+                env["DEPLOY_PUBKEY"] = str(f)
+            else:
+                env.pop("DEPLOY_PUBKEY", None)
+            return subprocess.run(["bash", str(ROOT / "os/build.sh"), "sheregesh-lab-dev-pi4"], env=env,
+                                  capture_output=True, text=True, timeout=60)
+
+    def test_missing_or_login_key_refused(self):
+        r = self.run_build(None)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("обязателен", r.stderr)
+        r = self.run_build("SAME")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("совпадает с ключом входа", r.stderr)

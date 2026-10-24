@@ -6,7 +6,7 @@
 #   os/build.sh [КОНФИГУРАЦИЯ]       sheregesh-lab-pi4 (строгий, по умолчанию) или sheregesh-lab-dev-pi4
 # Хост: Debian trixie / Ubuntu 24.04 arm64 (нативно), обычный пользователь с sudo только для install_deps.
 # Переменные: SSH_PUBKEY — открытый ключ для dev-варианта (обязателен для него); DEPLOY_PUBKEY — открытый ключ
-# подписи выпусков DEV deploy/OTA (S3.1-DEPLOY; по умолчанию — SSH_PUBKEY); OUT — каталог результатов
+# подписи выпусков DEV deploy/OTA (S3.1-DEPLOY; обязателен для dev, отличен от SSH_PUBKEY); OUT — каталог результатов
 # (build/image/<конфигурация>); SHEREGESH_WORK — рабочий каталог rpi-image-gen; SOURCE_DATE_EPOCH — время сборки
 # (по умолчанию — время последнего коммита); SHEREGESH_POST_ONLY=1 — только проверка и артефакты уже собранного
 # образа (отладка постобработки). Продуктивных ключей сборка не использует и не создаёт.
@@ -20,6 +20,30 @@ RIG="$WORK/rpi-image-gen"
 RIG_REF="$(tr -d '[:space:]' < "$ROOT/os/rpi-image-gen.ref")"
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --format=%ct)}"
 mkdir -p "$OUT" "$WORK"
+
+# Ключи dev-варианта — до любых загрузок и сборки: отказ сразу.
+EXTRA=()
+if [[ "$CFG" == *-dev-* ]]; then
+  [[ -s "${SSH_PUBKEY:-}" ]] || { echo "dev-вариант: задайте SSH_PUBKEY=путь/к/ключу.pub" >&2; exit 2; }
+  grep -qE '^(ssh-ed25519|ecdsa-sha2-nistp[0-9]+|ssh-rsa) [A-Za-z0-9+/=]+' "$SSH_PUBKEY" \
+    || { echo "SSH_PUBKEY: не похоже на открытый ключ" >&2; exit 2; }
+  grep -q "PRIVATE KEY" "$SSH_PUBKEY" && { echo "SSH_PUBKEY: это закрытый ключ" >&2; exit 2; }
+  EXTRA=(-- "IGconf_ssh_pubkey_user1=$(realpath "$SSH_PUBKEY")")
+  # S3.1-DEPLOY: открытый ключ подписи выпусков (DEV deploy, OTA) — отдельный от ключа входа: кража ключа входа
+  # не даёт установить код. Подстановки ключа входа нет: без DEPLOY_PUBKEY или при совпадении — отказ сборки.
+  SIGNER="${DEPLOY_PUBKEY:-}"
+  [[ -n "$SIGNER" && -s "$SIGNER" ]] || { echo "DEPLOY_PUBKEY: для dev-варианта обязателен (файл открытого ключа подписи)" >&2; exit 2; }
+  grep -q "PRIVATE KEY" "$SIGNER" && { echo "DEPLOY_PUBKEY: это закрытый ключ" >&2; exit 2; }
+  read -r ktype kbody _ < "$SIGNER"
+  [[ "$ktype" =~ ^(ssh-ed25519|ecdsa-sha2-nistp[0-9]+|sk-ssh-ed25519@openssh.com|ssh-rsa)$ && -n "$kbody" ]] \
+    || { echo "DEPLOY_PUBKEY: не похоже на открытый ключ" >&2; exit 2; }
+  read -r _ login_body _ < "$SSH_PUBKEY"
+  [[ "$kbody" != "$login_body" ]] || { echo "DEPLOY_PUBKEY совпадает с ключом входа SSH_PUBKEY — нужен отдельный ключ подписи" >&2; exit 2; }
+  SIGNERS="$ROOT/os/layer/sheregesh-dev-access.d/deploy/allowed_signers"
+  mkdir -p "$(dirname "$SIGNERS")"
+  printf 'sheregesh-deploy namespaces="sheregesh-deploy,sheregesh-ota,sheregesh-ota-enable" %s %s\n' \
+    "$ktype" "$kbody" > "$SIGNERS"
+fi
 
 echo "== rpi-image-gen $RIG_REF"
 if [[ ! -d "$RIG/.git" ]]; then
@@ -35,27 +59,6 @@ PKGS="$ROOT/os/layer/sheregesh-lab.d/pkgs"
 rm -rf "$PKGS"
 python3 -I "$ROOT/tools/image/build_deb.py" --out "$PKGS" | tee "$OUT/deb.txt"
 
-EXTRA=()
-if [[ "$CFG" == *-dev-* ]]; then
-  [[ -s "${SSH_PUBKEY:-}" ]] || { echo "dev-вариант: задайте SSH_PUBKEY=путь/к/ключу.pub" >&2; exit 2; }
-  grep -qE '^(ssh-ed25519|ecdsa-sha2-nistp[0-9]+|ssh-rsa) [A-Za-z0-9+/=]+' "$SSH_PUBKEY" \
-    || { echo "SSH_PUBKEY: не похоже на открытый ключ" >&2; exit 2; }
-  grep -q "PRIVATE KEY" "$SSH_PUBKEY" && { echo "SSH_PUBKEY: это закрытый ключ" >&2; exit 2; }
-  EXTRA=(-- "IGconf_ssh_pubkey_user1=$(realpath "$SSH_PUBKEY")")
-  # S3.1-DEPLOY: открытый ключ подписи выпусков (DEV deploy, OTA). Рекомендуется отдельный от ключа входа
-  # (DEPLOY_PUBKEY): тогда кража ключа входа не даёт установить код. Без него — ключ входа (с предупреждением).
-  SIGNER="${DEPLOY_PUBKEY:-$SSH_PUBKEY}"
-  [[ -s "$SIGNER" ]] || { echo "DEPLOY_PUBKEY: нет файла $SIGNER" >&2; exit 2; }
-  grep -q "PRIVATE KEY" "$SIGNER" && { echo "DEPLOY_PUBKEY: это закрытый ключ" >&2; exit 2; }
-  read -r ktype kbody _ < "$SIGNER"
-  [[ "$ktype" =~ ^(ssh-ed25519|ecdsa-sha2-nistp[0-9]+|sk-ssh-ed25519@openssh.com|ssh-rsa)$ && -n "$kbody" ]] \
-    || { echo "DEPLOY_PUBKEY: не похоже на открытый ключ" >&2; exit 2; }
-  SIGNERS="$ROOT/os/layer/sheregesh-dev-access.d/deploy/allowed_signers"
-  mkdir -p "$(dirname "$SIGNERS")"
-  printf 'sheregesh-deploy namespaces="sheregesh-deploy,sheregesh-ota,sheregesh-ota-enable" %s %s\n' \
-    "$ktype" "$kbody" > "$SIGNERS"
-  [[ -n "${DEPLOY_PUBKEY:-}" ]] || echo "ПРЕДУПРЕЖДЕНИЕ: ключ подписи выпусков = ключ входа SSH (задайте DEPLOY_PUBKEY)" >&2
-fi
 
 echo "== сборка образа $CFG (SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH)"
 START=$(date -u +%FT%TZ)

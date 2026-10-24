@@ -25,7 +25,7 @@ mmdebstrap:
         $1/etc/polkit-1/rules.d/50-sheregesh-dev.rules
     - |-
       # S3.1-DEPLOY: открытый ключ подписи выпусков владельца (allowed_signers ssh-keygen -Y). Файл готовит
-      # os/build.sh из DEPLOY_PUBKEY (или ключа входа) — закрытого ключа в образе и в CI нет. Без него
+      # os/build.sh из DEPLOY_PUBKEY (отдельный от ключа входа) — закрытого ключа в образе и в CI нет. Без него
       # DEV deploy и агент OTA не запускаются (ConditionPathExists), поэтому dev-образ без ключа не собирается.
       signers="$IGconf_sheregesh_assetdir/../sheregesh-dev-access.d/deploy/allowed_signers"
       test -s "$signers" || { echo "sheregesh-dev-access: нет $signers (os/build.sh, DEPLOY_PUBKEY)" >&2; exit 1; }

@@ -14,7 +14,7 @@
 Плата за раз — одна (вторая продолжает работать). Адрес: --host, переменная SHEREGESH_PI1_HOST/SHEREGESH_PI2_HOST,
 кэш ~/.cache/sheregesh/boards.json или поиск по MAC в локальной сети; перед любым действием сверяется серийный номер
 платы — DHCP не подменит pi1 на pi2. Вход — sheregesh-ui по ключу SSH (как раньше); ключ подписи выпусков —
---key, SHEREGESH_DEPLOY_KEY, ~/.ssh/sheregesh-deploy или ~/.ssh/id_ed25519 (закрытый ключ не покидает Mac:
+--key, SHEREGESH_DEPLOY_KEY или ~/.ssh/sheregesh-deploy, отдельный от ключа входа (закрытый ключ не покидает Mac:
 подпись делается локально ssh-keygen -Y sign, на плату уходят только пакет и подпись).
 Пакет собирается из закоммиченного состояния HEAD; незакоммиченные изменения в него НЕ входят (предупреждение).
 """
@@ -91,10 +91,10 @@ def build_release(rev="HEAD"):
 
 
 def signing_key(arg):
-    for k in (arg, os.environ.get("SHEREGESH_DEPLOY_KEY"), "~/.ssh/sheregesh-deploy", "~/.ssh/id_ed25519"):
+    for k in (arg, os.environ.get("SHEREGESH_DEPLOY_KEY"), "~/.ssh/sheregesh-deploy"):   # ключ входа не подставляется
         if k and Path(k).expanduser().exists():
             return Path(k).expanduser()
-    raise CliError("нет ключа подписи: --key или SHEREGESH_DEPLOY_KEY")
+    raise CliError("нет ключа подписи: --key, SHEREGESH_DEPLOY_KEY или ~/.ssh/sheregesh-deploy")
 
 
 # ---------------------------------------------------------------- платы

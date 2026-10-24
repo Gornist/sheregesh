@@ -34,7 +34,7 @@ jobs:
         variant: [sheregesh-lab-pi4, sheregesh-lab-dev-pi4]
     env:
       DEV_PUBKEY: ${{ vars.SHEREGESH_DEV_PUBKEY }}
-      # S3.1-DEPLOY: открытый ключ подписи выпусков (DEV deploy, OTA); без него — ключ входа (предупреждение в журнале).
+      # S3.1-DEPLOY: открытый ключ подписи выпусков (DEV deploy, OTA), отдельный от ключа входа; для dev обязателен.
       DEPLOY_PUBKEY_TEXT: ${{ vars.SHEREGESH_DEPLOY_PUBKEY }}
     steps:
       - name: Пропуск dev-варианта без открытого ключа
@@ -42,6 +42,9 @@ jobs:
         run: |
           if [[ "${{ matrix.variant }}" == *-dev-* && -z "$DEV_PUBKEY" ]]; then
             echo "skip=1" >> "$GITHUB_OUTPUT"; echo "::notice::dev-вариант пропущен: нет vars.SHEREGESH_DEV_PUBKEY"
+          fi
+          if [[ "${{ matrix.variant }}" == *-dev-* && -n "$DEV_PUBKEY" && -z "$DEPLOY_PUBKEY_TEXT" ]]; then
+            echo "::error::нет vars.SHEREGESH_DEPLOY_PUBKEY: dev-образ без отдельного ключа подписи не собирается"; exit 1
           fi
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         if: steps.gate.outputs.skip != '1'
@@ -71,9 +74,7 @@ jobs:
         run: |
           if [[ "${{ matrix.variant }}" == *-dev-* ]]; then
             printf '%s\n' "$DEV_PUBKEY" > "$RUNNER_TEMP/dev.pub"; export SSH_PUBKEY="$RUNNER_TEMP/dev.pub"
-            if [[ -n "$DEPLOY_PUBKEY_TEXT" ]]; then
-              printf '%s\n' "$DEPLOY_PUBKEY_TEXT" > "$RUNNER_TEMP/deploy.pub"; export DEPLOY_PUBKEY="$RUNNER_TEMP/deploy.pub"
-            fi
+            printf '%s\n' "$DEPLOY_PUBKEY_TEXT" > "$RUNNER_TEMP/deploy.pub"; export DEPLOY_PUBKEY="$RUNNER_TEMP/deploy.pub"
           fi
           OUT="$PWD/build/image/${{ matrix.variant }}" os/build.sh "${{ matrix.variant }}"
       - name: Сводка
