@@ -50,6 +50,8 @@ def test_remote_video_decoded_and_reconnects_after_drop(qapp, lab):
         m = rx.metrics()
         assert m["mode"] == "remote-tls" and m["frames_decoded"] > 30 and m["decoded_fps_5s"] > 5
         assert m["link"]["tls"] == "TLSv1.3" and m["link"]["stream_sps"]["width"] == 1280
+        dl = m["link"]["decode_latency_ms"]                                 # запись кадра в декодер → кадр RGBx
+        assert dl["samples"] > 10 and 0 <= dl["p50"] < 500 and dl["desync_resets"] == 0
         srv.drop("сеанс управления завершён")                               # блок закрыл видеосеанс
         assert wait_until(lambda: rx.metrics()["sessions"] >= 2 and rx.state == "playing", 20), rx.metrics()
         rx.configure(None, None)                                            # управление потеряно — видео выключено

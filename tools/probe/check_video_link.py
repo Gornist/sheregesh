@@ -189,63 +189,22 @@ def sc_stream(ch, rh, window=20.0):
     return {**res, "verdict": "PASS" if ok else "FAIL"}
 
 
-TRACE = ("GST_DEBUG='GST_TRACER:7' GST_TRACERS='latency(flags=pipeline+element)' GST_DEBUG_NO_COLOR=1 "
-         "timeout 20 gst-launch-1.0 -q {pipe} 2>&1 >/dev/null | grep -E '^.*(element-latency|: latency,)' | head -4000")
-ENC = ("videotestsrc is-live=true num-buffers=240 pattern=smpte ! video/x-raw,width=1280,height=720,framerate=30/1 ! "
-       "timeoverlay ! videoconvert ! video/x-raw,format=I420 ! v4l2h264enc "
-       "extra-controls=controls,repeat_sequence_header=1,video_bitrate=2000000,h264_i_frame_period=30 ! "
-       "video/x-h264,level=(string)4 ! h264parse ! rtph264pay config-interval=1 pt=96 ! rtpstreampay ! fakesink sync=false")
-DEC = ("videotestsrc is-live=true num-buffers=240 pattern=smpte ! video/x-raw,width=1280,height=720,framerate=30/1 ! "
-       "videoconvert ! video/x-raw,format=I420 ! v4l2h264enc "
-       "extra-controls=controls,repeat_sequence_header=1,video_bitrate=2000000,h264_i_frame_period=30 ! "
-       "video/x-h264,level=(string)4 ! h264parse ! rtph264pay config-interval=1 pt=96 ! rtpstreampay ! "
-       "rtpstreamdepay ! rtpjitterbuffer latency=50 ! rtph264depay ! h264parse ! v4l2h264dec ! videoscale ! "
-       "video/x-raw,width=640,height=360 ! videoconvert ! video/x-raw,format=RGBx,width=640,height=360 ! "
-       "fakesink sync=false")
-
-
-def _trace(host, pipe):
-    import re
-    out = ssh(host, TRACE.format(pipe=pipe), timeout=60)
-    pipe_lat, elem = [], {}
-    for ln in out.splitlines():
-        t = re.search(r"time=\(guint64\)(\d+)", ln)
-        if not t:
-            continue
-        ms = int(t.group(1)) / 1e6
-        if "element-latency" in ln:
-            e = re.search(r"element=\(string\)([\w-]+)", ln)
-            if e:
-                elem.setdefault(re.sub(r"\d+$", "", e.group(1)), []).append(ms)
-        else:
-            pipe_lat.append(ms)
-    med = lambda v: round(sorted(v)[len(v) // 2], 2) if v else None                # noqa: E731
-    return {"pipeline_ms_p50": med(pipe_lat), "pipeline_ms_max": round(max(pipe_lat), 2) if pipe_lat else None,
-            "samples": len(pipe_lat), "elements_ms_p50": {k: med(v) for k, v in sorted(elem.items())}}
-
-
 def sc_latency(ch, rh):
+    """Измеренные на живом потоке части тракта. Трассировщик latency GStreamer на конвейере с v4l2h264enc записей не
+    выдаёт (проверено на pi2) — кодирование на pi2 не измеряется и не подменяется оценкой."""
     if not wait(playing(ch), 60):
         return {"verdict": "FAIL", "reason": "нет видео"}
-    time.sleep(10)
+    time.sleep(20)
     link = cv(ch).get("link") or {}
-    tr = link.get("transport_latency_ms") or {}
-    enc = _trace(rh, ENC)                            # pi2: источник → кодер → RTP (параллельно с живым сеансом)
-    dec = _trace(ch, DEC)                            # pi1: тот же путь + приёмная часть; приёмная — по элементам
-    recv_part = sum(v for k, v in (dec["elements_ms_p50"] or {}).items() if v is not None and k in
-                    ("rtpstreamdepay", "rtpjitterbuffer", "rtph264depay", "h264parse", "v4l2h264dec", "videoconvert",
-                     "videoscale")) if dec["elements_ms_p50"] else None
-    est = None
-    if enc["pipeline_ms_p50"] is not None and tr.get("p50") is not None and recv_part is not None:
-        est = round(enc["pipeline_ms_p50"] + tr["p50"] + recv_part, 1)
-    res = {"transport_pi2_to_pi1_ms": tr, "ping_rtt_ms": link.get("ping_rtt_ms"),
-           "sender_pipeline_pi2": enc, "decode_pipeline_pi1": dec, "receiver_part_ms_p50_sum": recv_part,
-           "end_to_end_estimate_ms_p50": est,
-           "method": "транспорт — живой поток (время отправки каждого пакета, смещение часов по PING/PONG с мин. RTT); "
-                     "конвейеры — трассировщик latency GStreamer в отдельных прогонах; сумма — оценка, не измерение "
-                     "«стекло-стекло» (без дисплея и камеры)"}
-    ok = tr.get("samples", 0) > 50 and tr.get("p50") is not None and enc["samples"] > 0 and dec["samples"] > 0
-    return {**res, "verdict": "PASS" if ok else ("ERROR" if not enc["samples"] or not dec["samples"] else "FAIL")}
+    tr, dec = link.get("transport_latency_ms") or {}, link.get("decode_latency_ms") or {}
+    part = round(tr["p50"] + dec["p50"], 1) if tr.get("p50") is not None and dec.get("p50") is not None else None
+    res = {"transport_pi2_to_pi1_ms": tr, "receiver_pi1_ms": dec, "ping_rtt_ms": link.get("ping_rtt_ms"),
+           "measured_part_p50_ms": part, "not_measured": "захват и кодирование на pi2 (videotestsrc → v4l2h264enc → RTP)",
+           "method": "транспорт — время отправки каждого пакета блоком и время приёма пультом, смещение часов по "
+                     "PING/PONG с минимальным RTT; приёмная часть — запись последнего пакета кадра в stdin декодера → "
+                     "выход кадра RGBx (те же часы пульта): jitterbuffer 50 мс, депакетизация, v4l2h264dec, масштаб, цвет"}
+    ok = tr.get("samples", 0) > 50 and dec.get("samples", 0) > 50 and dec.get("desync_resets", 1) == 0
+    return {**res, "verdict": "PASS" if ok else "FAIL"}
 
 
 SAMPLE = ("head -1 /proc/stat; grep -E '^cpu[0-9]' /proc/stat; grep -E 'MemTotal|MemAvailable' /proc/meminfo; "

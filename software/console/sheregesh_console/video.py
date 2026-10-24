@@ -232,6 +232,10 @@ class VideoReceiver(QObject):
                     self._seq += full
                     self._last_frame_t = now
                     self._decoded.extend([now] * full)
+                client = self._client
+                if client is not None:
+                    for _ in range(full):
+                        client.frame_decoded(now)
 
     # ---------- основной поток: таймер ----------
     def _set_state(self, state):

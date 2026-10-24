@@ -388,6 +388,20 @@ class VideoClient:
         self.offsets = deque(maxlen=20)               # (rtt, смещение часов блок−пульт)
         self.frame_times = deque(maxlen=300)
         self._last_seq = None
+        # Задержка приёмной части на живом потоке, по одним часам: момент записи последнего пакета кадра в stdin
+        # декодера → момент выхода кадра RGBx (frame_decoded). Учёт — после первого SPS (с ним приходит IDR):
+        # кадры до ключевого декодер не выдаёт.
+        self.written = deque(maxlen=120)
+        self.decode_latency = deque(maxlen=600)
+        self.decode_desync = 0
+
+    def frame_decoded(self, t):
+        """Вызывает читатель декодера на каждый готовый кадр (тот же процесс, time.monotonic)."""
+        if self.written:
+            self.decode_latency.append((t - self.written.popleft()) * 1000)
+        if len(self.written) > 60:                        # декодер отстал/выбросил кадры — очередь не сопоставима
+            self.decode_desync += 1
+            self.written.clear()
 
     def key(self):
         return (self.host, self.port)
@@ -419,7 +433,10 @@ class VideoClient:
                 "received_fps_5s": round(len(recent) / 5.0, 1) if recent else 0.0,
                 "transport_latency_ms": {"p50": _pct(lat, 0.5), "p95": _pct(lat, 0.95), "max": round(max(lat), 2)
                                          if lat else None, "samples": len(lat)},
-                "ping_rtt_ms": round(best[0] * 1000, 2) if best else None}
+                "ping_rtt_ms": round(best[0] * 1000, 2) if best else None,
+                "decode_latency_ms": {"p50": _pct(list(self.decode_latency), 0.5),
+                                      "p95": _pct(list(self.decode_latency), 0.95), "samples": len(self.decode_latency),
+                                      "desync_resets": self.decode_desync}}
 
     def connect(self):
         raw = socket.create_connection((self.host, self.port), timeout=ACCEPT_TIMEOUT_S)
@@ -491,6 +508,8 @@ class VideoClient:
         if marker:
             self.st["frames"] += 1
             self.frame_times.append(time.monotonic())
+            if self.sps is not None:
+                self.written.append(time.monotonic())
             off = self.offset()
             if off is not None:
                 self.latency.append((time.time() - (sent - off)) * 1000)
