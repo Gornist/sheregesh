@@ -261,6 +261,15 @@ def main():
             check("новый слот: установщик выставляет время коммита", "os.utime(dst, (stamp, stamp))" in inst)
             conf = (mnt / "newsys/usr/lib/sheregesh/software/sheregesh/update/confirm.py").exists()
             check("новый слот: критерии подтверждения confirm.py", conf)
+            # pi2, 2026-10-24: агент (root) звал health без --link-config → «~» = /root → confirm FAILED. Вызов
+            # проверяется исполнением Probe.health кода нового слота с подменённым запуском, не поиском строки.
+            probe = sh("python3", "-I", "-c", "import json, subprocess, sys; from pathlib import Path; "
+                       f"sys.path.insert(0, '{mnt}/newsys/usr/lib/sheregesh/software'); "
+                       "from sheregesh.update import confirm; c = []; "
+                       "confirm.Probe(Path('/'), lambda cmd, **k: (c.append(cmd), subprocess.CompletedProcess("
+                       "cmd, 0, '{}', ''))[1]).health('remote'); print(json.dumps(c[-1]))", check_rc=False) if conf else ""
+            check("новый слот: confirm — health с профилем пользователя стенда, не /root",
+                  "/home/sheregesh-ui/.config/sheregesh/link.json" in probe and "--role" in probe, probe[-160:])
             units = {u: hashlib.sha256((mnt / f"newsys/usr/lib/systemd/system/{u}").read_bytes()).hexdigest()
                      for u in manifest.get("units", {})}
             check("новый слот: юниты = манифест", units == manifest.get("units") and len(units) >= 9,
