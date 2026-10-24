@@ -13,7 +13,7 @@
   app-stop | app-kill | app-restart   штатная остановка, SIGKILL приложения, перезапуск через systemd
   watchdog-freeze  SIGSTOP приложения → WatchdogSec → перезапуск; не остаётся процессов старой группы, tty1 свободен
   relay-kill-frozen  приложение заморожено, SIGKILL ретранслятора → не остаётся ни cage, ни приложения (ac64aad)
-  deploy-good      shdeploy deploy (HEAD) → OK, служба работает из выпуска (SHEREGESH_RELEASE в окружении)
+  deploy-good      shdeploy deploy (HEAD) → OK, служба работает из выпуска (строка launcher в журнале)
   deploy-good2     второй исправный выпуск (временный коммит: только комментарий) → OK, предыдущий = первый
   deploy-bad-start выпуск, падающий при старте (временный коммит, не публикуется) → ROLLED_BACK, прежний выпуск
   deploy-crash-window  выпуск, падающий через 15 с после READY → ROLLED_BACK
@@ -129,10 +129,16 @@ def state(host):
 
 
 def app_release(host):
-    """Выпуск, из которого работает приложение пульта: SHEREGESH_RELEASE в окружении процесса (тот же пользователь)."""
-    _, out, _ = ssh(host, "p=$(pgrep -f '^/usr/bin/python3 -s -m sheregesh_console' | head -1); "
-                          "[ -n \"$p\" ] && tr '\\0' '\\n' < /proc/$p/environ | grep -E '^SHEREGESH_(RELEASE|CODE_ROOT)='")
-    return dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
+    """Выпуск, из которого запущен пульт: последняя строка launcher в журнале текущей загрузки. Окружение процесса
+    (/proc/<pid>/environ) не читается даже тем же пользователем — процесс под cage/PAM недоступен для ptrace."""
+    _, out, _ = ssh(host, "journalctl -b -o cat --no-pager SYSLOG_IDENTIFIER=sheregesh-notify-relay "
+                          "| grep 'sheregesh-launcher: sheregesh_console:' | tail -1")
+    line = out.split("sheregesh_console:", 1)[-1].strip()
+    if line.startswith("выпуск "):
+        return {"SHEREGESH_RELEASE": line.split()[1], "launcher": line}
+    if line.startswith("заводской код"):
+        return {"SHEREGESH_CODE_ROOT": "/usr/lib/sheregesh", "launcher": line}
+    return {"launcher": line}
 
 
 def journal(host, since, unit="sheregesh-console", pattern="."):

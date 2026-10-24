@@ -60,7 +60,12 @@ def compile_translations(out_dir: Path = I18N) -> list[Path]:
             except (OSError, subprocess.CalledProcessError):
                 continue
         else:
-            raise RuntimeError("не найден lrelease для сборки переводов")
+            if not qm.exists():
+                raise RuntimeError("не найден lrelease для сборки переводов")
+            # На устройстве lrelease нет, .qm собран вместе с пакетом из того же коммита; .ts может оказаться
+            # «новее» лишь по времени записи файлов (выпуск DEV deploy, pi1 57e8fe4) — пульт не должен падать.
+            print(f"перевод {qm.name}: lrelease нет, используется готовый .qm", file=sys.stderr, flush=True)
+            out.append(qm)
     return out
 
 
