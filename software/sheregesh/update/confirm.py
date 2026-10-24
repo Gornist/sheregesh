@@ -80,8 +80,11 @@ class Probe:
             return 0.0
 
     def health(self, role_name):
-        rc, out = self.sh("/usr/bin/sheregesh-health", "--json", *(("--role", role_name) if role_name != "standalone"
-                                                                    else ()))
+        # Агент работает от root: «~» в пути профиля по умолчанию указал бы на /root (pi2, 2026-10-24: health FAIL
+        # у здоровой платы). Профиль и сертификаты — у пользователя стенда, путь передаётся явно.
+        args = ("--role", role_name, "--link-config", str(self.root / CONFIG.relative_to("/") / "link.json")) \
+            if role_name != "standalone" else ()
+        rc, out = self.sh("/usr/bin/sheregesh-health", "--json", *args)
         try:
             return json.loads(out)
         except ValueError:
