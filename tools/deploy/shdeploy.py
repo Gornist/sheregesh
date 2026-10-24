@@ -396,6 +396,10 @@ def cmd_ota(a):
     if action == "install":
         if not a.payload:
             raise CliError("нужен --payload ФАЙЛ.shota (ota-build)")
+        h = hashlib.sha256(Path(a.payload).read_bytes()).hexdigest()
+        if a.sha256 and h != a.sha256.lower():          # поток, утверждённый владельцем, — и никакой другой
+            raise CliError(f"SHA-256 потока {h} ≠ утверждённого {a.sha256}; запись не выполняется")
+        print(f"  sha256 {h}" + (" = утверждённому" if a.sha256 else " (не сверялся: --sha256 не задан)"))
         print(f"{a.board} ({remote.host}): поток {a.payload} → неактивный слот (основной не меняется)")
         rc, last = remote.stream("sheregesh-ota-client install", a.payload)
         return 0 if last.get("result") == "OK" else 1
@@ -443,6 +447,7 @@ def main(argv=None):
         p.add_argument("--host")
         p.add_argument("--key")
         p.add_argument("--payload")
+        p.add_argument("--sha256", help="ota-install: утверждённый SHA-256 потока; иное — отказ до передачи")
     a = ap.parse_args(argv)
     try:
         if a.command == "build":

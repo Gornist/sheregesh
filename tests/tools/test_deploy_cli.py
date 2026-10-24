@@ -175,5 +175,21 @@ class DeployCliTest(unittest.TestCase):
                 ota.Payload(f, signers, "sheregesh-lab-pi4-1")
 
 
+class OtaInstallSha(unittest.TestCase):
+    def test_install_refuses_payload_with_other_sha_before_sending(self):
+        with tempfile.TemporaryDirectory() as d:
+            pl = Path(d) / "p.shota"
+            pl.write_bytes(b"SHRGOTA1\n")
+            remote = mock.Mock()
+            remote.stream.return_value = (0, {"result": "OK"})
+            argv = ["ota-install", "pi2", "--payload", str(pl)]
+            with mock.patch.object(shdeploy, "resolve", return_value=remote), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(shdeploy.main(argv + ["--sha256", "0" * 64]), 2)
+                remote.stream.assert_not_called()
+                good = hashlib.sha256(pl.read_bytes()).hexdigest()
+                self.assertEqual(shdeploy.main(argv + ["--sha256", good.upper()]), 0)
+                remote.stream.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
