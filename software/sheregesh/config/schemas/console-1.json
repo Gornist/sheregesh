@@ -14,7 +14,12 @@
           "language": {"enum": ["ru", "en"]},
           "theme": {"enum": ["light", "dark"]},
           "ui_scale": {"enum": [100, 125, 150]},
-          "screen_timeout_s": {"type": "integer", "minimum": 0, "maximum": 3600}
+          "screen_timeout_s": {"type": "integer", "minimum": 0, "maximum": 3600},
+          "video_source": {"enum": ["synthetic", "uvc", "disabled"], "$comment": "S3.3: необязательно; по умолчанию synthetic; не «off» — YAML читает его как false"},
+          "video_device": {"type": "string", "maxLength": 80, "pattern": "^([0-9a-f]{4}:[0-9a-f]{4}(:[A-Za-z0-9._-]{1,64})?|video[0-9]{1,3})?$",
+                           "$comment": "S3.3: vvvv:pppp[:serial] или videoN; пусто — единственное устройство UVC"},
+          "video_mode": {"enum": ["640x480@30", "640x480@60", "1280x720@30", "1280x720@60", "1920x1080@30", "1920x1080@60"]},
+          "video_format": {"enum": ["auto", "yuyv", "mjpeg", "h264"]}
         }
       }
     },
