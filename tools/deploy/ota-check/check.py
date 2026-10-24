@@ -56,7 +56,7 @@ def sha_dev(dev, size=None):
     return h.hexdigest()
 
 
-def text(path):
+def read_or_none(path):
     try:
         return Path(path).read_text()
     except OSError:
@@ -231,7 +231,7 @@ def main():
               tree_hashes(pers, skip=keep) == pers0)
         var_b = pers / "slots/system_b/var"
         check("/var слота B создан из нового образа", (var_b / "lib/dpkg/status").exists())
-        check("конфигурация пульта перенесена в B", text(var_b / "lib/sheregesh/config/active") == "r7\n")
+        check("конфигурация пульта перенесена в B", read_or_none(var_b / "lib/sheregesh/config/active") == "r7\n")
         check("/var слота A не изменён", cfg_a.read_text() == "r7\n")
         exp = res["state"].get("expect", {})
         check("отпечатки для подтверждения сняты (роль console, ключ, machine-id)",
@@ -254,8 +254,13 @@ def main():
                      for u in manifest.get("units", {})}
             check("новый слот: юниты = манифест", units == manifest.get("units") and len(units) >= 9,
                   f"{len(units)} юнитов")
-            priv = sh("sh", "-c", f"grep -rIlE -- '-----BEGIN [A-Z ]*PRIVATE KEY-----' {mnt}/newsys/usr "
-                      f"{mnt}/newsys/etc 2>/dev/null | head -3", check_rc=False)
+            n = mnt / "newsys"
+            priv = sh("sh", "-c", f"grep -rIlE -- '-----BEGIN [A-Z ]*PRIVATE KEY-----' {n}/usr/lib/sheregesh "
+                      f"{n}/usr/share/sheregesh {n}/etc {n}/root {n}/home 2>/dev/null | head -5", check_rc=False)
+            vectors = sh("sh", "-c", f"grep -rIlE -- '-----BEGIN [A-Z ]*PRIVATE KEY-----' {n}/usr/lib/python3 "
+                         f"2>/dev/null | wc -l", check_rc=False)
+            check(f"сведения: тестовые векторы ключей в пакетах дистрибутива (/usr/lib/python3, напр. pycryptodome "
+                  f"SelfTest) — {vectors} файлов, не секреты стенда", True)
             # Первая установка СТАРЫМ агентом (57e8fe4 на платах): /var слота — только из системного раздела +
             # перенесённая конфигурация; при первой загрузке служба sheregesh-var-seed дополняет недостающее.
             unit = (mnt / "newsys/usr/lib/systemd/system/sheregesh-var-seed.service").read_text()
@@ -275,7 +280,8 @@ def main():
             check("служба var-seed: перенесённая конфигурация и существующие файлы не перезаписаны",
                   (old_var / "lib/sheregesh/config/active").read_text() == "r7-carried\n"
                   and (old_var / "lib/systemd/keep-me").read_text() == "existing\n")
-            check("новый слот: закрытых ключей в /usr/lib/sheregesh и /etc/sheregesh нет", not priv, priv)
+            check("новый слот: закрытых ключей в /usr/lib/sheregesh, /usr/share/sheregesh, /etc, /root, /home нет",
+                  not priv, priv)
         finally:
             sh("umount", str(mnt / "newsys"), check_rc=False)
 
@@ -289,7 +295,7 @@ def main():
         check("tryboot: OK (перезагрузка подменена)", res["result"] == "OK", res.get("reason"))
         check("autoboot.txt на FAT: [all]=2 (основной A), [tryboot]=3",
               slots.autoboot_parts((mnt / "bootfs/autoboot.txt").read_text()) == (2, 3))
-        check("конфигурация перенесена заново перед tryboot (r8)", text(var_b / "lib/sheregesh/config/active") == "r8\n")
+        check("конфигурация перенесена заново перед tryboot (r8)", read_or_none(var_b / "lib/sheregesh/config/active") == "r8\n")
         # 6. Повторная установка во время пробной загрузки — отказ; отмена — без смены основного слота
         with open(W / "payload.shota", "rb") as f:
             res, _ = request("install", f)

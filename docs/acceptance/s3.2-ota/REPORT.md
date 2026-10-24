@@ -74,7 +74,45 @@
 
 ## 5. Результаты испытаний на файловых образах
 
-*(заполняется ниже по итогам прогона)*
+### 5.1. Тестовый подписанный пакет
+
+| | |
+|---|---|
+| Файл | `sheregesh-ota_sheregesh-lab-dev-pi4_0.1.1792860877.shota` (в репозиторий не входит; на Mac `build/ota/final/`) |
+| SHA-256 | `71d6722f8f3413afe542362fb1c8d0b24047c76c325ed34f0697e58125d9f37c` — **воспроизводим**: две независимые сборки дали одинаковый хеш |
+| Версия / совместимость | `0.1.1792860877` (выше текущей `0.1.1792843040`) / `sheregesh-lab-pi4-dev-1` (только dev-образ) |
+| Коммит, образ | `d1dc93d63f794bed672c77eca56dc5208dfaf54b`; CI image run 40113716200, проверка структуры **71/71** (в т.ч. `deploy.varseed`); `image_sha256 ba961f2d…8e65` |
+| Состав | boot 268 435 456 Б → 31,4 МБ xz (SHA-256 `810c5304…`), system 2 684 354 560 Б → 297,9 МБ xz (`cad70768…`) |
+| Подпись | `ssh-keygen -Y`, пространство `sheregesh-ota`, отдельный ключ `~/.ssh/sheregesh-deploy` (не ключ входа); закрытых ключей в пакете нет |
+| Манифест | [`ota-payload-manifest.json`](ota-payload-manifest.json): `package`, 9 юнитов `sheregesh-*` с SHA-256, `image_verify` (71 проверка, 0 провалов), `created` из `SOURCE_DATE_EPOCH` |
+| Входит | исправление `app-stop` (`02a9b64`), время коммита у файлов выпуска DEV deploy, `confirm.py`, свежий перенос конфигурации, образец `/var` и служба `sheregesh-var-seed`, все исправления S3.1 |
+
+### 5.2. Установка настоящего пакета на настоящий образ диска — **38/38 PASS** ([`file-image-check.json`](file-image-check.json), [`file-image-check.log`](file-image-check.log))
+
+Образ плат `57e8fe4` (как на картах) подключён loop-диском с разделами GPT image-rota в привилегированном контейнере (devbox, Debian trixie); агент — код репозитория; запись в loop-разделы с `O_EXCL`, повторное чтение, `mount ro` нового `system` + `rsync` для `/var`. Платы не затрагивались.
+
+Проверено: определение слотов по 4 признакам; чужая подпись — REJECTED, B не тронут; обрезанный поток — FAILED, A и `autoboot.txt` не тронуты, пробная загрузка после обрыва запрещена; полная установка (26,7 с) — B/boot и B/system = SHA-256 манифеста, A не изменён, `autoboot.txt` не изменён, общие данные (home, ключ, сертификат, роль, `/etc/ssh`, machine-id) не изменились, `/var` слота B из образца нового образа, конфигурация пульта перенесена, `/var` A не изменён, отпечатки для подтверждения сняты; содержимое нового слота — `build.json` = манифест, исправление `app-stop`, установщик с временем коммита, `confirm.py`, юниты = манифест, закрытых ключей в `/usr/lib/sheregesh`, `/usr/share/sheregesh`, `/etc`, `/root`, `/home` нет (7 файлов тестовых векторов pycryptodome в `/usr/lib/python3` — публичные данные пакета, отмечено отдельно); путь **старого агента** (первая установка на платах): `/var` из системного раздела почти пуст → служба `sheregesh-var-seed` дополняет `lib/dpkg`, `lib/systemd` и пр., перенесённую конфигурацию и существующие файлы не перезаписывает; перезапуск агента — INSTALLED и согласовано; изменение конфигурации после установки → перед tryboot перенесена свежая (r8); `autoboot.txt` на FAT: `[all]=2`, `[tryboot]=3`; повторная установка во время TRYBOOT — REJECTED; abort — основной A; в конце A и общие данные без изменений.
+
+Испытание само находило дефекты, пока не прошло: пустой `/var` нового слота (дефект 1), `--no-overwrite-dir` несовместим с `--skip-old-files` в GNU tar trixie (служба упала бы на плате; `d1dc93d`), а также ошибки самого сценария (ложное срабатывание поиска ключей по строкам кода, затенение имени) — исправлены, итоговый прогон 38/38.
+
+### 5.3. Двенадцать свойств модели A/B — тесты на файлах-разделах (`tests/unit/test_ota.py`, `test_ota_s32.py`, `test_update_model.py`) и образ диска
+
+| № | Свойство | Испытание | Итог |
+|---|---|---|---|
+| 1 | Активный слот не перезаписывается | `test_install_writes_only_inactive_slot…`, `test_reinstall_replaces_only_inactive_slot`, `test_backend_refuses_active_slot…`, образ диска | PASS |
+| 2 | Неактивный слот однозначен | `test_detect_layout_from_independent_sources`, образ диска | PASS |
+| 3 | Расхождение GPT / mountinfo / device-tree / by-slot — отказ | `test_inconsistent_slot_facts_refuse` (5), `test_more_inconsistencies_refuse` (3) | PASS |
+| 4 | Неверная подпись — отказ до обработки образов | `test_bad_signature_rejected_before_images_are_read` (не прочитано ни байта образов), `test_bad_updates…[foreign_key, wrong_namespace]`, образ диска | PASS |
+| 5 | Несовместимый образ — отказ | `…[strict_image]`, `test_other_layout_rejected` | PASS |
+| 6 | Повреждённый/обрезанный поток — отказ | `…[tampered_image, truncated, oversize]`, образ диска | PASS |
+| 7 | SHA-256 после записи не совпал — отказ | `test_readback_mismatch_fails_and_blocks_tryboot` | PASS |
+| 8 | Прерывание не даёт подтвердить неполный слот | `test_interrupted_install_never_becomes_bootable`, `test_interrupted_install_fails…`, образ диска | PASS |
+| 9 | Восстановление после перезапуска агента | `test_state_survives_agent_restart_between_steps`, `test_state_survives_restart`, образ диска | PASS |
+| 10 | Повторная установка не вредит активному слоту | `test_reinstall_replaces_only_inactive_slot`, образ диска (REJECTED во время TRYBOOT) | PASS |
+| 11 | Ключи и конфигурация не меняются | `persistent_hashes` в полном цикле, критерии `same.*`, образ диска | PASS |
+| 12 | Откат сохраняет прежнюю систему | `test_rollback_keeps_previous_system_and_shared_data`, `test_health_fail_never_commits…`, `test_power_loss_returns…`, `test_abort_on_trial_reboots_normally` | PASS |
+
+Плюс: перенос конфигурации свежий и не обратный (`test_config_carried_fresh_at_tryboot_and_not_copied_back`), образец `/var` (`test_var_seed_fills_missing_and_keeps_existing`, GNU tar — в CI), критерии подтверждения (12 тестов). CI: `d1dc93d` — success (432 теста).
 
 ## 6. Аварийное восстановление и аппаратный watchdog
 
@@ -120,7 +158,7 @@
 | Шаг | Действие | Контрольная точка / GO | STOP |
 |---|---|---|---|
 | 0 | Снимок «до»: `shdeploy status/ota-status pi2`, хеши `authorized_keys`, `~/.local/share/sheregesh/link/*`, `link.json`, `/etc/ssh/*.pub`, `machine-id`, `autoboot.txt`; `check_link`, `check_video_link` (session, stream) | всё PASS | любой FAIL |
-| 1 | **Запись слота B** (`shdeploy ota-install pi2 --payload …shota`) — *решение владельца 1* | `INSTALLED`; A и `autoboot.txt` прежние; службы не перезапускались; канал и видео работают | FAILED/REJECTED → разбор, без tryboot |
+| 1 | **Запись слота B** (`shdeploy ota-install pi2 --payload build/ota/final/…0.1.1792860877.shota`, сверить SHA-256 `71d6722f…`) — *решение владельца 1* | `INSTALLED`; A и `autoboot.txt` прежние; службы не перезапускались; канал и видео работают | FAILED/REJECTED → разбор, без tryboot |
 | 2 | **Разрешение переключения** (`shdeploy ota-enable pi2`) — *решение 2* | `switching: разрешено для 100000009d497e91` | — |
 | 3 | **Пробная загрузка** (`shdeploy ota-tryboot pi2`) — *решение 3* | плата вернулась по SSH в слот B (`tryboot_now`), `HEALTH_PENDING`; `var-seed` отработал; pi1 переподключилась | нет SSH 5 мин → **выключить/включить питание** → A; `ota-abort` |
 | 4 | Проверки на B: `ota-status`, критерии (сухой прогон `confirm` нет — смотреть `checks` в ответе), `check_link`, `check_video_link`, `systemctl stop sheregesh-console` → `inactive` (app-stop) | все критерии PASS | любой FAIL → `ota-abort` (обычная перезагрузка → A) |
@@ -131,7 +169,7 @@
 
 ## 9. Решения, требующие разрешения владельца
 
-1. Записать неактивный слот B pi2 потоком `0.1.1792857986` (без переключения).
+1. Записать неактивный слот B pi2 потоком `0.1.1792860877` (SHA-256 `71d6722f…f37c`), без переключения.
 2. Внести подписанное разрешение переключения слотов для pi2 (`ota-enable`).
 3. Выполнить пробную загрузку pi2 (`ota-tryboot`) — с человеком у платы.
 4. Подтвердить слот B pi2 (`ota-confirm`) по итогам критериев.
