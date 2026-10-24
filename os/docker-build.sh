@@ -5,13 +5,26 @@
 # Сборка образа на машине разработчика (macOS/Linux, Docker с arm64): привилегированный контейнер debian:trixie,
 # rpi-image-gen запускается от непривилегированного пользователя. Рабочий каталог — том Docker (не файловая
 # система хоста), результаты — build/image/<конфигурация>.
-#   os/docker-build.sh [КОНФИГУРАЦИЯ]       SSH_PUBKEY=~/.ssh/id_ed25519.pub os/docker-build.sh sheregesh-lab-dev-pi4
+#   os/docker-build.sh [КОНФИГУРАЦИЯ]
+#   SSH_PUBKEY=dev.pub DEPLOY_PUBKEY=deploy.pub os/docker-build.sh sheregesh-lab-dev-pi4   (оба — открытые ключи)
+# Из git worktree (.git — файл, ссылка на чужой каталог): метаданные git передаются в контейнер пакетом
+# (git bundle HEAD), рабочие файлы — как есть (rsync). build_deb.py (git ls-files, версия) и build-report.json
+# (commit, dirty) видят тот же коммит, что и в обычном клоне.
+# SHEREGESH_SRC=каталог — собрать другое дерево (например, чистый checkout нужного коммита) этим же сценарием.
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "${SHEREGESH_SRC:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd)"
 CFG="${1:-sheregesh-lab-pi4}"
 KEYARGS=()
 if [[ -n "${SSH_PUBKEY:-}" ]]; then
   KEYARGS=(-v "$(cd "$(dirname "$SSH_PUBKEY")" && pwd)/$(basename "$SSH_PUBKEY"):/keys/user1.pub:ro" -e SSH_PUBKEY=/keys/user1.pub)
+fi
+if [[ -n "${DEPLOY_PUBKEY:-}" ]]; then
+  KEYARGS+=(-v "$(cd "$(dirname "$DEPLOY_PUBKEY")" && pwd)/$(basename "$DEPLOY_PUBKEY"):/keys/deploy.pub:ro" -e DEPLOY_PUBKEY=/keys/deploy.pub)
+fi
+mkdir -p "$ROOT/build/image"
+rm -f "$ROOT/build/image/.src.bundle"
+if [[ -f "$ROOT/.git" ]]; then
+  git -C "$ROOT" bundle create -q "$ROOT/build/image/.src.bundle" HEAD
 fi
 docker volume create sheregesh-image-work >/dev/null
 exec docker run --rm --privileged --platform linux/arm64 \
@@ -26,15 +39,25 @@ exec docker run --rm --privileged --platform linux/arm64 \
     chown builder /work
     # Копия рабочего дерева внутри контейнера: rpi-image-gen пишет рядом с исходниками (pkgs/), /src — только чтение.
     rsync -a --delete --exclude build --exclude .venv --exclude reports /src/ /work/src/
+    if [ -f /out/.src.bundle ]; then
+      rm -rf /work/src/.git
+      git -C /work/src init -q
+      git -C /work/src fetch -q /out/.src.bundle HEAD
+      git -C /work/src update-ref --no-deref HEAD FETCH_HEAD
+      git -C /work/src reset -q
+    fi
     chown -R builder /work/src
     sudo -u builder git config --global --add safe.directory "*"
     mkdir -p /work/rpi-image-gen && chown builder /work/rpi-image-gen
     if [ ! -x /work/rpi-image-gen/rpi-image-gen ]; then
       sudo -u builder git clone -q https://github.com/raspberrypi/rpi-image-gen.git /work/rpi-image-gen
     fi
-    sudo -u builder git -C /work/rpi-image-gen checkout -q "$(cat /work/src/os/rpi-image-gen.ref)"
+    RIG_REF="$(tr -d "[:space:]" < /work/src/os/rpi-image-gen.ref)"
+    sudo -u builder git -C /work/rpi-image-gen cat-file -e "$RIG_REF^{commit}" 2>/dev/null \
+      || sudo -u builder git -C /work/rpi-image-gen fetch -q --depth 1 origin "$RIG_REF"
+    sudo -u builder git -C /work/rpi-image-gen checkout -q --force "$RIG_REF"
     /work/rpi-image-gen/install_deps.sh >/dev/null
     mkdir -p /out/$CFG && chown builder /out/$CFG
-    sudo -u builder env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" SSH_PUBKEY="${SSH_PUBKEY:-}" SHEREGESH_POST_ONLY="$SHEREGESH_POST_ONLY" \
+    sudo -u builder env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" SSH_PUBKEY="${SSH_PUBKEY:-}" DEPLOY_PUBKEY="${DEPLOY_PUBKEY:-}" SHEREGESH_POST_ONLY="$SHEREGESH_POST_ONLY" \
       SHEREGESH_WORK=/work OUT=/out/$CFG /work/src/os/build.sh "$CFG"
   '
