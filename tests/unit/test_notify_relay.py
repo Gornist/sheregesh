@@ -69,7 +69,7 @@ def test_sigterm_forwarded_to_child():
         assert s.recv(512).decode().startswith("READY=1")
         p.send_signal(signal.SIGTERM)
         t0 = time.monotonic()
-        assert p.wait(15) == 128 + signal.SIGTERM and time.monotonic() - t0 < 10
+        assert p.wait(15) == 0 and time.monotonic() - t0 < 10        # штатный останов — не «failed» у systemd
     finally:
         p.kill()
         s.close()

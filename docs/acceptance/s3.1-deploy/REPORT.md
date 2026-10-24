@@ -108,14 +108,15 @@ polkit: правило разрешает sheregesh-ui только `verb == "st
 
 **Плата.** pi1, серийный номер `10000000568152de`, 192.168.1.92, пакет `0.1.0~dev0+g57e8fe4`, `build.json` commit `57e8fe4`. Корень `ro` (`/dev/disk/by-slot/active/system`), `/persistent`, `/home` и `/var` — `rw` с `mmcblk0p6`. Загрузка 2,4 с ядро + 18,2 с пространство пользователя, `system running`, отказавших юнитов нет. `sheregesh-console` — `active`, READY («first frame shown»), launcher: «заводской код». `sheregesh-ota.socket` слушает, `sheregesh-ota-boot` — oneshot: слот A, `IDLE → IDLE`, без переключения. health: 10 PASS / 3 SKIP (сеть не настроена — не PASS). Из сети открыт только TCP 22 ([`ports-standalone.json`](../s3.1/pi1/deploy/ports-standalone.json)).
 
-**Результаты** `tools/probe/check_pi_deploy.py` — протоколы в [`../s3.1/pi1/deploy/`](../s3.1/pi1/deploy/), сводка [`summary-all.json`](../s3.1/pi1/deploy/summary-all.json): **20 PASS, 1 SKIP, 0 FAIL, 0 ERROR**.
+**Результаты** `tools/probe/check_pi_deploy.py` — протоколы в [`../s3.1/pi1/deploy/`](../s3.1/pi1/deploy/), сводка [`summary-all.json`](../s3.1/pi1/deploy/summary-all.json): **19 PASS, 1 FAIL (app-stop, переквалифицирован), 1 SKIP, 0 ERROR**.
 
 | Сценарий | Итог | Доказательство |
 |---|---|---|
 | image | PASS | ключ подписи в образе = `~/.ssh/sheregesh-deploy.pub`, ≠ ключ входа; установщик — заводской код |
 | polkit (настоящий polkitd) | PASS | `start sheregesh-deploy@install` разрешён — установщик выполнился от root (REJECTED: нет входящих). Запрещены (`Interactive authentication required`): другой экземпляр, stop/restart установщика, transient-юниты (своё имя, `User=root`, произвольный), `set-environment`, `daemon-reload`, `enable`, `mask`, агент OTA, stop/restart/kill `ssh`. Transient-юнит с именем установщика systemd отверг сам («already loaded or has a fragment») |
 | tamper | PASS | sheregesh-ui не может писать в `releases/`, `current`, `state.json`, файлы выпуска, `allowed_signers`, `/usr/lib/sheregesh` |
-| app-stop / app-kill / app-restart | PASS ×3 | служба восстановлена; новые соединения SSH каждые 2 с — без отказов |
+| app-stop | **FAIL** (переквалифицирован) | SSH без отказов, служба запускается снова, но после штатного `systemctl stop` — `failed`, а не `inactive`: ретранслятор выходил с кодом 143. Инструмент принимал `failed` — нестрогая проверка, исправлена |
+| app-kill / app-restart | PASS ×2 | служба восстановлена; новые соединения SSH каждые 2 с — без отказов |
 | watchdog-freeze | PASS | SIGSTOP → `Watchdog timeout (limit 20s)` → перезапуск; старых ретранслятора, cage и пульта нет, группа пуста, tty1 свободен |
 | relay-kill-frozen (`ac64aad`) | PASS | пульт заморожен, SIGKILL ретранслятора → ни cage, ни пульта, служба перезапущена |
 | deploy-good | PASS | `OK`, launcher: «выпуск 0.1.0~dev0+g339f6d4854e5» |
@@ -135,6 +136,7 @@ polkit: правило разрешает sheregesh-ui только `verb == "st
 2. Записи пульта идут из `session-N.scope` под идентификатором ретранслятора, а не под юнитом службы: `journalctl -u sheregesh-console` их не показывает. Инструмент читает журнал с учётом этого (`88f1951`). `/proc/<pid>/environ` пульта не читается — выпуск определяется по строке launcher.
 3. Подряд идущие сценарии исчерпали `StartLimitBurst=5/300 с`: на 6-м запуске за 300 с перезапуски прекратились («Start request repeated too quickly») — защита от цикла работает как задумано ([`start-limit-evidence-run1.*`](../s3.1/pi1/deploy/)). Инструмент перед сценарием делает `reset-failed` (действие стенда, в протоколе).
 4. Ошибки инструмента: разбор `allowed_signers`, `kill` незагруженного oneshot, ожидание перезапуска после SIGKILL — исправлено (`88f1951`).
+5. **Штатная остановка пульта оставляла юнит `failed`** (найдено при применении ролей на pi2): ретранслятор после SIGTERM возвращал 143, systemd считает это ошибкой → `sheregesh-health` видит неуспешный юнит. Исправлено в `notify_relay` (код 0 при SIGTERM/SIGINT, 134 при SIGABRT watchdog). Ретранслятор работает из `/usr` — исправление войдёт в следующий образ (OTA или запись), DEV deploy его не доставляет. На `57e8fe4` обход: `systemctl reset-failed sheregesh-console`.
 
 **Итог.** pi1 — первая плата, где приложение обновляется без извлечения microSD: deploy, автоматический откат, rollback, factory и перезагрузка проверены на железе. OTA tryboot/confirm на pi1 не запускались. Аппаратный watchdog BCM2835 не менялся (`RuntimeWatchdogUSec=0`). ADR-0009/0010 — proposed. Гейт — NO-GO.
 
@@ -146,6 +148,6 @@ polkit: правило разрешает sheregesh-ui только `verb == "st
 
 **Плата.** pi2, серийный номер `100000009d497e91`, 192.168.1.171, пакет `0.1.0~dev0+g57e8fe4`. Корень `ro`, загрузка 2,3 + 17,8 с, `system running`, пульт `active` (READY), SSH работает. Прежний ключ связи стёрт вместе с persistent. health: 10 PASS / 3 SKIP. Из сети открыт только TCP 22.
 
-**Результаты** — [`../s3.1/pi2/deploy/`](../s3.1/pi2/deploy/), [`summary-all.json`](../s3.1/pi2/deploy/summary-all.json): **19 PASS, 1 SKIP (corrupt), 0 FAIL, 0 ERROR**, с первого прогона. Тот же набор сценариев, что на pi1: настоящий polkitd (14 запретов), tamper, SSH при остановке/SIGKILL/перезапуске пульта, watchdog, гибель ретранслятора при замороженном пульте, deploy/второй выпуск, отсутствие байт-кода, чужая подпись/изменённый пакет/ключ входа → REJECTED, неудачный старт и падение в окне → ROLLED_BACK, rollback, factory, перезагрузка. Новые соединения SSH во время отказов — без единого сбоя. История установщика — [`board-state-history.json`](../s3.1/pi2/deploy/board-state-history.json).
+**Результаты** — [`../s3.1/pi2/deploy/`](../s3.1/pi2/deploy/), [`summary-all.json`](../s3.1/pi2/deploy/summary-all.json): **18 PASS, 1 FAIL (app-stop — тот же дефект, что на pi1), 1 SKIP (corrupt), 0 ERROR**. Тот же набор сценариев, что на pi1: настоящий polkitd (14 запретов), tamper, SSH при остановке/SIGKILL/перезапуске пульта, watchdog, гибель ретранслятора при замороженном пульте, deploy/второй выпуск, отсутствие байт-кода, чужая подпись/изменённый пакет/ключ входа → REJECTED, неудачный старт и падение в окне → ROLLED_BACK, rollback, factory, перезагрузка. Новые соединения SSH во время отказов — без единого сбоя. История установщика — [`board-state-history.json`](../s3.1/pi2/deploy/board-state-history.json).
 
 **Итог.** Обе платы обновляют приложение без извлечения microSD. Обе — на одном образе `57e8fe4` и одном выпуске приложения `0.1.0~dev0+g339f6d4854e5`. OTA tryboot/confirm не запускались, аппаратный watchdog не менялся, ADR-0009/0010 — proposed, гейт — NO-GO.

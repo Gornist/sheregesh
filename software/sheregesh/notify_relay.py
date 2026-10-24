@@ -130,8 +130,10 @@ def main(argv=None) -> int:
                 if lines:
                     sdnotify.notify(*lines)
         _killpg(child.pid, signal.SIGKILL)             # оставшиеся в группе (например, зависшее приложение)
+        if stop["sig"] in (signal.SIGTERM, signal.SIGINT):
+            return 0                                   # штатный останов (systemctl stop): не «failed» (pi2, 57e8fe4)
         if stop["sig"] is not None:
-            return 128 + stop["sig"]
+            return 128 + stop["sig"]                   # SIGABRT — watchdog: отказ
         return child.returncode if child.returncode >= 0 else 128 - child.returncode
     finally:
         if sock is not None:

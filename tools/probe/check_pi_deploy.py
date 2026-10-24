@@ -257,7 +257,7 @@ def _app_failure(a, action):
            "processes_after": leftovers.splitlines(), "journal": journal(h, t0, pattern="stopped:|Started|Main process|Failed")}
     ok = back is not None and not p.fail and s1.get("ActiveState") == "active"
     if action == "stop":
-        ok = ok and stopped in ("inactive", "failed")
+        ok = ok and stopped == "inactive"          # штатная остановка — не «failed» (иначе failed-units в health)
     return {**res, "verdict": "PASS" if ok else "FAIL"}
 
 
