@@ -113,3 +113,24 @@ def test_main_tool_failures_are_error(monkeypatch, tmp_path):
     assert rc == 1 and s["results"] == {"a": "ERROR", "b": "ERROR", "c": "PASS"}
     assert s["counts"] == {"PASS": 1, "FAIL": 0, "SKIP": 0, "ERROR": 2}
     assert json.loads((tmp_path / "a.json").read_text())["duration_s"] >= 0
+
+
+def test_unconfirmed_resume_aborts_remaining_scenarios(monkeypatch, tmp_path):
+    """SIGCONT не подтверждён (SSH пропал) — ERROR, остальные сценарии не выполняются (SKIP)."""
+    def fake_ssh(host, cmd, timeout=120, check=False):
+        if "MainPID" in cmd:
+            return "4242"
+        if "NRestarts" in cmd:
+            return "0"
+        return ""                                   # в том числе ответ на kill -CONT: подтверждения нет
+    monkeypatch.setattr(cl, "ssh", fake_ssh)
+    monkeypatch.setattr(cl, "wait", lambda *a, **k: 0.1)
+    monkeypatch.setattr(cl, "jread", lambda h, p: {"peerLink": "RECONNECTING"})
+    r = cl.sc_pause("c", "r", 0, False)
+    assert r["verdict"] == "ERROR" and r["abort"]
+    ran = []
+    monkeypatch.setattr(cl, "SCENARIOS", {"hb-loss": lambda c, r: cl.sc_pause(c, r, 0, False),
+                                          "restart": lambda c, r: ran.append(1) or {"verdict": "PASS"}})
+    assert cl.main(["--console", "c", "--remote", "r", "--out", str(tmp_path), "--only", "hb-loss,restart"]) == 1
+    s = json.loads((tmp_path / "summary.json").read_text())
+    assert s["results"] == {"hb-loss": "ERROR", "restart": "SKIP"} and not ran

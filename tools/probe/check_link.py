@@ -155,6 +155,9 @@ def sc_pause(ch, rh, seconds, expect_watchdog):
            "recover_s_after_resume": recover, "since_pause_s": round(time.monotonic() - t_stop, 1),
            "restarts_before": n0, "restarts_after": n1, "service_after": active, "final_cont": resumed,
            "journal": wd_log.splitlines()}
+    if resumed not in ("resumed", "gone"):        # восстановление не подтверждено (нет SSH?) — дальше не продолжать
+        return {**res, "verdict": "ERROR", "abort": True,
+                "reason": f"не подтверждено возобновление PID {pid} на блоке: {resumed!r}"}
     if expect_watchdog:
         ok = (detect is not None and recover is not None and int(n1 or 0) > int(n0 or 0)
               and "watchdog" in wd_log.lower() and active == "active")
@@ -442,8 +445,15 @@ def main(argv=None):
                       "package": ssh(h, "dpkg-query -W -f='${Version}' sheregesh"),
                       "kernel": ssh(h, "uname -r"), "uptime_s": ssh(h, "cut -d' ' -f1 /proc/uptime")}
     summary = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "boards": meta, "results": {}}
+    aborted = None
     for name in a.only.split(","):
         print(f"== {name}", flush=True)
+        if aborted:                               # стенд в неподтверждённом состоянии — разрушительные сценарии не идут
+            r = {"scenario": name, "verdict": "SKIP", "reason": f"не выполнялся: стенд не восстановлен после {aborted}"}
+            (a.out / f"{name}.json").write_text(json.dumps({"boards": meta, **r}, ensure_ascii=False, indent=1))
+            summary["results"][name] = "SKIP"
+            print("   SKIP", flush=True)
+            continue
         started, t0 = time.strftime("%Y-%m-%dT%H:%M:%S%z"), time.monotonic()
         try:
             r = SCENARIOS[name](a.console, a.remote)
@@ -454,6 +464,8 @@ def main(argv=None):
         r = {"scenario": name, "started": started, "duration_s": round(time.monotonic() - t0, 1), **r}
         (a.out / f"{name}.json").write_text(json.dumps({"boards": meta, **r}, ensure_ascii=False, indent=1))
         summary["results"][name] = r["verdict"]
+        if r.get("abort"):
+            aborted = name
         print(f"   {r['verdict']}" + (f" — {r.get('reason') or r.get('error')}" if r["verdict"] != "PASS" else ""),
               flush=True)
     summary["counts"] = {v: sum(x == v for x in summary["results"].values()) for v in VERDICTS}

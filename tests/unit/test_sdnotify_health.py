@@ -130,3 +130,24 @@ def test_networked_role_without_profile_is_fail_not_skip(tmp_path):
     r = health.collect(link_config=tmp_path / "link.json", data_dir=None, runner=fake_runner())
     st = {c["id"]: c["status"] for c in r["checks"]}
     assert not r["networked"] and st["config.link"] == st["certs.device"] == "SKIP"    # автономный режим
+
+
+def test_remote_versions_use_console_hello_not_session_id(tmp_path):
+    """Блок: совместимость — по протоколу из hello пульта; согласованная сессия — не версия второй стороны."""
+    f = tmp_path / "r.json"
+    base = {"time": time.time(), "connected": True, "tls": True, "session": "1.1", "stats": {}}
+    f.write_text(json.dumps({**base, "peer": {"addr": "192.168.1.91", "tls": "TLSv1.3",
+                                              "hello": {"proto": "1.1", "software": "0.1.0", "hardware": "HW-1.0 Rev A"}}}))
+    rep = health.Report()
+    health.check_link(rep, "remote", f)
+    v = next(c for c in rep.checks if c["id"] == "link.versions")
+    assert v["status"] == "PASS" and "вторая сторона 1.1" in v["detail"]
+    f.write_text(json.dumps({**base, "peer": {"addr": "192.168.1.91", "hello": {"proto": "2.0"}}}))
+    rep = health.Report()
+    health.check_link(rep, "remote", f)
+    assert next(c for c in rep.checks if c["id"] == "link.versions")["status"] == "FAIL"     # MAJOR не совпадает
+    f.write_text(json.dumps({**base, "peer": {"addr": "192.168.1.91"}}))                     # блок без hello в статусе
+    rep = health.Report()
+    health.check_link(rep, "remote", f)
+    v = next(c for c in rep.checks if c["id"] == "link.versions")
+    assert v["status"] == "WARN" and v["data"]["source"] == "session"

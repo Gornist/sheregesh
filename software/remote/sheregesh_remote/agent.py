@@ -226,6 +226,8 @@ class Agent:
             n = negotiate(self.proto, body.get("proto"), body.get("software"), body.get("hardware"))
             log(f"hello from console proto={body.get('proto')} -> {n.reason}")
             self.session = n.session
+            if self.peer_desc is not None:          # что сообщил пульт — для проверки версий в sheregesh-health
+                self.peer_desc["hello"] = {k: body.get(k) for k in ("proto", "software", "hardware")}
             if not n.compatible:
                 await self.send("error", {"code": "PEER-INCOMPAT", "reason": n.reason, "local": self.proto})
                 if self.writer:

@@ -173,7 +173,13 @@ def check_link(rep, role, status_file, now=None):
         rep.add("link.state", "PASS" if ok else "FAIL",
                 f"{'сессия с ' + str(p.get('addr')) + ' ' + str(p.get('tls')) if st.get('connected') else 'нет сессии'}, "
                 f"отказов аутентификации {st.get('stats', {}).get('auth_failures', 0)}", connected=st.get("connected"))
-        peer = {"proto": st.get("session")}
+        hello = (st.get("peer") or {}).get("hello") or {}
+        peer = dict(hello)
+        if not peer.get("proto") and st.get("connected") and st.get("session"):
+            # блок старой версии не сообщает hello пульта: известна только согласованная версия сессии
+            rep.add("link.versions", "WARN", f"версия пульта блоком не сообщается; согласована сессия {st['session']} "
+                    f"(локально {PROTOCOL_VERSION} / {__version__})", source="session")
+            return st
     if peer.get("proto"):
         n = negotiate(PROTOCOL_VERSION, peer.get("proto"), peer.get("software"), peer.get("hardware"))
         rep.add("link.versions", "PASS" if n.compatible else "FAIL",
