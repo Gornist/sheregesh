@@ -14,6 +14,15 @@ on:
     paths: ["os/**", "tools/image/**", ".github/workflows/image.yml"]
     tags: ["image-*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        # artifact — артефакт Actions (квота хранилища артефактов, retention 3 дня);
+        # release — ЧЕРНОВИК выпуска lab-image-<sha> (prerelease) с ассетами; квоту артефактов не расходует.
+        # Черновик видят только пользователи с правом записи в репозиторий; тег создаётся лишь при публикации.
+        description: "Куда выгрузить образ"
+        type: choice
+        options: [artifact, release]
+        default: artifact
 
 permissions: {}
 
@@ -92,8 +101,26 @@ jobs:
               print(f"| {c['desc']} | {c['status']} | {c['detail'][:80]} |")
           print("\nNOT TESTED: " + ", ".join(r["not_tested"]))
           EOF
+      # Режим release: файлы передаются задаче publish через кэш Actions (не квота артефактов); сборочная задача
+      # остаётся только с правом чтения, право записи (contents: write) — только у короткой задачи publish.
+      - name: Файлы для выпуска
+        id: rel
+        if: success() && steps.gate.outputs.skip != '1' && inputs.publish == 'release'
+        run: |
+          d="build/image/${{ matrix.variant }}"; r="build/release/${{ matrix.variant }}"
+          mkdir -p "$r"
+          for f in "$d"/*.img.zst "$d"/*.deb "$d"/*.packages.tsv "$d"/*.sbom.zst "$d"/verify.json \
+                   "$d"/build-report.json "$d"/SHA256SUMS "$d"/build.log; do
+            [[ -f "$f" ]] && cp "$f" "$r/${{ matrix.variant }}--$(basename "$f")"
+          done
+          ls -la "$r"
+      - uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        if: steps.rel.outcome == 'success'
+        with:
+          path: build/release/${{ matrix.variant }}
+          key: image-release-${{ matrix.variant }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always() && steps.gate.outputs.skip != '1'
+        if: always() && steps.gate.outputs.skip != '1' && inputs.publish != 'release'
         with:
           name: ${{ matrix.variant }}-${{ github.sha }}
           path: |
@@ -108,3 +135,41 @@ jobs:
           retention-days: 3   # образы по ~760 МБ: квота хранилища артефактов (2026-10-25 исчерпана)
           compression-level: 0
           if-no-files-found: warn
+
+  # Черновик выпуска с образами (только workflow_dispatch с publish=release). Черновик в приватном репозитории
+  # видят только пользователи с правом записи; публикация (и создание тега lab-image-<sha>) — вручную владельцем.
+  # Тег lab-image-* не совпадает с фильтром push tags image-*: публикация не запускает сборку повторно.
+  publish:
+    name: Черновик выпуска с образами
+    needs: image
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.publish == 'release' }}
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: lab-image-${{ github.sha }}
+    steps:
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: build/release/sheregesh-lab-pi4
+          key: image-release-sheregesh-lab-pi4-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: build/release/sheregesh-lab-dev-pi4
+          key: image-release-sheregesh-lab-dev-pi4-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Выгрузка в черновик выпуска
+        run: |
+          shopt -s nullglob
+          files=(build/release/*/*)
+          (( ${#files[@]} )) || { echo "::error::нет файлов образа для выпуска (сборка не удалась?)"; exit 1; }
+          ls -la build/release/*/
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --prerelease --target "$GITHUB_SHA" \
+              --title "Лабораторный образ Pi 4 ${GITHUB_SHA::7} (черновик, не релиз)" \
+              --notes "Сборка CI ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}. Лабораторный образ, не официальный выпуск; NOT TESTED на платах. Проверка: SHA256SUMS каждого варианта."
+          fi
+          gh release upload "$TAG" "${files[@]}" --clobber
+          gh release view "$TAG" --json isDraft,assets --jq '{isDraft, assets: [.assets[] | {name, size}]}'
