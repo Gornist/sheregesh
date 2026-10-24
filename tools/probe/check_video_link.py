@@ -199,8 +199,9 @@ DEC = ("videotestsrc is-live=true num-buffers=240 pattern=smpte ! video/x-raw,wi
        "videoconvert ! video/x-raw,format=I420 ! v4l2h264enc "
        "extra-controls=controls,repeat_sequence_header=1,video_bitrate=2000000,h264_i_frame_period=30 ! "
        "video/x-h264,level=(string)4 ! h264parse ! rtph264pay config-interval=1 pt=96 ! rtpstreampay ! "
-       "rtpstreamdepay ! rtpjitterbuffer latency=50 ! rtph264depay ! h264parse ! v4l2h264dec ! videoconvert ! "
-       "videoscale ! video/x-raw,format=RGBx,width=640,height=360 ! fakesink sync=false")
+       "rtpstreamdepay ! rtpjitterbuffer latency=50 ! rtph264depay ! h264parse ! v4l2h264dec ! videoscale ! "
+       "video/x-raw,width=640,height=360 ! videoconvert ! video/x-raw,format=RGBx,width=640,height=360 ! "
+       "fakesink sync=false")
 
 
 def _trace(host, pipe):

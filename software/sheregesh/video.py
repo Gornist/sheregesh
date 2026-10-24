@@ -189,8 +189,10 @@ def _depay_decode(codec):
 
 
 def _to_rgbx(width, height):
-    return ["videoconvert", "!", "videoscale", "!", f"video/x-raw,format=RGBx,width={width},height={height}", "!",
-            "fdsink", "fd=1", "sync=false"]
+    """Сначала уменьшение (в формате декодера), потом преобразование цвета: на Pi 4 после v4l2h264dec 1280×720 это
+    89 кадров/с против 14 при обратном порядке — videoconvert полного кадра не успевал (S3.1-VIDEO, pi1)."""
+    return ["videoscale", "!", f"video/x-raw,width={width},height={height}", "!", "videoconvert", "!",
+            f"video/x-raw,format=RGBx,width={width},height={height}", "!", "fdsink", "fd=1", "sync=false"]
 
 
 def receiver_args(codec, port, width, height):
