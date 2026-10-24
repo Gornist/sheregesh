@@ -13,6 +13,7 @@ import contextlib
 import functools
 import io
 import json
+import os
 import subprocess
 import time
 import types
@@ -215,7 +216,7 @@ def test_ota04_old_confirm_from_git_reproduces(stand):
     r = subprocess.run(["git", "show", "6353c70^:software/sheregesh/update/confirm.py"], capture_output=True,
                        text=True, cwd=Path(__file__).parent)
     if r.returncode:
-        pytest.skip("история git с 6353c70 недоступна")
+        (pytest.fail if os.environ.get("CI") else pytest.skip)("история git с 6353c70 недоступна")
     old = types.ModuleType("confirm_6353c70_parent")
     exec(compile(r.stdout, "confirm@6353c70^", "exec"), old.__dict__)   # noqa: S102 — свой код из истории
     stand.to_health_pending(install_like_old_agent=True)

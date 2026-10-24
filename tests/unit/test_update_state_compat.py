@@ -4,6 +4,7 @@
 прежний слот его читает агент старого образа. pi2, 2026-10-25: новый агент на B записал "expect": {}, а агент
 57e8fe4 читает UpdateState(**json) — TypeError, агент на A не запустился бы."""
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -47,7 +48,7 @@ def _old_model(tmp_path):
         raw = subprocess.run(["git", "-C", str(ROOT), "archive", OLD, "software/sheregesh/update"],
                              capture_output=True, check=True).stdout
     except (subprocess.CalledProcessError, FileNotFoundError):
-        pytest.skip(f"нет git-истории {OLD}")
+        (pytest.fail if os.environ.get("CI") else pytest.skip)(f"нет git-истории {OLD}")
     with tarfile.open(fileobj=io.BytesIO(raw)) as t:
         t.extractall(tmp_path / "old", filter="data")
     return tmp_path / "old/software"

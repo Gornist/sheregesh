@@ -11,6 +11,7 @@ import dataclasses
 import importlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -36,7 +37,8 @@ def _load(rev, base: Path):
                                   "software/sheregesh/update", "software/sheregesh/deploy"],
                                  capture_output=True, check=True).stdout
         except (subprocess.CalledProcessError, FileNotFoundError):
-            pytest.skip(f"нет git-истории {rev}")
+            # в CI история обязательна (fetch-depth: 0): пропуск здесь скрыл бы проверку совместимости агентов
+            (pytest.fail if os.environ.get("CI") else pytest.skip)(f"нет git-истории {rev}")
         with tarfile.open(fileobj=io.BytesIO(raw)) as t:
             t.extractall(base / rev, filter="data")
         (base / "pkgs").mkdir(exist_ok=True)
