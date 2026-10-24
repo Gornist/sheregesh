@@ -66,7 +66,13 @@ def check_services(rep, role, runner=run):
     rep.add("service.failed-units", "FAIL" if failed else "PASS", ", ".join(failed) or "нет неуспешных юнитов")
 
 
-def check_config(rep, cfg_path, data_dir):
+def expected_role(cfg_path):
+    """Сетевая роль, заданная маркером ~/.config/sheregesh/{console,remote}.role (ставит sheregesh-link configure)."""
+    d = Path(cfg_path).expanduser().parent
+    return next((r for r in tls.ROLES if (d / f"{r}.role").exists()), None)
+
+
+def check_config(rep, cfg_path, data_dir, networked=False):
     cfg = None
     if Path(cfg_path).expanduser().exists():
         try:
@@ -75,7 +81,10 @@ def check_config(rep, cfg_path, data_dir):
         except tls.LinkConfigError as e:
             rep.add("config.link", "FAIL", str(e))
     else:
-        rep.add("config.link", "SKIP", f"нет {cfg_path}: сетевой профиль не настроен (только loopback)")
+        if networked:                                      # роль сетевая — без профиля работать нельзя
+            rep.add("config.link", "FAIL", f"нет {cfg_path}: сетевая роль задана, профиль не настроен")
+        else:
+            rep.add("config.link", "SKIP", f"нет {cfg_path}: сетевой профиль не настроен (только loopback)")
     if data_dir:
         active = Path(data_dir) / "config" / "active"
         if Path(data_dir).exists():
@@ -175,9 +184,11 @@ def check_link(rep, role, status_file, now=None):
     return st
 
 
-def check_certs(rep, cfg, now=None):
+def check_certs(rep, cfg, now=None, networked=False):
     if cfg is None:
-        rep.add("certs.device", "SKIP", "сетевой профиль не настроен")
+        rep.add("certs.device", "FAIL" if networked else "SKIP",
+                "сетевая роль задана, нет действительного профиля и сертификатов" if networked
+                else "сетевой профиль не настроен")
         return
     now = now or datetime.now(timezone.utc)
     for name, path in (("device", cfg.cert), ("ca", cfg.ca)):
@@ -194,17 +205,21 @@ def check_certs(rep, cfg, now=None):
 
 def collect(role=None, link_config=tls.DEFAULT_CONFIG, data_dir="/var/lib/sheregesh", runner=run):
     rep = Report()
-    cfg = check_config(rep, link_config, data_dir)
-    role = role or (cfg.role if cfg else "standalone")
+    marker = expected_role(link_config)
+    networked = role in tls.ROLES or marker is not None
+    cfg = check_config(rep, link_config, data_dir, networked)
+    role = role or (cfg.role if cfg else marker or "standalone")
     check_services(rep, role, runner)
     check_persistent(rep)
     check_fs_errors(rep, runner)
     check_power(rep, runner)
     if cfg is not None:
         check_link(rep, role, STATUS_FILES[role])
+    elif networked:
+        rep.add("link.state", "FAIL", f"роль {role}: сетевой профиль недействителен — канала pi1↔pi2 нет")
     else:
         rep.add("link.state", "SKIP", "сетевой профиль не настроен — канал pi1↔pi2 не проверяется")
-    check_certs(rep, cfg)
+    check_certs(rep, cfg, networked=networked)
     counts = {s: sum(c["status"] == s for c in rep.checks) for s in ("PASS", "WARN", "FAIL", "SKIP")}
     serial = ""
     try:
@@ -213,6 +228,7 @@ def collect(role=None, link_config=tls.DEFAULT_CONFIG, data_dir="/var/lib/shereg
         pass
     return {"tool": "sheregesh-health", "mode": "diagnostic (no mark-good, no slot switch, no reboot)",
             "time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "role": role, "serial": serial,
+            "networked": networked,
             "software": __version__, "protocol": PROTOCOL_VERSION, "checks": rep.checks, "counts": counts,
             "verdict": "FAIL" if counts["FAIL"] else "PASS"}
 

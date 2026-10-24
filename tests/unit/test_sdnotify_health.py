@@ -117,3 +117,16 @@ def test_report_is_diagnostic_only(tmp_path):
     r = health.collect(role="remote", link_config=tmp_path / "none.json", data_dir=None, runner=fake_runner())
     assert r["mode"].startswith("diagnostic") and "mark-good" in r["mode"]
     assert {"checks", "counts", "verdict", "software", "protocol"} <= r.keys()
+
+
+def test_networked_role_without_profile_is_fail_not_skip(tmp_path):
+    """Роль задана (маркер или --role), профиля нет: конфигурация, канал и сертификаты — FAIL, а не SKIP."""
+    (tmp_path / "remote.role").write_text("urn:sheregesh:remote:X\n")
+    r = health.collect(link_config=tmp_path / "link.json", data_dir=None, runner=fake_runner())
+    st = {c["id"]: c["status"] for c in r["checks"]}
+    assert r["role"] == "remote" and r["networked"]
+    assert st["config.link"] == st["link.state"] == st["certs.device"] == "FAIL" and r["verdict"] == "FAIL"
+    (tmp_path / "remote.role").unlink()
+    r = health.collect(link_config=tmp_path / "link.json", data_dir=None, runner=fake_runner())
+    st = {c["id"]: c["status"] for c in r["checks"]}
+    assert not r["networked"] and st["config.link"] == st["certs.device"] == "SKIP"    # автономный режим

@@ -5,8 +5,10 @@
   python3 tools/probe/check_link.py --console 192.168.1.89 --remote 192.168.1.169 --out DIR [--only NAME,...]
 
 Сценарии (каждый — DIR/<сценарий>.json, итог — DIR/summary.json):
+  connect      штатный перезапуск пульта на pi1 → время до сессии mTLS с pi2 (старт службы + обнаружение + TLS)
   baseline     сессия mTLS, взаимная идентичность, телеметрия, события; метрики за 60 с: частота сообщений,
-               RTT, потери событий, CPU/RSS служб, температура и питание обеих плат
+               RTT, потери событий, загрузка CPU платы за окно, память, RSS служб, температура и питание обеих плат
+  ports        с машины владельца: TCP-порты 1–10000 обеих плат; на платах — слушающие TCP/UDP сокеты
   hb-loss      пауза сервера блока 5 с (SIGSTOP) → пульт обнаруживает потерю (RECONNECTING) и восстанавливается
   watchdog     пауза 25 с → systemd по WatchdogSec перезапускает службу блока; пульт восстанавливается
   restart      штатный перезапуск sheregesh-remote-net → пульт восстанавливается
@@ -70,6 +72,26 @@ def resources(host, pattern):
     return out.splitlines()
 
 
+def sample(host):
+    """Счётчики CPU (/proc/stat), память, температура, питание — для загрузки за окно, а не за всё время процесса."""
+    out = ssh(host, "head -1 /proc/stat; grep -E 'MemTotal|MemAvailable' /proc/meminfo; vcgencmd measure_temp; "
+                    "vcgencmd get_throttled; cut -d' ' -f1-3 /proc/loadavg")
+    lines = out.splitlines()
+    cpu = [int(x) for x in lines[0].split()[1:]]
+    mem = {ln.split(":")[0]: int(ln.split()[1]) for ln in lines[1:3]}
+    return {"cpu": cpu, "mem_total_kb": mem["MemTotal"], "mem_available_kb": mem["MemAvailable"],
+            "temp": lines[3].split("=")[-1], "throttled": lines[4].split("=")[-1], "loadavg": lines[5]}
+
+
+def cpu_window(s0, s1):
+    d = [b - a for a, b in zip(s0["cpu"], s1["cpu"])]
+    total, idle = sum(d), d[3] + (d[4] if len(d) > 4 else 0)
+    return {"cpu_busy_pct": round(100 * (total - idle) / total, 1) if total else None,
+            "mem_used_mb": round((s1["mem_total_kb"] - s1["mem_available_kb"]) / 1024),
+            "mem_total_mb": round(s1["mem_total_kb"] / 1024), "temp_start": s0["temp"], "temp_end": s1["temp"],
+            "throttled": s1["throttled"], "loadavg": s1["loadavg"]}
+
+
 def connected(ch):
     return lambda: jread(ch, C_STATUS).get("phase") == "connected"
 
@@ -78,8 +100,10 @@ def sc_baseline(ch, rh):
     if not wait(connected(ch), 60):
         return {"verdict": "FAIL", "reason": "нет соединения за 60 с", "console": jread(ch, C_STATUS)}
     c0, r0, t0 = jread(ch, C_STATUS), jread(rh, R_STATUS), time.time()
+    s0 = {"console": sample(ch), "remote": sample(rh)}
     time.sleep(60)
     c1, r1, t1 = jread(ch, C_STATUS), jread(rh, R_STATUS), time.time()
+    s1 = {"console": sample(ch), "remote": sample(rh)}
     dt = t1 - t0
     rs0, rs1 = r0.get("stats", {}), r1.get("stats", {})
     sent, acked = rs1["events_sent"] - rs0["events_sent"], rs1["events_acked"] - rs0["events_acked"]
@@ -98,6 +122,7 @@ def sc_baseline(ch, rh):
                     "rtt_avg_ms": rs1.get("rtt_avg_ms"), "rtt_max_ms": rs1.get("rtt_max_ms"),
                     "rtt_last_ms": rs1.get("rtt_last_ms")},
         "resources": {"console": resources(ch, "sheregesh_console|cage"), "remote": resources(rh, "sheregesh_remote")},
+        "boards_window": {k: cpu_window(s0[k], s1[k]) for k in s0},
     }
     ok = (c1.get("phase") == "connected" and c1.get("tls") == "TLSv1.3" and r1.get("connected")
           and "urn:sheregesh:console:" in session and sent > 0 and acked == sent and ui.get("peerLink") == "CONNECTED"
@@ -107,28 +132,35 @@ def sc_baseline(ch, rh):
 
 def sc_pause(ch, rh, seconds, expect_watchdog):
     if not wait(connected(ch), 60):
-        return {"verdict": "FAIL", "reason": "нет соединения до сценария"}
+        return {"verdict": "ERROR", "reason": "нет соединения до сценария (стенд не готов)"}
     pid, n0 = remote_pid(rh), ssh(rh, "systemctl show -p NRestarts --value sheregesh-remote-net")
+    if not pid.isdigit() or pid == "0":
+        return {"verdict": "ERROR", "reason": f"нет главного PID sheregesh-remote-net: {pid!r}"}
     t_stop = time.monotonic()
-    ssh(rh, f"kill -STOP {pid}")
-    detect = wait(lambda: jread(ch, C_STATUS).get("phase") != "connected", seconds + 10, 0.25)
-    ui_during = jread(ch, C_UI)
-    if not expect_watchdog:
-        time.sleep(max(0.0, seconds - (time.monotonic() - t_stop)))
-        ssh(rh, f"kill -CONT {pid}")
-    t_resume = time.monotonic()
-    recover = wait(connected(ch), 90, 0.5)
+    detect = ui_during = recover = None
+    try:
+        ssh(rh, f"kill -STOP {pid}", check=True)
+        detect = wait(lambda: jread(ch, C_STATUS).get("phase") != "connected", seconds + 10, 0.25)
+        ui_during = jread(ch, C_UI)
+        if not expect_watchdog:
+            time.sleep(max(0.0, seconds - (time.monotonic() - t_stop)))
+            ssh(rh, f"kill -CONT {pid}", check=True)
+        recover = wait(connected(ch), 90, 0.5)
+    finally:                                     # при любой ошибке или прерывании процесс не остаётся замороженным
+        resumed = ssh(rh, f"kill -CONT {pid} 2>/dev/null && echo resumed || echo gone")
     n1 = ssh(rh, "systemctl show -p NRestarts --value sheregesh-remote-net")
+    active = ssh(rh, "systemctl is-active sheregesh-remote-net")
     wd_log = ssh(rh, "journalctl -b -u sheregesh-remote-net -o cat --no-pager | grep -iE 'watchdog|stopped: result' | tail -3")
     res = {"pause_s": seconds, "detect_s": detect, "ui_during": ui_during,
            "recover_s_after_resume": recover, "since_pause_s": round(time.monotonic() - t_stop, 1),
-           "restarts_before": n0, "restarts_after": n1, "journal": wd_log.splitlines()}
+           "restarts_before": n0, "restarts_after": n1, "service_after": active, "final_cont": resumed,
+           "journal": wd_log.splitlines()}
     if expect_watchdog:
-        ssh(rh, f"kill -CONT {pid} 2>/dev/null; true")
-        ok = detect is not None and recover is not None and int(n1 or 0) > int(n0 or 0) and "watchdog" in wd_log.lower()
+        ok = (detect is not None and recover is not None and int(n1 or 0) > int(n0 or 0)
+              and "watchdog" in wd_log.lower() and active == "active")
     else:
-        ok = detect is not None and recover is not None and n1 == n0 and ui_during.get("peerLink") == "RECONNECTING"
-    del t_resume
+        ok = (detect is not None and recover is not None and n1 == n0 and active == "active"
+              and (ui_during or {}).get("peerLink") == "RECONNECTING")
     return {**res, "verdict": "PASS" if ok else "FAIL"}
 
 
@@ -144,52 +176,178 @@ def sc_restart(ch, rh):
             "verdict": "PASS" if recover is not None else "FAIL"}
 
 
+def sc_connect(ch, rh):
+    if not wait(connected(ch), 60):
+        return {"verdict": "FAIL", "reason": "нет соединения до сценария"}
+    n0 = ssh(ch, "systemctl show -p NRestarts --value sheregesh-console")
+    t0 = time.monotonic()
+    ssh(ch, "systemctl restart sheregesh-console")
+    restart_cmd = round(time.monotonic() - t0, 2)                 # Type=notify: возвращается после READY=1
+    gone = wait(lambda: jread(ch, C_STATUS).get("phase") != "connected", 10, 0.2)
+    conn = wait(connected(ch), 60, 0.25)
+    st = jread(ch, C_STATUS)
+    show = ssh(ch, "systemctl show -p ActiveState,SubState,NRestarts,StatusText sheregesh-console")
+    res = {"restart_to_ready_s": restart_cmd, "status_reset_s": gone,
+           "restart_to_connected_s": round(restart_cmd + (conn or 0), 2) if conn is not None else None,
+           "console": {k: st.get(k) for k in ("phase", "tls", "host", "peer_uri", "session")},
+           "service": show.splitlines(), "restarts_before": n0}
+    ok = conn is not None and st.get("tls") == "TLSv1.3" and "ActiveState=active" in show
+    return {**res, "verdict": "PASS" if ok else "FAIL"}
+
+
+LISTEN = r"""for f in /proc/net/tcp /proc/net/tcp6 /proc/net/udp /proc/net/udp6; do
+  awk -v f="${f##*/}" 'NR>1 && (f ~ /udp/ || $4=="0A") {print f, $2}' "$f"; done"""
+
+
+def _decode(proto, addr):
+    host, port = addr.rsplit(":", 1)
+    if len(host) == 8:
+        ip = ".".join(str(int(host[i:i + 2], 16)) for i in (6, 4, 2, 0))
+    else:
+        import ipaddress
+        b = bytes.fromhex(host)
+        ip = str(ipaddress.IPv6Address(b"".join(b[i:i + 4][::-1] for i in range(0, 16, 4))))
+    return f"{proto} {ip}:{int(port, 16)}"
+
+
+ALLOWED = {"console": {"tcp": {22}, "udp": {68, 546}}, "remote": {"tcp": {22, 7443}, "udp": {68, 546}}}
+
+
+def judge_ports(role, listening, open_tcp, allowed=ALLOWED):
+    """Не loopback-сокеты платы и порты, открытые из LAN, — только разрешённые. UDP снаружи не сканируется
+    (без ответа нельзя отличить закрытый порт от фильтра) — решение по слушающим сокетам самой платы."""
+    bad = []
+    for line in listening:
+        proto, addr = line.split()
+        host, port = addr.rsplit(":", 1)
+        if host.startswith("127.") or host == "::1":
+            continue
+        fam = "udp" if proto.startswith("udp") else "tcp"
+        if int(port) not in allowed[role][fam]:
+            bad.append(line)
+    bad += [f"lan tcp {p}" for p in open_tcp if p not in allowed[role]["tcp"]]
+    return bad
+
+
+def sc_ports(ch, rh):
+    import concurrent.futures as cf
+    out, bad = {}, []
+    for role, h in (("console", ch), ("remote", rh)):
+        def probe(port, h=h):
+            try:
+                with socket.create_connection((h, port), timeout=0.5):
+                    return port
+            except OSError:
+                return None
+        with cf.ThreadPoolExecutor(64) as ex:
+            open_ = sorted(p for p in ex.map(probe, range(1, 10001)) if p)
+        raw = ssh(h, LISTEN)
+        if not raw.strip():
+            return {"verdict": "ERROR", "reason": f"{role}: нет списка сокетов с платы"}
+        local = sorted({_decode(*ln.split()) for ln in raw.splitlines() if ln.strip()})
+        b = judge_ports(role, local, open_)
+        bad += [f"{role}: {x}" for x in b]
+        out[role] = {"open_from_lan_tcp_ipv4_1_10000": open_, "allowed": {k: sorted(v) for k, v in ALLOWED[role].items()},
+                     "listening_on_board_tcp_udp_v4_v6": local, "not_allowed": b,
+                     "note": "UDP снаружи не сканируется; IPv6 — по сокетам платы (внешний скан только IPv4)"}
+    return {**out, "verdict": "FAIL" if bad else "PASS"}
+
+
+def classify_client(exc=None, data=None):
+    """Итог попытки на стороне клиента. Отказом аутентификации считаются только TLS-отказ и закрытие/ошибка
+    LINK-AUTH без прикладных данных; таймаут и ошибка соединения — неопределённость (ERROR), не успех."""
+    if exc is not None:
+        if isinstance(exc, ssl.SSLError):
+            return "tls-rejected", getattr(exc, "reason", None) or str(exc)[:120]
+        if isinstance(exc, (TimeoutError, socket.timeout)):
+            return "timeout", "нет ответа — отказ не подтверждён"
+        if isinstance(exc, ConnectionResetError | BrokenPipeError):
+            return "closed", type(exc).__name__
+        return "conn-error", f"{type(exc).__name__}: {exc}"[:120]
+    if data is None or data == b"":
+        return "closed", "соединение закрыто сервером без данных"
+    if b"LINK-AUTH" in data and b'"type":"hello"' not in data:
+        return "auth-error", "сервер ответил error LINK-AUTH"
+    if b'"type":"hello"' in data or b'"type":"telemetry"' in data:
+        return "data", "ПОЛУЧЕНЫ ДАННЫЕ SHRG-LAB"
+    return "unknown", f"неожиданный ответ {data[:60]!r}"
+
+
+def judge_attempt(client, new_auth_lines, new_sessions):
+    """REJECTED — только при трёх доказательствах: отказ у клиента, запись auth: в журнале сервера, нет сессии."""
+    kind = client[0]
+    if kind == "data" or new_sessions:
+        return "ACCEPTED"
+    if kind in ("tls-rejected", "closed", "auth-error") and new_auth_lines:
+        return "REJECTED"
+    return "INCONCLUSIVE"
+
+
+def _journal(rh, pattern):
+    return [x for x in ssh(rh, f"journalctl -b -u sheregesh-remote-net -o cat --no-pager | grep -E '{pattern}'")
+            .splitlines() if x.strip()]
+
+
 def sc_outsider(ch, rh, port=7443):
     from sheregesh.link import pki
-    log0 = int(ssh(rh, "journalctl -b -u sheregesh-remote-net -o cat --no-pager | grep -c 'auth:'") or 0)
-    res = {}
+    if not wait(connected(ch), 60):
+        return {"verdict": "ERROR", "reason": "нет штатного соединения до сценария"}
     try:
-        with socket.create_connection((rh, port), timeout=5) as s:                 # 1. TCP без TLS
+        with socket.create_connection((rh, port), timeout=5) as s:
+            me = s.getsockname()[0]                                                # адрес Mac, как его видит pi2
+    except OSError as e:
+        return {"verdict": "ERROR", "reason": f"сервер блока недоступен: {e}"}
+
+    def attempt(name, fn):
+        a0 = len(_journal(rh, f"auth: .*{me}"))
+        s0 = len(_journal(rh, f"session from {me}"))
+        try:
+            client = classify_client(data=fn())
+        except Exception as e:                                                    # noqa: BLE001 — классифицируется
+            client = classify_client(exc=e)
+        time.sleep(1.0)
+        auth = _journal(rh, f"auth: .*{me}")[a0:]
+        sess = _journal(rh, f"session from {me}")[s0:]
+        return {"client": {"kind": client[0], "detail": client[1]}, "server_auth_log": auth,
+                "server_sessions": sess, "result": judge_attempt(client, auth, sess)}
+
+    def plain():
+        with socket.create_connection((rh, port), timeout=5) as s:
             s.sendall(b'{"proto":"1.1","type":"hello","seq":1,"ts":0,"body":{}}\n')
             s.settimeout(8)
-            data = s.recv(4096)
-            res["plain_tcp"] = "данных SHRG-LAB нет" if b'"type":"hello"' not in data else "ПОЛУЧЕНЫ ДАННЫЕ"
-    except OSError as e:
-        res["plain_tcp"] = f"отказ: {type(e).__name__}"
+            return s.recv(4096)
 
-    def tls_try(cert=None, key=None, ca=None):
+    def tls_try(cert=None, key=None):
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         if cert:
             ctx.load_cert_chain(cert, key)
-        try:
-            with socket.create_connection((rh, port), timeout=5) as raw, ctx.wrap_socket(raw) as s:
-                s.settimeout(8)
-                data = s.recv(4096)
-                return "данных SHRG-LAB нет" if b'"type":"hello"' not in data else "ПОЛУЧЕНЫ ДАННЫЕ"
-        except (ssl.SSLError, OSError) as e:
-            return f"отказ: {getattr(e, 'reason', None) or type(e).__name__}"
-    res["tls_no_cert"] = tls_try()
+        with socket.create_connection((rh, port), timeout=5) as raw, ctx.wrap_socket(raw) as s:
+            s.settimeout(8)
+            return s.recv(4096)
+
+    res = {"plain_tcp": attempt("plain_tcp", plain), "tls_no_cert": attempt("tls_no_cert", tls_try)}
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         pki.ca_init(tmp / "rogue", name="Rogue CA")
         d = tmp / "rogue-dev"
         pki.install(d, pki.ca_sign(tmp / "rogue", pki.keygen("console", "ROGUE", d), "console", "ROGUE"),
                     (tmp / "rogue" / "ca.crt").read_text(), "console", "ROGUE")
-        res["tls_rogue_ca"] = tls_try(str(d / "device.crt"), str(d / "device.key"))
+        res["tls_rogue_ca"] = attempt("tls_rogue_ca", lambda: tls_try(str(d / "device.crt"), str(d / "device.key")))
         if (CA_DIR / "ca.key").exists():                                          # подлинный CA, чужое устройство
             d2 = tmp / "intruder"
             pki.install(d2, pki.ca_sign(CA_DIR, pki.keygen("console", "INTRUDER", d2), "console", "INTRUDER"),
                         (CA_DIR / "ca.crt").read_text(), "console", "INTRUDER")
-            res["tls_lab_ca_wrong_identity"] = tls_try(str(d2 / "device.crt"), str(d2 / "device.key"))
-    time.sleep(1)
-    log = ssh(rh, "journalctl -b -u sheregesh-remote-net -o cat --no-pager | grep 'auth:' | tail -6")
-    log1 = int(ssh(rh, "journalctl -b -u sheregesh-remote-net -o cat --no-pager | grep -c 'auth:'") or 0)
-    still = jread(ch, C_STATUS).get("phase")
-    ok = all("ПОЛУЧЕНЫ" not in v for v in res.values()) and log1 - log0 >= len(res) - 1 and still == "connected"
-    return {"attempts": res, "remote_auth_log": log.splitlines(), "auth_rejections": log1 - log0,
-            "console_session_unaffected": still, "verdict": "PASS" if ok else "FAIL"}
+            res["tls_lab_ca_wrong_identity"] = attempt(
+                "tls_lab_ca_wrong_identity", lambda: tls_try(str(d2 / "device.crt"), str(d2 / "device.key")))
+        else:
+            res["tls_lab_ca_wrong_identity"] = {"result": "SKIPPED", "reason": f"нет CA стенда в {CA_DIR}"}
+    restored = wait(connected(ch), 30)                                              # штатный канал не пострадал
+    results = [v["result"] for v in res.values()]
+    verdict = ("FAIL" if "ACCEPTED" in results else "ERROR" if "INCONCLUSIVE" in results
+               else "SKIP" if "SKIPPED" in results else "PASS" if restored is not None else "FAIL")
+    return {"outsider_addr": me, "attempts": res, "console_connected_after_s": restored, "verdict": verdict}
 
 
 CLIENT_SNIPPET = r'''
@@ -210,11 +368,22 @@ print(json.dumps({k: s[k] for k in ("phase", "detail", "tls", "session", "peer")
 '''
 
 
+def _client_run(ch, peer_id, port, rh):
+    out = ssh(ch, f"python3 - {peer_id} {port} {rh} <<'EOF'\n{CLIENT_SNIPPET}\nEOF")
+    try:
+        return json.loads(out.splitlines()[-1])
+    except (ValueError, IndexError):
+        return None
+
+
 def sc_identity(ch, rh):
-    out = ssh(ch, f"python3 - remote:SOMEONE-ELSE 7443 {rh} <<'EOF'\n{CLIENT_SNIPPET}\nEOF")
-    r = json.loads(out.splitlines()[-1])
-    return {"client_on_console_expecting": "remote:SOMEONE-ELSE", "result": r,
-            "verdict": "PASS" if r["phase"] == "auth-failed" and "identity" in r["detail"] else "FAIL"}
+    r = _client_run(ch, "remote:SOMEONE-ELSE", 7443, rh)
+    if r is None or r.get("phase") not in ("auth-failed", "connected", "incompatible"):
+        return {"verdict": "ERROR", "reason": "клиент не дал определённого результата", "result": r}
+    restored = wait(connected(ch), 30)
+    ok = r["phase"] == "auth-failed" and "identity" in (r.get("detail") or "") and restored is not None
+    return {"client_on_console_expecting": "remote:SOMEONE-ELSE", "result": r, "console_connected_after_s": restored,
+            "verdict": "PASS" if ok else "FAIL"}
 
 
 def sc_version(ch, rh):
@@ -223,24 +392,38 @@ def sc_version(ch, rh):
             ">/tmp/v2.log 2>&1 & echo $! > /tmp/v2.pid")
     time.sleep(3)
     try:
-        out = ssh(ch, f"python3 - remote:{rid} 7543 {rh} <<'EOF'\n{CLIENT_SNIPPET}\nEOF")
-        r = json.loads(out.splitlines()[-1])
-    finally:
-        ssh(rh, "kill $(cat /tmp/v2.pid) 2>/dev/null; sleep 1; grep -E 'hello|session' /tmp/v2.log | tail -2; rm -f /tmp/v2.pid")
-    return {"result": r, "verdict": "PASS" if r["phase"] == "incompatible" and r["detail"] == "major" else "FAIL"}
+        r = _client_run(ch, f"remote:{rid}", 7543, rh)
+    finally:                                     # временный сервер 2.0 не остаётся
+        log = ssh(rh, "kill $(cat /tmp/v2.pid) 2>/dev/null; sleep 1; grep -E 'hello|session' /tmp/v2.log | tail -2; "
+                      "rm -f /tmp/v2.pid; pgrep -f 'protocol 2.0' || echo stopped")
+    if r is None or r.get("phase") not in ("auth-failed", "connected", "incompatible"):
+        return {"verdict": "ERROR", "reason": "клиент не дал определённого результата", "result": r, "server": log}
+    restored = wait(connected(ch), 30)
+    ok = r["phase"] == "incompatible" and r["detail"] == "major" and log.endswith("stopped") and restored is not None
+    return {"result": r, "server_log": log.splitlines(), "console_connected_after_s": restored,
+            "verdict": "PASS" if ok else "FAIL"}
+
+
+NET_CHECKS = ("config.link", "link.state", "link.versions", "certs.device", "certs.ca", "certs.key-mode")
 
 
 def sc_health(ch, rh):
-    out = {}
+    """Сетевой режим: проверки профиля, канала, версий и сертификатов обязаны быть PASS — SKIP здесь не успех."""
+    out, problems = {}, []
     for name, h in (("console", ch), ("remote", rh)):
         try:
-            out[name] = json.loads(ssh(h, "sheregesh-health --json") or "{}")
+            out[name] = json.loads(ssh(h, f"sheregesh-health --json --role {name}") or "{}")
         except ValueError:
-            out[name] = {"verdict": "ERROR"}
-    return {**out, "verdict": "PASS" if all(v.get("verdict") == "PASS" for v in out.values()) else "FAIL"}
+            return {"verdict": "ERROR", "reason": f"{name}: health не вернул JSON"}
+        st = {c["id"]: c["status"] for c in out[name].get("checks", [])}
+        problems += [f"{name}:{cid}={st.get(cid, 'нет')}" for cid in NET_CHECKS if st.get(cid) != "PASS"]
+        if out[name].get("verdict") != "PASS":
+            problems.append(f"{name}: verdict {out[name].get('verdict')}")
+    return {**out, "network_checks_not_pass": problems, "verdict": "FAIL" if problems else "PASS"}
 
 
-SCENARIOS = {"baseline": sc_baseline, "hb-loss": lambda c, r: sc_pause(c, r, 5, False),
+VERDICTS = ("PASS", "FAIL", "SKIP", "ERROR")
+SCENARIOS = {"connect": sc_connect, "baseline": sc_baseline, "ports": sc_ports, "hb-loss": lambda c, r: sc_pause(c, r, 5, False),
              "watchdog": lambda c, r: sc_pause(c, r, 25, True), "restart": sc_restart, "outsider": sc_outsider,
              "identity": sc_identity, "version": sc_version, "health": sc_health}
 
@@ -261,15 +444,21 @@ def main(argv=None):
     summary = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "boards": meta, "results": {}}
     for name in a.only.split(","):
         print(f"== {name}", flush=True)
+        started, t0 = time.strftime("%Y-%m-%dT%H:%M:%S%z"), time.monotonic()
         try:
             r = SCENARIOS[name](a.console, a.remote)
-        except Exception as e:                                   # noqa: BLE001 — протокол фиксирует любой сбой сценария
+        except Exception as e:                                   # noqa: BLE001 — сбой стенда — ERROR, не PASS
             r = {"verdict": "ERROR", "error": f"{type(e).__name__}: {e}"}
+        if r.get("verdict") not in VERDICTS:
+            r = {**r, "verdict": "ERROR", "error": f"неизвестный вердикт {r.get('verdict')!r}"}
+        r = {"scenario": name, "started": started, "duration_s": round(time.monotonic() - t0, 1), **r}
         (a.out / f"{name}.json").write_text(json.dumps({"boards": meta, **r}, ensure_ascii=False, indent=1))
         summary["results"][name] = r["verdict"]
-        print(f"   {r['verdict']}", flush=True)
+        print(f"   {r['verdict']}" + (f" — {r.get('reason') or r.get('error')}" if r["verdict"] != "PASS" else ""),
+              flush=True)
+    summary["counts"] = {v: sum(x == v for x in summary["results"].values()) for v in VERDICTS}
     (a.out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1))
-    print(json.dumps(summary["results"], ensure_ascii=False))
+    print(json.dumps(summary["results"], ensure_ascii=False), summary["counts"])
     return 0 if all(v == "PASS" for v in summary["results"].values()) else 1
 
 
