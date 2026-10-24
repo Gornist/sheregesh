@@ -56,7 +56,6 @@ WRAPPERS = {   # команда → модуль (-m) или скрипт из /
     "usr/bin/sheregesh-ota-agent": "sheregesh.update.ota",        # агент обновления A/B, root (S3.1-DEPLOY)
     "usr/bin/sheregesh-ota-client": "sheregesh.update.ota_client",  # клиент агента для sheregesh-ui
 }
-ISOLATED = {"usr/bin/sheregesh-deployd", "usr/bin/sheregesh-ota-agent", "usr/bin/sheregesh-ota-client"}  # python3 -s
 UNITS = Path(__file__).resolve().parent / "units"
 POSTINST = """#!/bin/sh
 set -e
@@ -125,7 +124,8 @@ def build_tree(stage: Path):
         f = stage / path
         f.parent.mkdir(parents=True, exist_ok=True)
         target = f"/{PREFIX}/{module}" if module.endswith(".py") else f"-m {module}"
-        flags = "-s " if path in ISOLATED else ""
+        # -s: без пользовательских site-packages (~/.local/…/*.pth): код команды — только из /usr (S3.1-DEPLOY).
+        flags = "-s "
         f.write_text(f"#!/bin/sh\n# {PKG}: запуск {module} из /{PREFIX}\nexport PYTHONPATH={PYTHONPATH}\n"
                      f"exec /usr/bin/python3 {flags}{target} \"$@\"\n")
         f.chmod(0o755)

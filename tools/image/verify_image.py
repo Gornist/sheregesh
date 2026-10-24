@@ -156,12 +156,25 @@ DEPLOY_UNITS = ("sheregesh-deploy@.service", "sheregesh-ota.socket", "sheregesh-
 SIGNERS = "/etc/sheregesh/deploy/allowed_signers"
 
 
+def ls_names(root, directory):
+    """Имена в каталоге: строки debugfs «ls -p» (/инод/режим/uid/gid/имя/размер/) или обычные пути."""
+    names = []
+    for line in root.ls(directory):
+        parts = line.split("/")
+        names.append(parts[5] if len(parts) >= 7 and parts[1].isdigit() else Path(line).name)
+    return [n for n in names if n not in ("", ".", "..")]
+
+
 def deploy_checks(rep, root, data, dev, groups):
     """S3.1-DEPLOY: обновления без перестановки microSD — launcher, установщик, агент OTA, ключ подписи, polkit."""
     wrappers = {w: root.cat(f"/usr/bin/{w}") for w in ("sheregesh-console", "sheregesh-remote-emu")}
     rep.add("deploy.launcher", "службы приложения стартуют через launcher (выпуск DEV deploy или /usr)",
             root.exists(LAUNCHER) and all(f"python3 -I {LAUNCHER} " in t for t in wrappers.values()),
             "; ".join(t.strip().splitlines()[-1][:90] for t in wrappers.values() if t.strip()))
+    cmds = {n: root.cat(f"/usr/bin/{n}") for n in ls_names(root, "/usr/bin") if n.startswith("sheregesh-")}
+    leaky = sorted(n for n, t in cmds.items() if "python3 -s " not in t and "python3 -I " not in t)
+    rep.add("deploy.nousersite", "команды sheregesh-* не читают пользовательские site-packages (python3 -s/-I)",
+            bool(cmds) and not leaky, ", ".join(leaky) or f"{len(cmds)} команд")
     units = {u: root.cat(f"/usr/lib/systemd/system/{u}") for u in DEPLOY_UNITS}
     rep.add("deploy.units", "юниты установщика и агента OTA есть и требуют ключа подписи (ConditionPathExists)",
             all(units.values()) and all(f"ConditionPathExists={SIGNERS}" in units[u] for u in
