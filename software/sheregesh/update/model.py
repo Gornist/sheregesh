@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Тестируемая модель состояний обновления A/B (S3.1; ADR-0006, предложение ADR-0009; REQ-UPD-001…006).
 
-Модель описывает решения, а не выполняет их: реальные действия (запись слота, tryboot, mark-good) делает бэкенд
-(SlotBackend). Здесь — FakeSlots для испытаний; реальный бэкенд (RAUC + tryboot) — этап S5. Модель не пишет
-в загрузочные разделы и не перезагружает плату.
+Модель описывает решения, а не выполняет их: реальные действия (запись слота, tryboot, mark-good) делает бэкенд.
+Здесь — FakeSlots для испытаний; бэкенд разделов image-rota — slots.BlockSlots (S3.1-DEPLOY, испытан на
+файлах-разделах), агент — ota.py; бэкенд RAUC — по решению ADR-0009. Модель не пишет в загрузочные разделы и не
+перезагружает плату.
 
 Состояния (персистентны в state.json на разделе данных; переживают перезагрузку и отключение питания):
   IDLE → VERIFIED (подпись, compatible, версия не ниже текущей — AUD-014) → INSTALLING → INSTALLED (неактивный слот
@@ -83,9 +84,11 @@ def _ver(v):
 
 
 class Updater:
-    def __init__(self, backend, state_path: Path | None = None, state: UpdateState | None = None):
+    def __init__(self, backend, state_path: Path | None = None, state: UpdateState | None = None,
+                 compatible: str = "sheregesh-pi4"):
         self.b = backend
         self.path = state_path
+        self.compatible = compatible
         self.s = state or (self._load() if state_path and Path(state_path).exists() else UpdateState())
 
     # ---------- персистентность ----------
@@ -112,7 +115,7 @@ class Updater:
             raise UpdateError(f"обновление уже идёт: {self.s.state}")
         if not bundle.get("signature_ok"):
             return self._go("FAILED", "подпись не проверена")
-        if bundle.get("compatible") != "sheregesh-pi4":
+        if bundle.get("compatible") != self.compatible:
             return self._go("FAILED", f"compatible {bundle.get('compatible')!r}")
         if _ver(bundle["version"]) < _ver(self.s.version_active):
             return self._go("FAILED", "версия ниже текущей (защита от отката, AUD-014)")
@@ -164,6 +167,22 @@ class Updater:
         self.s.active, self.s.version_active = self.s.target, self.s.version_target
         self.s.target = self.s.version_target = None
         self._go("COMMITTED")
+
+    def reset(self, active: str, version_active: str, reason="сброс оператором"):
+        """Возврат в IDLE вне процесса загрузки нового слота (после FAILED, ROLLED_BACK, COMMITTED, до tryboot).
+        Слоты не трогает; активный слот и версия берутся из фактического состояния платы."""
+        if self.s.state in ("INSTALLING", "TRYBOOT", "HEALTH_PENDING"):
+            raise UpdateError(f"сброс невозможен в состоянии {self.s.state}")
+        self.s.active, self.s.version_active = active, version_active
+        self.s.target = self.s.version_target = None
+        self.s.boot_attempts = 0
+        self._go("IDLE", reason)
+
+    def abort_trial(self, reason):
+        """Отказ от пробной загрузки на прежнем слоте (TRYBOOT/HEALTH_PENDING): основной слот не менялся."""
+        if self.s.state not in ("TRYBOOT", "HEALTH_PENDING"):
+            raise UpdateError(f"нет пробной загрузки: {self.s.state}")
+        return self._rollback(reason)
 
     def _rollback(self, reason):
         self.b.set_tryboot(None)

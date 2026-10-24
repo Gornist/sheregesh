@@ -34,6 +34,8 @@ jobs:
         variant: [sheregesh-lab-pi4, sheregesh-lab-dev-pi4]
     env:
       DEV_PUBKEY: ${{ vars.SHEREGESH_DEV_PUBKEY }}
+      # S3.1-DEPLOY: открытый ключ подписи выпусков (DEV deploy, OTA); без него — ключ входа (предупреждение в журнале).
+      DEPLOY_PUBKEY_TEXT: ${{ vars.SHEREGESH_DEPLOY_PUBKEY }}
     steps:
       - name: Пропуск dev-варианта без открытого ключа
         id: gate
@@ -69,6 +71,9 @@ jobs:
         run: |
           if [[ "${{ matrix.variant }}" == *-dev-* ]]; then
             printf '%s\n' "$DEV_PUBKEY" > "$RUNNER_TEMP/dev.pub"; export SSH_PUBKEY="$RUNNER_TEMP/dev.pub"
+            if [[ -n "$DEPLOY_PUBKEY_TEXT" ]]; then
+              printf '%s\n' "$DEPLOY_PUBKEY_TEXT" > "$RUNNER_TEMP/deploy.pub"; export DEPLOY_PUBKEY="$RUNNER_TEMP/deploy.pub"
+            fi
           fi
           OUT="$PWD/build/image/${{ matrix.variant }}" os/build.sh "${{ matrix.variant }}"
       - name: Сводка

@@ -167,5 +167,109 @@ class BuildDebTest(unittest.TestCase):
         self.assertIn("--peer 127.0.0.1:7700", ui)
 
 
+class FakeRoot:
+    """Корневая ФС образа как словарь путь → текст (заменяет debugfs в проверках S3.1-DEPLOY)."""
+
+    def __init__(self, files):
+        self.files = files
+
+    def cat(self, path):
+        return self.files.get(path, "")
+
+    def exists(self, path):
+        return path in self.files
+
+    def ls(self, path):
+        return [p for p in self.files if p.startswith(path.rstrip("/") + "/")]
+
+
+class DeployImageTest(unittest.TestCase):
+    """S3.1-DEPLOY: обёртки через launcher, юниты, polkit и ключ подписи — в .deb и в проверке образа."""
+
+    def deb_tree(self):
+        real_run = subprocess.run
+
+        def fake_run(cmd, *a, **kw):                     # lrelease не нужен: .qm подменяется заглушкой
+            if cmd and cmd[0] == "true":
+                Path(cmd[-1]).write_bytes(b"qm")
+                return subprocess.CompletedProcess(cmd, 0, b"", b"")
+            return real_run(cmd, *a, **kw)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(build_deb, "lrelease", return_value="true"), \
+                mock.patch.object(build_deb.subprocess, "run", side_effect=fake_run):
+            stage = Path(tmp)
+            build_deb.build_tree(stage)
+            return {p.relative_to(stage).as_posix(): p.read_text(errors="replace") for p in stage.rglob("*")
+                    if p.is_file() and not p.name.endswith((".qm", ".ts"))}
+
+    def test_deb_wrappers_units_and_build_info(self):
+        t = self.deb_tree()
+        for w in ("usr/bin/sheregesh-console", "usr/bin/sheregesh-remote-emu"):
+            self.assertIn(f"exec /usr/bin/python3 -I {build_deb.LAUNCHER} ", t[w])
+        self.assertIn(build_deb.LAUNCHER.lstrip("/"), t)
+        self.assertIn("python3 -s -m sheregesh.deploy.installer", t["usr/bin/sheregesh-deployd"])
+        self.assertIn("-m sheregesh.health", t["usr/bin/sheregesh-health"])            # диагностика — из /usr
+        for u in vi.DEPLOY_UNITS:
+            self.assertIn(f"usr/lib/systemd/system/{u}", t)
+        info = json.loads(t["usr/share/sheregesh/build.json"])
+        self.assertRegex(info["ota_version"], r"^\d+\.\d+\.\d+$")
+        deploy = t["usr/lib/systemd/system/sheregesh-deploy@.service"]
+        for line in ("ExecStart=/usr/bin/sheregesh-deployd %i", "ProtectSystem=strict", "IPAddressDeny=any",
+                     f"ConditionPathExists={vi.SIGNERS}"):
+            self.assertIn(line, deploy)
+        sock = t["usr/lib/systemd/system/sheregesh-ota.socket"]
+        self.assertNotRegex(sock, r"ListenStream=\d|ListenStream=\[|ListenDatagram")      # только UNIX-сокет
+
+    def test_polkit_rule_and_layer(self):
+        rules = (ROOT / "os/layer/sheregesh-dev-access.d/50-sheregesh-dev.rules").read_text()
+        self.assertIn('action.lookup("verb") == "start"', rules)
+        self.assertNotIn("sheregesh-ota", rules)
+        layer = (ROOT / "os/layer/sheregesh-dev-access.yaml").read_text()
+        self.assertIn("/etc/sheregesh/deploy/allowed_signers", layer)
+        lab = (ROOT / "os/layer/sheregesh-lab.yaml").read_text()
+        self.assertIn("sheregesh-ota.socket sheregesh-ota-boot", lab)
+
+    def image_root(self, dev=True, signer_same=False):
+        t = self.deb_tree()
+        files = {"/" + k: v for k, v in t.items()}
+        files["/etc/systemd/system/sockets.target.wants/sheregesh-ota.socket"] = "x"
+        files["/etc/systemd/system/multi-user.target.wants/sheregesh-ota-boot.service"] = "x"
+        if dev:
+            files[vi.SIGNERS] = 'sheregesh-deploy namespaces="sheregesh-deploy" ssh-ed25519 SIGNERKEY\n'
+            files["/etc/polkit-1/rules.d/50-sheregesh-dev.rules"] = \
+                (ROOT / "os/layer/sheregesh-dev-access.d/50-sheregesh-dev.rules").read_text()
+        data = FakeRoot({"/home/sheregesh-ui/.ssh/authorized_keys":
+                         f"ssh-ed25519 {'SIGNERKEY' if signer_same else 'LOGINKEY'} owner\n"})
+        return FakeRoot(files), data
+
+    def run_checks(self, root, data, dev):
+        rep = vi.Report()
+        with contextlib.redirect_stdout(io.StringIO()):
+            vi.deploy_checks(rep, root, data, dev, {"sheregesh-ui": []})
+        return {c["id"]: c for c in rep.checks}
+
+    def test_verify_deploy_checks_pass_on_dev_and_strict(self):
+        root, data = self.image_root(dev=True)
+        r = self.run_checks(root, data, True)
+        self.assertEqual({k: v["status"] for k, v in r.items() if v["status"] != "PASS"}, {})
+        self.assertIn("отдельный", r["deploy.signers"]["detail"])
+        root, data = self.image_root(dev=True, signer_same=True)
+        self.assertIn("ВНИМАНИЕ", self.run_checks(root, data, True)["deploy.signers"]["detail"])
+        root, data = self.image_root(dev=False)
+        r = self.run_checks(root, data, False)
+        self.assertEqual(r["deploy.absent"]["status"], "PASS")
+
+    def test_verify_deploy_checks_catch_regressions(self):
+        root, data = self.image_root(dev=True)
+        root.files["/usr/bin/sheregesh-console"] = "exec /usr/bin/python3 -m sheregesh_console\n"
+        root.files["/etc/polkit-1/rules.d/50-sheregesh-dev.rules"] += '\n"sheregesh-deploy@shell.service"\n'
+        del root.files["/etc/systemd/system/sockets.target.wants/sheregesh-ota.socket"]
+        r = self.run_checks(root, data, True)
+        for cid in ("deploy.launcher", "deploy.polkit", "deploy.enabled"):
+            self.assertEqual(r[cid]["status"], "FAIL", cid)
+        root, data = self.image_root(dev=False)
+        root.files[vi.SIGNERS] = "x"
+        self.assertEqual(self.run_checks(root, data, False)["deploy.absent"]["status"], "FAIL")
+
+
 if __name__ == "__main__":
     unittest.main()

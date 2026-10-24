@@ -10,5 +10,7 @@
 | [ADR-0006](ADR-0006-updates-and-recovery.md) | A/B-обновления, откат, восстановление | Принято; проба S2-5 |
 | [ADR-0007](ADR-0007-lab-link-and-remote-management.md) | Лабораторный обмен и управление удалённым блоком (D3) | Принято |
 | [ADR-0008](ADR-0008-emulators-and-test-levels.md) | Эмуляторы и уровни испытаний | Принято |
+| [ADR-0009](ADR-0009-update-mechanism.md) | Единый механизм обновлений: RAUC + tryboot, разметка image-rota | Предложено; дополнение S3.1-DEPLOY — варианты A/B/C |
+| [ADR-0010](ADR-0010-dev-deploy.md) | Обновления лабораторных плат без перестановки microSD (DEV deploy, подготовка OTA) | Предложено (только dev-образ) |
 
 ADR не меняет требования. Если решение затрагивает требование, оно оформляется записью CHG в `docs/requirements/requirements.json`.

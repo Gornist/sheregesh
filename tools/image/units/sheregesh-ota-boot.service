@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Учёт загрузки для обновления A/B: определяет слот и пробную загрузку, переводит состояние (TRYBOOT →
+# HEALTH_PENDING или ROLLED_BACK). Слоты НЕ переключает, mark-good НЕ выполняет, не перезагружает.
+[Unit]
+Description=Sheregesh: A/B update bookkeeping at boot (no slot switching)
+ConditionPathExists=/etc/sheregesh/deploy/allowed_signers
+RequiresMountsFor=/persistent /bootfs
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sheregesh-ota-agent on-boot
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+WantedBy=multi-user.target

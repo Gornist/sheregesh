@@ -8,7 +8,8 @@
 в порядке autoboot | boot-A | boot-B | root-A | root-B | data, типы, размеры, выравнивание, сигнатуры и метки FAT/ext4,
 побайтовая идентичность слотов A и B.
 Содержимое (если доступны debugfs из e2fsprogs и mtools): корень только для чтения, службы, учётные записи
-заблокированы, SSH по варианту, хост-ключей SSH в образе нет, Wi-Fi/Bluetooth выключены, tryboot, манифест пакетов.
+заблокированы, SSH по варианту, хост-ключей SSH в образе нет, Wi-Fi/Bluetooth выключены, tryboot, манифест пакетов,
+обновления без перестановки microSD (S3.1-DEPLOY: launcher, установщик, агент OTA, ключ подписи, polkit).
 Нет инструмента — проверка SKIP с причиной (не PASS). Итог — DIR/verify.json и DIR/<имя>.packages.tsv; код 1 при FAIL.
 
 Проверка образа не заменяет загрузку на Pi: tryboot, A/B-откат, дисплей и производительность — NOT TESTED.
@@ -17,6 +18,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -149,6 +151,65 @@ def mtype(img, part, name):
     return r.stdout if r.returncode == 0 else None
 
 
+LAUNCHER = "/usr/lib/sheregesh/software/sheregesh/deploy/launcher.py"
+DEPLOY_UNITS = ("sheregesh-deploy@.service", "sheregesh-ota.socket", "sheregesh-ota@.service", "sheregesh-ota-boot.service")
+SIGNERS = "/etc/sheregesh/deploy/allowed_signers"
+
+
+def ls_names(root, directory):
+    """Имена в каталоге: строки debugfs «ls -p» (/инод/режим/uid/gid/имя/размер/) или обычные пути."""
+    names = []
+    for line in root.ls(directory):
+        parts = line.split("/")
+        names.append(parts[5] if len(parts) >= 7 and parts[1].isdigit() else Path(line).name)
+    return [n for n in names if n not in ("", ".", "..")]
+
+
+def deploy_checks(rep, root, data, dev, groups):
+    """S3.1-DEPLOY: обновления без перестановки microSD — launcher, установщик, агент OTA, ключ подписи, polkit."""
+    wrappers = {w: root.cat(f"/usr/bin/{w}") for w in ("sheregesh-console", "sheregesh-remote-emu")}
+    rep.add("deploy.launcher", "службы приложения стартуют через launcher (выпуск DEV deploy или /usr)",
+            root.exists(LAUNCHER) and all(f"python3 -I {LAUNCHER} " in t for t in wrappers.values()),
+            "; ".join(t.strip().splitlines()[-1][:90] for t in wrappers.values() if t.strip()))
+    cmds = {n: root.cat(f"/usr/bin/{n}") for n in ls_names(root, "/usr/bin") if n.startswith("sheregesh-")}
+    leaky = sorted(n for n, t in cmds.items() if "python3 -s " not in t and "python3 -I " not in t)
+    rep.add("deploy.nousersite", "команды sheregesh-* не читают пользовательские site-packages (python3 -s/-I)",
+            bool(cmds) and not leaky, ", ".join(leaky) or f"{len(cmds)} команд")
+    units = {u: root.cat(f"/usr/lib/systemd/system/{u}") for u in DEPLOY_UNITS}
+    rep.add("deploy.units", "юниты установщика и агента OTA есть и требуют ключа подписи (ConditionPathExists)",
+            all(units.values()) and all(f"ConditionPathExists={SIGNERS}" in units[u] for u in
+                                        ("sheregesh-deploy@.service", "sheregesh-ota.socket", "sheregesh-ota-boot.service"))
+            and root.exists("/usr/bin/sheregesh-deployd") and root.exists("/usr/bin/sheregesh-ota-agent"),
+            ", ".join(u for u, t in units.items() if not t) or "все на месте")
+    sock = units["sheregesh-ota.socket"]
+    rep.add("deploy.socket", "сокет агента OTA: 0660 root:sheregesh-ui, только локальный (без сетевого Listen)",
+            "SocketMode=0660" in sock and "SocketGroup=sheregesh-ui" in sock and "ListenStream=/run/" in sock
+            and "sheregesh-ui" in groups)
+    wants = " ".join(root.ls("/etc/systemd/system/sockets.target.wants") +
+                     root.ls("/etc/systemd/system/multi-user.target.wants"))
+    rep.add("deploy.enabled", "включены sheregesh-ota.socket и sheregesh-ota-boot (учёт загрузки без переключений)",
+            "sheregesh-ota.socket" in wants and "sheregesh-ota-boot.service" in wants)
+    build = root.cat("/usr/share/sheregesh/build.json")
+    rep.add("deploy.build", "версия системной части для OTA (/usr/share/sheregesh/build.json)",
+            '"ota_version"' in build, build.replace("\n", " ")[:120])
+    signers = root.cat(SIGNERS)
+    if dev:
+        keys = data.cat("/home/sheregesh-ui/.ssh/authorized_keys").split()
+        same = len(keys) >= 2 and keys[1] in signers
+        rep.add("deploy.signers", "dev: открытый ключ подписи выпусков установлен, закрытых ключей нет",
+                signers.startswith("sheregesh-deploy namespaces=") and "PRIVATE KEY" not in signers,
+                ("ВНИМАНИЕ: ключ подписи совпадает с ключом входа" if same else "отдельный ключ подписи"))
+        rules = root.cat("/etc/polkit-1/rules.d/50-sheregesh-dev.rules")
+        deploy_units = set(re.findall(r'"(sheregesh-deploy@[a-z]+\.service)"', rules))
+        rep.add("deploy.polkit", "polkit: sheregesh-ui — только «start» install/rollback/factory установщика",
+                deploy_units == {f"sheregesh-deploy@{a}.service" for a in ("install", "rollback", "factory")}
+                and 'action.lookup("verb") == "start"' in rules and "sheregesh-ota" not in rules,
+                ", ".join(sorted(deploy_units)))
+    else:
+        rep.add("deploy.absent", "строгий вариант: ключа подписи нет — DEV deploy и агент OTA не работают",
+                not root.exists(SIGNERS))
+
+
 def verify(img, variant, out):
     rep = Report()
     dev = "-dev-" in variant
@@ -255,6 +316,7 @@ def verify(img, variant, out):
                 rep.add("net.lab", "статический адрес стенда 192.168.77.1/24 без шлюза (ADR-0007)",
                         "Address=192.168.77.1/24" in (n := root.cat("/etc/systemd/network/20-sheregesh-lab.network"))
                         and "Gateway" not in n)
+            deploy_checks(rep, root, data, dev, groups)
             packages_tsv = root.cat("/usr/share/sheregesh/image-packages.tsv")
             status = data.cat("/slots/system_a/var/lib/dpkg/status")
             # Установлен — если последнее слово Status «installed» (в т. ч. «purge ok installed» после неудачного purge).
