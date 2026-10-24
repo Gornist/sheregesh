@@ -27,6 +27,8 @@ from sheregesh.update import ota, slots  # noqa: E402
 
 RESULTS = []
 SERIAL = "TESTSERIAL00ota"
+# Режим агента: «new» — код репозитория; «old» — агент образа на платах (57e8fe4), он выполнит первую установку
+OLD = (W / "agent-mode").exists() and (W / "agent-mode").read_text().strip() == "old"
 
 
 def check(name, ok, detail=""):
@@ -170,9 +172,10 @@ def main():
                             var=str(pers / "slots/system_a/var"))
 
         def agent():
+            extra = {"root": root} if "root" in ota.AgentConfig.__dataclass_fields__ else {}   # у агента 57e8fe4 нет
             cfg = ota.AgentConfig(paths=paths, state_dir=pers / "sheregesh-ota-test", signers=W / "allowed_signers",
                                   build_json=W / "build.json", serial=W / "serial", dev_mode=etc / "DEV-MODE",
-                                  tryboot_cmd=("true",), reboot_cmd=("true",), root=root)
+                                  tryboot_cmd=("true",), reboot_cmd=("true",), **extra)
             return ota.Agent(cfg)
 
         def request(action, stream=None, **extra):
@@ -230,12 +233,20 @@ def main():
         check("общие данные (home, ключи, сертификаты, роль, /etc/ssh, machine-id) не изменились",
               tree_hashes(pers, skip=keep) == pers0)
         var_b = pers / "slots/system_b/var"
-        check("/var слота B создан из нового образа", (var_b / "lib/dpkg/status").exists())
+        if OLD:
+            check("старый агент: /var слота B без образца (дополнит sheregesh-var-seed при первой загрузке)",
+                  not (var_b / "lib/dpkg/status").exists() and var_b.is_dir())
+        else:
+            check("/var слота B создан из нового образа", (var_b / "lib/dpkg/status").exists())
         check("конфигурация пульта перенесена в B", read_or_none(var_b / "lib/sheregesh/config/active") == "r7\n")
         check("/var слота A не изменён", cfg_a.read_text() == "r7\n")
         exp = res["state"].get("expect", {})
-        check("отпечатки для подтверждения сняты (роль console, ключ, machine-id)",
-              exp.get("role") == "console" and exp.get("device_key") and exp.get("machine_id"), exp)
+        if OLD:
+            check("старый агент: отпечатков expect нет (подтверждение — по целостности, сравнение — процедурой)",
+                  not exp, exp)
+        else:
+            check("отпечатки для подтверждения сняты (роль console, ключ, machine-id)",
+                  exp.get("role") == "console" and exp.get("device_key") and exp.get("machine_id"), exp)
         # содержимое нового слота: версия, исправление app-stop, юниты = манифест
         (mnt / "newsys").mkdir(exist_ok=True)
         sh("mount", "-o", "ro,noload", "-t", "ext4", p(5), str(mnt / "newsys"))
@@ -295,7 +306,12 @@ def main():
         check("tryboot: OK (перезагрузка подменена)", res["result"] == "OK", res.get("reason"))
         check("autoboot.txt на FAT: [all]=2 (основной A), [tryboot]=3",
               slots.autoboot_parts((mnt / "bootfs/autoboot.txt").read_text()) == (2, 3))
-        check("конфигурация перенесена заново перед tryboot (r8)", read_or_none(var_b / "lib/sheregesh/config/active") == "r8\n")
+        if OLD:
+            check("старый агент: перед tryboot конфигурация НЕ переносится заново (r7) — между шагами 1 и 3 не менять",
+                  read_or_none(var_b / "lib/sheregesh/config/active") == "r7\n")
+        else:
+            check("конфигурация перенесена заново перед tryboot (r8)",
+                  read_or_none(var_b / "lib/sheregesh/config/active") == "r8\n")
         # 6. Повторная установка во время пробной загрузки — отказ; отмена — без смены основного слота
         with open(W / "payload.shota", "rb") as f:
             res, _ = request("install", f)

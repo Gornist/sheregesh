@@ -37,6 +37,7 @@ def main(argv=None):
     ap.add_argument("--image", default="ghcr.io/armbian/docker-armbian-build:armbian-debian-trixie-latest")
     ap.add_argument("--log", type=Path)
     ap.add_argument("--result", type=Path)
+    ap.add_argument("--agent-rev", help="коммит, чей код агента выполняет установку (57e8fe4 — агент образа на платах)")
     a = ap.parse_args(argv)
     with tempfile.TemporaryDirectory() as tmp:
         ctx = Path(tmp)
@@ -51,8 +52,14 @@ def main(argv=None):
         (ctx / "enable.json").write_bytes(token)
         (ctx / "enable.json.sig").write_bytes(sig.sign(token, a.key, sig.NS_OTA_ENABLE))
         shutil.copy(HERE / "check.py", ctx / "check.py")
-        shutil.copytree(ROOT / "software/sheregesh", ctx / "software/sheregesh",
-                        ignore=shutil.ignore_patterns("__pycache__"))
+        if a.agent_rev:                                 # код агента из указанного коммита (как в образе на платах)
+            (ctx / "software").mkdir()
+            subprocess.run(f"git -C {ROOT} archive {a.agent_rev} software/sheregesh | tar -x -C {ctx}", shell=True,
+                           check=True)
+            (ctx / "agent-mode").write_text("old\n")
+        else:
+            shutil.copytree(ROOT / "software/sheregesh", ctx / "software/sheregesh",
+                            ignore=shutil.ignore_patterns("__pycache__"))
         for f in ("foreign", "foreign.pub"):
             (ctx / f).unlink()                          # посторонний ключ не нужен на хосте
         h = a.docker_host
@@ -70,7 +77,7 @@ def main(argv=None):
     res = subprocess.run(["ssh", h, "cat /tmp/sheregesh-ota-result.json; rm -f /tmp/sheregesh-ota-result.json"],
                          capture_output=True, text=True).stdout
     meta = {"payload": a.payload.name, "payload_sha256": hashlib.sha256(a.payload.read_bytes()).hexdigest(),
-            "base": a.base.name}
+            "base": a.base.name, "agent": a.agent_rev or "repository"}
     if a.log:
         a.log.write_text(json.dumps(meta, ensure_ascii=False) + "\n" + out)
     if a.result and res.strip():
