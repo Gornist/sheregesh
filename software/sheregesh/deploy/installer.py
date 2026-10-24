@@ -86,7 +86,7 @@ class Systemd:
                                timeout=timeout)
         except subprocess.TimeoutExpired:
             return False, f"нет READY за {timeout:.0f} с"
-        return r.returncode == 0, (r.stderr.strip()[-200:] or "ok")
+        return r.returncode == 0, ((r.stderr.strip().splitlines() or ["ok"])[0][:160])
 
 
 def _now():
