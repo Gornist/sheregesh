@@ -5,9 +5,12 @@
 Пишет кадры RGBx 640×360 в stdout с частотой FPS, как `gst-launch-1.0 v4l2src … ! fdsink`.
   fake_capture.py PIDFILE FRAMES AFTER [FPS]
 FRAMES — сколько кадров (-1 — бесконечно); AFTER — что делать потом: exit (код 1, как v4l2src при отключении
-устройства) или hang (процесс жив, кадров нет — зависшее устройство). Каждый запуск дописывает свой PID в PIDFILE.
+устройства), hang (процесс жив, кадров нет — зависшее устройство), closeout (stdout закрыт, процесс жив — обрыв
+канала кадров) или hang-child (как hang, но ещё и порождён внук в той же группе процессов — как элементы GStreamer
+с собственными процессами; его PID тоже пишется в PIDFILE). Каждый запуск дописывает свой PID в PIDFILE.
 """
 import os
+import subprocess
 import sys
 import time
 
@@ -28,6 +31,18 @@ try:
         time.sleep(1 / fps)
 except BrokenPipeError:
     sys.exit(0)
+if after == "closeout":
+    out.close()
+    try:
+        os.close(1)
+    except OSError:
+        pass
+    time.sleep(3600)
+if after == "hang-child":
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(3600)"])
+    with open(pidfile, "a") as f:
+        f.write(f"{child.pid}\n")
+    time.sleep(3600)
 if after == "hang":
     time.sleep(3600)
 sys.exit(1)
