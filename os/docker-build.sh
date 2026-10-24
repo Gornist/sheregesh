@@ -13,7 +13,9 @@
 # SHEREGESH_SRC=каталог — собрать другое дерево (например, чистый checkout нужного коммита) этим же сценарием.
 # Сборочный хост без клона (devbox): SHEREGESH_SRC=распакованный git archive КОММИТ, SHEREGESH_BUNDLE=пакет git
 # с этим коммитом, SOURCE_DATE_EPOCH=время коммита (git log -1 --format=%ct КОММИТ). На хосте x86_64 нужен
-# зарегистрированный qemu-aarch64 (binfmt, флаг F) — контейнер arm64 исполняется в эмуляции.
+# зарегистрированный qemu-aarch64 (binfmt, флаг F) — контейнер arm64 исполняется в эмуляции. qemu-user не умеет
+# clone(CLONE_NEWUSER) (podman unshare → «cannot clone: Invalid argument»), поэтому там SHEREGESH_BUILD_AS_ROOT=1:
+# rpi-image-gen работает от root одноразового привилегированного контейнера, bin/ns исполняет команды без unshare.
 set -euo pipefail
 ROOT="$(cd "${SHEREGESH_SRC:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd)"
 CFG="${1:-sheregesh-lab-pi4}"
@@ -36,7 +38,7 @@ SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --format=%ct)}"
 docker volume create sheregesh-image-work >/dev/null
 exec docker run --rm --privileged --platform linux/arm64 \
   -v "$ROOT":/src:ro -v "$ROOT/build/image":/out -v sheregesh-image-work:/work ${KEYARGS[@]+"${KEYARGS[@]}"} \
-  -e CFG="$CFG" -e SHEREGESH_POST_ONLY="${SHEREGESH_POST_ONLY:-}" -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+  -e CFG="$CFG" -e SHEREGESH_POST_ONLY="${SHEREGESH_POST_ONLY:-}" -e SHEREGESH_BUILD_AS_ROOT="${SHEREGESH_BUILD_AS_ROOT:-}" -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
   debian:trixie bash -euo pipefail -c '
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq && apt-get install -y -qq --no-install-recommends sudo git ca-certificates python3 python3-yaml \
@@ -67,6 +69,7 @@ exec docker run --rm --privileged --platform linux/arm64 \
     sudo -u builder git -C /work/rpi-image-gen checkout -q --force "$RIG_REF"
     /work/rpi-image-gen/install_deps.sh >/dev/null
     mkdir -p /out/$CFG && chown builder /out/$CFG
-    sudo -u builder env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" SSH_PUBKEY="${SSH_PUBKEY:-}" DEPLOY_PUBKEY="${DEPLOY_PUBKEY:-}" SHEREGESH_POST_ONLY="$SHEREGESH_POST_ONLY" \
+    AS="sudo -u builder"; [ -n "$SHEREGESH_BUILD_AS_ROOT" ] && AS=""
+    $AS env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" SSH_PUBKEY="${SSH_PUBKEY:-}" DEPLOY_PUBKEY="${DEPLOY_PUBKEY:-}" SHEREGESH_POST_ONLY="$SHEREGESH_POST_ONLY" \
       SHEREGESH_WORK=/work OUT=/out/$CFG /work/src/os/build.sh "$CFG"
   '
