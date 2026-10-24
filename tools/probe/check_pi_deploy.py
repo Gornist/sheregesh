@@ -261,7 +261,9 @@ def _variant(name, path, transform):
     blob = subprocess.run(["git", "-C", str(ROOT), "hash-object", "-w", "--stdin"], input=transform(src),
                           capture_output=True, text=True, check=True).stdout.strip()
     with tempfile.TemporaryDirectory() as tmp:
-        env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        who = {f"GIT_{r}_{k}": v for r in ("AUTHOR", "COMMITTER")       # не зависит от настроек git машины/CI
+               for k, v in (("NAME", "check_pi_deploy"), ("EMAIL", "check-pi-deploy@sheregesh.invalid"))}
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index"), **who}
         g = lambda *x, **k: subprocess.run(["git", "-C", str(ROOT), *x], env=env, capture_output=True, text=True,  # noqa: E731
                                            check=True, **k).stdout.strip()
         g("read-tree", base)
