@@ -294,6 +294,61 @@
         <source>Mutual TLS %1 · %2 · round trip %3&#160;ms</source>
         <translation>Взаимный TLS %1 · %2 · задержка %3&#160;мс</translation>
     </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="13" />
+        <source>stream interrupted</source>
+        <translation>поток прерван</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="13" />
+        <source>decoder restarting</source>
+        <translation>перезапуск декодера</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="14" />
+        <source>GStreamer missing</source>
+        <translation>нет GStreamer</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="113" />
+        <source> · role %1</source>
+        <translation> · роль %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="114" />
+        <source> · software %1</source>
+        <translation> · ПО %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="137" />
+        <source>No TLS (local test channel) · round trip %1&#160;ms</source>
+        <translation>Без TLS (локальный тестовый канал) · круговая задержка %1&#160;мс</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="144" />
+        <source>Authentication failures: %1</source>
+        <translation>Отказы аутентификации: %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="151" />
+        <source>Video: playing · %1&#160;fps</source>
+        <translation>Видео: воспроизводится · %1&#160;к/с</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="152" />
+        <source>Video: waiting for stream</source>
+        <translation>Видео: ожидание потока</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="153" />
+        <source>Video: no stream</source>
+        <translation>Видео: потока нет</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="154" />
+        <source>Video: no frames (%1)</source>
+        <translation>Видео: нет кадров (%1)</translation>
+    </message>
 </context>
 <context>
     <name>DiagnosticsPage</name>
@@ -492,6 +547,26 @@
         <location filename="../qml/Main.qml" line="146" />
         <source>Software %1 · protocol %2</source>
         <translation>ПО %1 · протокол %2</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="32" />
+        <source>Remote unit: connected</source>
+        <translation>Удалённый блок: связь есть</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="32" />
+        <source>Remote unit: link error</source>
+        <translation>Удалённый блок: ошибка связи</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="33" />
+        <source>Remote unit: connecting…</source>
+        <translation>Удалённый блок: подключение…</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="33" />
+        <source>Remote unit: no link</source>
+        <translation>Удалённый блок: нет связи</translation>
     </message>
 </context>
 <context>

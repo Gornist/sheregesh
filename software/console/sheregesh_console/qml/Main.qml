@@ -24,6 +24,14 @@ ApplicationWindow {
         var t = Number(v).toFixed(digits)
         return backend.language === "ru" ? t.replace(".", ",") : t
     }
+    // Обобщённое состояние канала с удалённым блоком (backend.link_view): индикатор виден на всех экранах
+    function linkColor(v) {
+        return v === "CONNECTED" ? p.ok : v === "ERROR" ? p.fault : v === "CONNECTING" ? p.info : p.warning
+    }
+    function linkText(v) {
+        return v === "CONNECTED" ? qsTr("Remote unit: connected") : v === "ERROR" ? qsTr("Remote unit: link error")
+             : v === "CONNECTING" ? qsTr("Remote unit: connecting…") : qsTr("Remote unit: no link")
+    }
     function stateText(state) {
         return state === "fault" ? qsTr("Fault") : state === "warning" ? qsTr("Warning")
              : state === "boot" ? qsTr("Starting") : qsTr("Normal")
@@ -71,10 +79,28 @@ ApplicationWindow {
                     font.bold: true
                 }
                 Label {
+                    objectName: "emulationNote"
                     text: qsTr("Emulation · synthetic data only")
                     color: p.muted
+                    elide: Text.ElideRight          // на 1280×800 уступает место индикаторам связи и состояния
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                 }
-                Item { Layout.fillWidth: true }
+                Rectangle {
+                    objectName: "linkBadge"
+                    radius: 6 * win.s
+                    color: win.linkColor(st.linkView)
+                    implicitWidth: linkBadgeText.implicitWidth + 32 * win.s
+                    implicitHeight: linkBadgeText.implicitHeight + 12 * win.s
+                    Label {
+                        id: linkBadgeText
+                        objectName: "linkBadgeText"
+                        anchors.centerIn: parent
+                        text: win.linkText(st.linkView)
+                        color: "#ffffff"
+                        font.bold: true
+                    }
+                }
                 Rectangle {
                     objectName: "stateBadge"
                     radius: 6 * win.s

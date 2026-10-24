@@ -9,6 +9,11 @@ Item {
     readonly property var st: win.st
     readonly property real big: 34 * win.s
 
+    function videoState(s) {         // краткая причина для плитки связи (полный текст — на экране «Видео»)
+        return s === "no-video" ? qsTr("stream interrupted") : s === "restarting" ? qsTr("decoder restarting")
+             : s === "unavailable" ? qsTr("GStreamer missing") : s
+    }
+
     GridLayout {
         id: grid
         anchors.fill: parent
@@ -101,7 +106,14 @@ Item {
                     : qsTr("Establishing connection")
                 color: st.peerState === "incompatible" || st.peerLink === "AUTH_FAILED" ? win.p.fault : win.p.warning
             }
-            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: qsTr("Remote unit: %1").arg(st.peerDevice !== "" ? st.peerDevice : "—"); color: win.p.muted }
+            Label {
+                objectName: "peerIdentity"
+                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                text: qsTr("Remote unit: %1").arg(st.peerDevice !== "" ? st.peerDevice : "—")
+                      + (st.peerRole !== "" ? qsTr(" · role %1").arg(st.peerRole) : "")
+                      + (st.peerSoftware !== "" ? qsTr(" · software %1").arg(st.peerSoftware) : "")
+                color: win.p.muted
+            }
             Label {
                 objectName: "remoteTelemetry"
                 Layout.fillWidth: true; wrapMode: Text.WordWrap
@@ -117,6 +129,30 @@ Item {
                 text: qsTr("Mutual TLS %1 · %2 · round trip %3 ms").arg(st.linkTls !== "" ? st.linkTls : "—")
                       .arg(st.linkHost !== "" ? st.linkHost : "—").arg(st.linkRttMs >= 0 ? win.num(st.linkRttMs, 1) : "—")
                 color: win.p.muted
+            }
+            Label {
+                objectName: "linkPlain"
+                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                visible: st.linkSecure !== true && st.peerMode !== "emulated"
+                text: qsTr("No TLS (local test channel) · round trip %1 ms").arg(st.linkRttMs >= 0 ? win.num(st.linkRttMs, 1) : "—")
+                color: win.p.muted
+            }
+            Label {
+                objectName: "linkAuthFailures"
+                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                visible: st.linkAuthFailures > 0
+                text: qsTr("Authentication failures: %1").arg(st.linkAuthFailures)
+                color: win.p.fault
+            }
+            Label {
+                objectName: "linkVideo"
+                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                readonly property var rx: backend.videoReceiver
+                text: rx.state === "playing" ? qsTr("Video: playing · %1 fps").arg(win.num(rx.fps, 0))
+                    : rx.state === "waiting" ? qsTr("Video: waiting for stream")
+                    : rx.state === "off" ? qsTr("Video: no stream")
+                    : qsTr("Video: no frames (%1)").arg(page.videoState(rx.state))
+                color: rx.state === "playing" || rx.state === "off" ? win.p.muted : win.p.warning
             }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap;
                 text: st.peerHeartbeatAge >= 0 ? qsTr("Last heartbeat %1\u00a0s ago").arg(win.num(st.peerHeartbeatAge, 1)) : qsTr("No heartbeat")

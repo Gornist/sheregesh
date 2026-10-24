@@ -92,6 +92,20 @@ def peer_link(peer_state, snap):
     return "DISCONNECTED"
 
 
+def link_view(peer_state, link):
+    """Обобщённое состояние канала для индикатора на всех экранах (E2E): CONNECTING | CONNECTED | DISCONNECTED | ERROR.
+    Только отображение состояний ADR-0007 (peer_link), новых состояний протокола нет:
+    CONNECTING — первое подключение после старта (монитор: connecting) или RECONNECTING;
+    ERROR — AUTH_FAILED или INCOMPATIBLE (связь не восстановится без вмешательства)."""
+    if link == "CONNECTED":
+        return "CONNECTED"
+    if link in ("AUTH_FAILED", "INCOMPATIBLE"):
+        return "ERROR"
+    if link == "RECONNECTING" or peer_state == "connecting":
+        return "CONNECTING"
+    return "DISCONNECTED"
+
+
 class Backend(QObject):
     statusChanged = Signal()
     eventsChanged = Signal()
@@ -119,6 +133,7 @@ class Backend(QObject):
         self._log_seq = 0
         self._last_event_id = 0
         self._last_phase = None
+        self._auth_episodes = 0                     # переходы канала в auth-failed (если клиент не ведёт счётчик)
         self._last_video_state = None
         self._power_history = collections.deque(maxlen=POWER_HISTORY)
         self.client = None
@@ -320,6 +335,8 @@ class Backend(QObject):
         if self.client is not None:
             cnt = snap["counters"]
             if snap["phase"] != self._last_phase:
+                if snap["phase"] == "auth-failed":
+                    self._auth_episodes += 1
                 self.log("warning" if snap["phase"] != "connected" else "info", "link",
                          f"phase {snap['phase']} ({snap['detail']})")
                 self._last_phase = snap["phase"]
@@ -351,9 +368,12 @@ class Backend(QObject):
             self.log("info" if self.video.state in ("playing", "waiting", "off") else "warning", "video",
                      f"state {self.video.state} {self.video.error}".strip())
             self._last_video_state = self.video.state
+        link = peer_link(s.peer_state, snap)
         return {
             "peerMode": ("network" if snap.get("secure") else "process") if self.client is not None else "emulated",
-            "peerLink": peer_link(s.peer_state, snap),
+            "peerLink": link, "linkView": link_view(s.peer_state, link),
+            "peerRole": (snap.get("peer") or {}).get("role") or "",
+            "linkAuthFailures": cnt.get("auth_failures", self._auth_episodes),
             "linkSecure": bool(snap.get("secure")), "linkTls": snap.get("tls") or "", "linkHost": snap.get("host") or "",
             "linkPeerUri": snap.get("peer_uri") or "",
             "linkRttMs": (tel.get("link") or {}).get("rtt_avg_ms", -1),
