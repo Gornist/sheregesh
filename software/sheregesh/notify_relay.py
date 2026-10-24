@@ -129,17 +129,20 @@ def main(argv=None) -> int:
                 lines = filter_lines(sock.recv(4096))
                 if lines:
                     sdnotify.notify(*lines)
-        _killpg(child.pid, signal.SIGKILL)             # оставшиеся в группе (например, зависшее приложение)
         if stop["sig"] in (signal.SIGTERM, signal.SIGINT):
             return 0                                   # штатный останов (systemctl stop): не «failed» (pi2, 57e8fe4)
         if stop["sig"] is not None:
             return 128 + stop["sig"]                   # SIGABRT — watchdog: отказ
         return child.returncode if child.returncode >= 0 else 128 - child.returncode
     finally:
-        if sock is not None:
+        _killpg(child.pid, signal.SIGKILL)             # оставшиеся в группе (зависшее приложение) — и при исключении
+        if sock is not None:                           # уборка не меняет код выхода (каталог общий с сеансом)
             sock.close()
-            os.unlink(path)
-            os.rmdir(tmpdir)
+            for rm, p in ((os.unlink, path), (os.rmdir, tmpdir)):
+                try:
+                    rm(p)
+                except OSError:
+                    pass
 
 
 if __name__ == "__main__":
