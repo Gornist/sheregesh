@@ -732,6 +732,31 @@
         <source>No backups found on the USB drive.</source>
         <translation>На USB-накопителе нет резервных копий.</translation>
     </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="102" />
+        <source>Video source</source>
+        <translation>Видеоисточник</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="103" />
+        <source>Synthetic</source>
+        <translation>Синтетический</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="103" />
+        <source>Standard UVC device</source>
+        <translation>Стандартное UVC-устройство</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="103" />
+        <source>Off</source>
+        <translation>Выключено</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="104" />
+        <source>UVC video mode</source>
+        <translation>Режим UVC</translation>
+    </message>
 </context>
 <context>
     <name>VideoPage</name>
@@ -787,8 +812,28 @@
     </message>
     <message>
         <location filename="../qml/VideoPage.qml" line="91" />
-        <source>Laboratory emulation: generated test image only. No connection to real receivers or vehicles.</source>
-        <translation>Лабораторная эмуляция: только сгенерированное тестовое изображение. Подключения к реальным приёмникам и аппаратам нет.</translation>
+        <source>Laboratory bench: synthetic test image or a standard UVC lab device only. No connection to real receivers or vehicles.</source>
+        <translation>Лабораторный стенд: только синтетическое тестовое изображение или стандартное лабораторное UVC-устройство. Подключения к реальным приёмникам и аппаратам нет.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="22" />
+        <source>No video device</source>
+        <translation>Нет видеоустройства</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="23" />
+        <source>Video mode not supported</source>
+        <translation>Режим не поддерживается</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="46" />
+        <source>%1 · %2 %3 at %4&#160;fps · shown %5&#160;fps · frames %6 · capture restarts %7</source>
+        <translation>%1 · %2 %3, %4&#160;к/с · показано %5&#160;к/с · кадров %6 · перезапусков захвата %7</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="91" />
+        <source>The video source is turned off in the settings.</source>
+        <translation>Видеоисточник выключен в настройках.</translation>
     </message>
 </context>
 </TS>

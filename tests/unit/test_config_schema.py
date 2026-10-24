@@ -29,6 +29,11 @@ VALID = [
     replace("system.yaml", "screen_timeout_s: 300", "screen_timeout_s: 0"),
     replace("diagnostics.yaml", "temp_warning_c: 70", "temp_warning_c: 65.5"),
     replace("link.yaml", "192.168.77.2", "192.168.77.254"),
+    # S3.3: необязательные поля видеовхода; набор без них (прежние ревизии) остаётся корректным — первая строка
+    replace("system.yaml", "theme: dark", "theme: dark\nvideo_source: uvc\nvideo_device: 534d:2109\n"
+            "video_mode: 1920x1080@60\nvideo_format: mjpeg"),
+    replace("system.yaml", "theme: dark", "theme: dark\nvideo_source: disabled\nvideo_device: video0"),
+    replace("system.yaml", "theme: dark", "theme: dark\nvideo_source: synthetic\nvideo_device: ''\nvideo_format: auto"),
 ]
 
 INVALID = [  # (набор, файл, путь, класс)
@@ -56,6 +61,14 @@ INVALID = [  # (набор, файл, путь, класс)
     ({k: v for k, v in console_defaults().items() if k != "link.yaml"}, "link.yaml", "", "missing-file"),
     ({**console_defaults(), "secrets.yaml": "token: x\n"}, "secrets.yaml", "", "unknown-file"),
     (with_file("system.yaml", "language: !!python/object/apply:os.system ['true']\n"), "system.yaml", "", "yaml"),
+    (replace("system.yaml", "theme: dark", "theme: dark\nvideo_source: dji"), "system.yaml", "video_source", "enum"),
+    (replace("system.yaml", "theme: dark", "theme: dark\nvideo_source: off"), "system.yaml", "video_source", "enum"),
+    (replace("system.yaml", "theme: dark", "theme: dark\nvideo_mode: 1280x720@25"), "system.yaml", "video_mode", "enum"),
+    (replace("system.yaml", "theme: dark", "theme: dark\nvideo_format: nv12"), "system.yaml", "video_format", "enum"),
+    (replace("system.yaml", "theme: dark", "theme: dark\nvideo_device: /dev/video0"), "system.yaml", "video_device",
+     "pattern"),
+    (replace("system.yaml", "theme: dark", "theme: dark\nvideo_device: '534d:2109;reboot'"), "system.yaml",
+     "video_device", "pattern"),
 ]
 
 

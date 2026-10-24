@@ -8,6 +8,8 @@ Item {
     id: page
     property var issues: []
     readonly property var cfg: backend.config
+    readonly property var videoSources: ["synthetic", "uvc", "disabled"]
+    readonly property var videoModes: ["640x480@30", "640x480@60", "1280x720@30", "1280x720@60", "1920x1080@30", "1920x1080@60"]
 
     function form() {
         return {
@@ -22,7 +24,9 @@ Item {
             battery_critical_pct: battCritSpin.value,
             peer_address: peerField.text,
             port: portSpin.value,
-            heartbeat_timeout_s: hbSpin.value
+            heartbeat_timeout_s: hbSpin.value,
+            video_source: videoSources[videoSourceBox.currentIndex],
+            video_mode: videoModes[videoModeBox.currentIndex]
         }
     }
     function load() {
@@ -38,6 +42,8 @@ Item {
         peerField.text = cfg.peer_address
         portSpin.value = cfg.port
         hbSpin.value = cfg.heartbeat_timeout_s
+        videoSourceBox.currentIndex = videoSources.indexOf(cfg.video_source)
+        videoModeBox.currentIndex = videoModes.indexOf(cfg.video_mode)
         issues = []
     }
     function dirty() {
@@ -105,6 +111,11 @@ Item {
                 TextField { id: peerField; objectName: "peerField"; Layout.fillWidth: true }
                 Label { text: qsTr("Port") }
                 SpinBox { id: portSpin; objectName: "portSpin"; from: 1024; to: 65535; editable: true; Layout.fillWidth: true }
+
+                Label { text: qsTr("Video source") }
+                ComboBox { id: videoSourceBox; objectName: "videoSourceBox"; model: [qsTr("Synthetic"), qsTr("Standard UVC device"), qsTr("Off")]; Layout.fillWidth: true }
+                Label { text: qsTr("UVC video mode") }
+                ComboBox { id: videoModeBox; objectName: "videoModeBox"; model: page.videoModes; enabled: videoSourceBox.currentIndex === 1; Layout.fillWidth: true }
             }
 
             Repeater {

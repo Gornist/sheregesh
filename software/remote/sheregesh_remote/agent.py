@@ -6,7 +6,8 @@
 - loopback (по умолчанию): слушает только 127.0.0.1, без TLS — разработка и тесты;
 - сетевой лабораторный профиль (--link-config): TLS 1.3 с взаимной аутентификацией, только адреса локальной
   подсети, вторая сторона — пульт с URI из конфигурации. Без ключей и сертификатов сервер не запускается.
-Отправляет пульту hello, heartbeat, синтетическое состояние и события, по желанию — синтетический видеопоток.
+Отправляет пульту hello, heartbeat, синтетическое состояние и события, по желанию — видеопоток: синтетический
+или (S3.3, --video-source uvc) со стандартного лабораторного устройства V4L2/UVC через тот же конвейер и тот же канал.
 От пульта принимает только hello, ack и bye; остальные сообщения не исполняются, а учитываются.
 Команд ОС, управления устройствами и радиоинтерфейсов нет.
 
@@ -30,7 +31,7 @@ import sys
 import time
 from pathlib import Path
 
-from sheregesh import PROTOCOL_VERSION, __version__, sdnotify, video
+from sheregesh import PROTOCOL_VERSION, __version__, sdnotify, video, videoinput
 from sheregesh.videolink import VideoServer
 from sheregesh.link import tls
 from sheregesh.link.codec import TYPES, BadMessage, Decoder, encode
@@ -59,7 +60,15 @@ class Agent:
         self.ignored = 0
         self.bad = 0
         self.video_proc = None
-        self.video_codec = video.choose_codec(args.video_codec) if args.video else None
+        # Видеоисточник (S3.3): синтетический (по умолчанию) или стандартное устройство UVC, выбранное явно.
+        # Устройство находится один раз при запуске; постоянная ссылка /dev/v4l/by-id переживает переподключение.
+        self.video_src, self.video_src_error = None, ""
+        if args.video_source == "uvc":
+            src = videoinput.open_uvc(args.video_device, f"{args.video_width}x{args.video_height}@{args.video_fps}",
+                                      args.video_format)
+            self.video_src, self.video_src_error = (src, "") if src.available else (None, src.error)
+        uvc_ok = args.video_source != "uvc" or self.video_src is not None
+        self.video_codec = video.choose_codec(args.video_codec) if args.video and uvc_ok else None
         self.video_port = args.video_port
         self.tls_cfg = getattr(args, "tls_cfg", None)
         self.ctx = tls.make_context(self.tls_cfg, server=True) if self.tls_cfg else None
@@ -69,7 +78,8 @@ class Agent:
         if net_video and args.video_command:          # испытания: подставной генератор, без пробы GStreamer
             self.net_video_codec = args.video_codec
         else:
-            self.net_video_codec = video.choose_codec(args.video_codec) if net_video and video.available() else None
+            self.net_video_codec = video.choose_codec(args.video_codec) if net_video and uvc_ok and video.available() \
+                else None
         self.handshakes = None                       # asyncio.Semaphore: не более 4 рукопожатий одновременно
         self.sent = {}                               # seq heartbeat/event → (тип, monotonic) для ack
         self.session = None
@@ -131,7 +141,8 @@ class Agent:
             return
         self.video_proc = video.spawn(
             video.sender_args(self.video_codec, self.video_port, self.args.video_width, self.args.video_height,
-                              self.args.video_fps), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                              self.args.video_fps, src=self.video_src), stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
 
     def video_stop(self):
         if self.video_proc is not None:
@@ -337,11 +348,19 @@ class Agent:
             self.vserver = VideoServer(self.tls_cfg, self.net_video_codec, self.authorize_video, log, bind=self.args.host,
                                        port=self.args.net_video_port, width=self.args.video_width,
                                        height=self.args.video_height, fps=self.args.video_fps,
-                                       command=self.args.video_command).start()
+                                       command=self.args.video_command or (video.stream_sender_args(
+                                           self.net_video_codec, self.args.video_width, self.args.video_height,
+                                           self.args.video_fps, src=self.video_src) if self.video_src else None)
+                                       ).start()
             print(f"VIDEO codec={self.net_video_codec} port={self.vserver.port} transport=tls1.3-mutual", flush=True)
         elif self.video_codec:
             print(f"VIDEO codec={self.video_codec} port={self.video_port}", flush=True)
-        elif self.args.video:
+        if self.video_src is not None:
+            print(f"VIDEO source={self.video_src.id} mode={self.video_src.mode} device={self.video_src.node.dev}",
+                  flush=True)
+        if self.video_src_error and (self.args.video or self.tls_cfg is not None):
+            print(f"VIDEO unavailable: {self.video_src_error}", flush=True)
+        elif self.args.video and not self.video_codec and not self.net_video_codec:
             why = "; ".join(video.PROBE_FAILURES[-4:]) or ("no gst-launch-1.0/videotestsrc/udpsrc" if not video.available()
                                                          else "no working codec")
             print(f"VIDEO unavailable: {why}", flush=True)
@@ -374,6 +393,12 @@ def main(argv=None):
     ap.add_argument("--video-height", type=int, default=720)
     ap.add_argument("--video-fps", type=int, default=30)
     ap.add_argument("--no-video", action="store_true", help="сетевой профиль без видеоканала")
+    ap.add_argument("--video-source", choices=["synthetic", "uvc"], default="synthetic",
+                    help="источник видео (S3.3): synthetic — videotestsrc, uvc — стандартное устройство V4L2/UVC")
+    ap.add_argument("--video-device", default="", help="устройство UVC: vvvv:pppp[:serial] или videoN (по умолчанию — "
+                                                       "единственное найденное)")
+    ap.add_argument("--video-format", choices=["auto", "yuyv", "mjpeg", "h264"], default="auto",
+                    help="формат устройства UVC; совпадающий с кодеком канала передаётся без перекодирования")
     ap.add_argument("--net-video-port", type=int, default=None, help="порт видеоканала (по умолчанию video_port профиля)")
     ap.add_argument("--video-command", nargs="+", default=None, help=argparse.SUPPRESS)   # испытания: подмена генератора
     ap.add_argument("--link-config", help="сетевой лабораторный профиль: TLS 1.3 + взаимная аутентификация (S3.1)")

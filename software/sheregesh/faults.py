@@ -92,7 +92,7 @@ CATALOG = {f.code: f for f in [
           {"ru": "Проверьте состояние удалённого блока на экране диагностики.",
            "en": "Check the remote unit state on the diagnostics screen."}),
     Fault("VIDEO-LOST", WARNING,
-          {"ru": "Нет синтетического видеопотока", "en": "Synthetic video stream missing"},
+          {"ru": "Нет видеопотока", "en": "Video stream missing"},
           {"ru": "Интерфейс работает; поток восстановится автоматически.", "en": "The interface keeps working; the stream recovers automatically."}),
     Fault("PEER-INCOMPAT", ERROR,
           {"ru": "Удалённый блок несовместим: протокол {peer}, пульт {local} (причина: {reason})",

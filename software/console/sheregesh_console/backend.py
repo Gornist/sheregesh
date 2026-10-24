@@ -19,6 +19,7 @@ from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot, qVersion
 
 from sheregesh import PROTOCOL_VERSION, __version__
 from sheregesh import video as gst
+from sheregesh import videoinput
 from sheregesh.config import BackupError, ConfigStore, Schema, console_defaults
 from sheregesh.faults import CATALOG, render
 from sheregesh.link.client import PeerClient, RemotePeer
@@ -73,6 +74,8 @@ def _yaml(data: dict) -> str:
 
 
 RECONNECT_WINDOW_S = 30.0
+# Видеовход пульта (S3.3): необязательные поля system.yaml. Без них — прежнее поведение (синтетический поток).
+VIDEO_DEFAULTS = {"video_source": "synthetic", "video_device": "", "video_mode": "1280x720@30", "video_format": "auto"}
 
 
 def peer_link(peer_state, snap):
@@ -98,9 +101,10 @@ class Backend(QObject):
     message = Signal(str, str)          # уровень (info/warning/error), текст
 
     def __init__(self, data_dir, demo=False, speed=1.0, autostart=True, peer=None, local_video=False,
-                 video_command=None, link_cfg=None, link_status_file=None):
+                 video_command=None, link_cfg=None, link_status_file=None, video_scan=None):
         """peer=None — удалённый блок эмулируется в процессе пульта; peer=(host, port) — внешний процесс-эмулятор.
-        local_video — локальный синтетический генератор видео (без удалённого блока)."""
+        local_video — локальный синтетический генератор видео (без удалённого блока).
+        video_scan — для испытаний: корни sysfs/dev и ioctl обнаружения устройств UVC (sheregesh.videoinput.scan)."""
         super().__init__()
         self.data_dir = Path(data_dir)
         self.usb_dir = self.data_dir / "usb"
@@ -140,8 +144,10 @@ class Backend(QObject):
             self.log("warning", "config", f"recovery action {code}")
         self.video = VideoReceiver(self, command=video_command)
         self._local_sender = None
-        if local_video:
-            self._start_local_video()
+        self._local_video = local_video
+        self._video_scan = dict(video_scan or {})
+        self._video_source = None
+        self._apply_video_source()
         self.demo = demo
         self.runner = DEMO.runner(self.bench) if demo else None
         self._scenario_label = ""
@@ -176,6 +182,11 @@ class Backend(QObject):
     def stop(self):
         self._timer.stop()
         self.video.shutdown()
+        self._stop_local_sender()
+        if self.client is not None:
+            self.client.stop()
+
+    def _stop_local_sender(self):
         if self._local_sender is not None:
             try:
                 os.killpg(self._local_sender.pid, signal.SIGKILL)
@@ -183,10 +194,36 @@ class Backend(QObject):
                 pass
             self._local_sender.wait()
             self._local_sender = None
-        if self.client is not None:
-            self.client.stop()
+
+    def video_config(self):
+        sysy = self._rev.data["system.yaml"]
+        return {k: sysy.get(k, v) for k, v in VIDEO_DEFAULTS.items()}
+
+    def _apply_video_source(self):
+        """Видеоисточник из конфигурации (S3.3): synthetic — прежний режим (поток удалённого блока или локальный
+        генератор), uvc — локальное устройство V4L2/UVC, disabled — видео выключено. Устройство UVC опрашивается и
+        захватывается только при явном выборе uvc."""
+        v = self.video_config()
+        if v == getattr(self, "_video_applied", None):
+            return
+        self._video_applied = v
+        self._video_source = v["video_source"]
+        if self._video_source == "uvc":
+            self._stop_local_sender()
+            dev, mode, fmt, scan = v["video_device"], v["video_mode"], v["video_format"], self._video_scan
+            self.video.configure_local((dev, mode, fmt), lambda: videoinput.open_uvc(dev, mode, fmt, **scan))
+            self.log("info", "video", f"source uvc device={dev or 'auto'} mode={mode} format={fmt}")
+        elif self._video_source == "disabled":
+            self._stop_local_sender()
+            self.video.configure(None, None)
+            self.log("info", "video", "source disabled")
+        else:
+            self.video.configure(None, None)      # поток удалённого блока подключится в _link_status
+            if self._local_video:
+                self._start_local_video()
 
     def _start_local_video(self):
+        self._stop_local_sender()
         codec = gst.choose_codec()
         if codec is None:
             self.log("error", "video", "no working synthetic video codec")
@@ -286,7 +323,9 @@ class Backend(QObject):
                 self.log("warning" if snap["phase"] != "connected" else "info", "link",
                          f"phase {snap['phase']} ({snap['detail']})")
                 self._last_phase = snap["phase"]
-            if s.peer_state == "connected" and vid.get("codec") and vid.get("transport") == "tls" \
+            if self._video_source != "synthetic":
+                pass                                # локальный видеовход или видео выключено (S3.3)
+            elif s.peer_state == "connected" and vid.get("codec") and vid.get("transport") == "tls" \
                     and self.link_cfg is not None and self.link_cfg.video and snap.get("host"):
                 # Защищённый видеоканал (S3.1-VIDEO): тот же блок, что у сеанса управления; порт — из своей
                 # конфигурации, не из телеметрии. Незащищённого удалённого источника нет.
@@ -303,7 +342,8 @@ class Backend(QObject):
         # Пропадание видео — диагностическое событие, видно на главной панели и в диагностике
         expected = (self.client is not None and bool(vid.get("enabled")) and s.peer_state == "connected") or \
             self._local_sender is not None
-        if self.video.state in ("no-video", "restarting") and expected:
+        expected = {"uvc": True, "disabled": False}.get(self._video_source, expected)
+        if self.video.state in ("no-video", "restarting", "no-device", "unsupported") and expected:
             self.bench.events.inject("VIDEO-LOST", state=self.video.state)
         elif self.video.state == "playing" or not expected:
             self.bench.events.clear("VIDEO-LOST")
@@ -327,7 +367,7 @@ class Backend(QObject):
             "remotePowerSource": SOURCE_NAMES[self.lang].get(rp.get("source", ""), rp.get("source", "")),
             "remoteLowBattery": bool(rp.get("low_battery")), "remoteUptime": tel.get("uptime_s", -1),
             "remoteEvents": ", ".join(tel.get("active_events") or []),
-            "remoteVideo": bool(vid.get("active")),
+            "remoteVideo": bool(vid.get("active")), "videoSource": self._video_source,
             "batteryWarning": self._rev.data["diagnostics.yaml"]["battery_warning_pct"],
             "batteryCritical": self._rev.data["diagnostics.yaml"]["battery_critical_pct"],
             "undervoltage": bool(s.power and s.power.undervoltage),
@@ -463,7 +503,7 @@ class Backend(QObject):
     def config(self):
         """Плоское представление активной ревизии для формы настроек."""
         d = self._rev.data
-        return {**d["system.yaml"], **d["diagnostics.yaml"], **d["link.yaml"]}
+        return {**VIDEO_DEFAULTS, **d["system.yaml"], **d["diagnostics.yaml"], **d["link.yaml"]}
 
     @Property(str, notify=configChanged)
     def revision(self):
@@ -511,6 +551,7 @@ class Backend(QObject):
         self.log("info" if res.ok else "warning", "config",
                  f"apply {res.stage}: revision {res.revision}, active {res.active}")
         self.bench.monitor.set_thresholds(data["diagnostics.yaml"], data["link.yaml"])
+        self._apply_video_source()
         if res.ok:
             self.bench.events.inject("CFG-APPLIED", revision=res.revision)
             self._last_result = self._result(ok_key, revision=res.revision)
@@ -568,6 +609,7 @@ class Backend(QObject):
         self.store = ConfigStore(self.store.root, self.schema)
         self.store.recover()
         self._rev = self.store.active()
+        self._apply_video_source()
         self.log("info", "config", f"reloaded from disk: revision {self._rev.id}")
         self.configChanged.emit()
         self.appearanceChanged.emit()

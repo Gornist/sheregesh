@@ -9,6 +9,8 @@ Item {
     id: page
     readonly property var rx: backend.videoReceiver
     readonly property bool playing: rx.state === "playing"
+    readonly property var src: rx.source
+    readonly property bool localInput: src.kind !== undefined
 
     function stateText(s) {
         switch (s) {
@@ -17,6 +19,8 @@ Item {
         case "no-video": return qsTr("No video")
         case "restarting": return qsTr("Restarting decoder")
         case "unavailable": return qsTr("Video unavailable")
+        case "no-device": return qsTr("No video device")
+        case "unsupported": return qsTr("Video mode not supported")
         default: return qsTr("No video source")
         }
     }
@@ -38,9 +42,14 @@ Item {
             }
             Label {
                 objectName: "videoInfo"
-                text: qsTr("Synthetic test pattern · %1 · port %2 · %3\u00a0fps · frames %4 · decoder restarts %5")
-                      .arg(rx.codec !== "" ? rx.codec.toUpperCase() : "—").arg(rx.port > 0 ? rx.port : "—")
-                      .arg(win.num(rx.fps, 0)).arg(rx.frames).arg(rx.restarts)
+                text: page.localInput
+                      ? qsTr("%1 · %2 %3 at %4\u00a0fps · shown %5\u00a0fps · frames %6 · capture restarts %7")
+                        .arg(page.src.name || "UVC").arg((page.src.format || "—").toUpperCase())
+                        .arg(page.src.resolution ? page.src.resolution.replace("x", "×") : "—").arg(page.src.fps || "—")
+                        .arg(win.num(rx.fps, 0)).arg(rx.frames).arg(rx.restarts)
+                      : qsTr("Synthetic test pattern · %1 · port %2 · %3\u00a0fps · frames %4 · decoder restarts %5")
+                        .arg(rx.codec !== "" ? rx.codec.toUpperCase() : "—").arg(rx.port > 0 ? rx.port : "—")
+                        .arg(win.num(rx.fps, 0)).arg(rx.frames).arg(rx.restarts)
                 color: win.p.muted
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
@@ -76,7 +85,10 @@ Item {
                     Layout.alignment: Qt.AlignHCenter
                 }
                 Label {
-                    text: rx.state === "unavailable" ? qsTr("GStreamer is not installed; the rest of the interface works normally.")
+                    objectName: "videoReason"
+                    text: (rx.state === "no-device" || rx.state === "unsupported" || (page.localInput && rx.error !== "")) ? rx.error
+                        : rx.state === "unavailable" ? qsTr("GStreamer is not installed; the rest of the interface works normally.")
+                        : rx.state === "off" && backend.status.videoSource === "disabled" ? qsTr("The video source is turned off in the settings.")
                         : rx.state === "off" ? qsTr("The remote unit does not report a video stream.")
                         : qsTr("The interface keeps working; the stream is restored automatically when frames arrive.")
                     color: "#9aa0a6"
@@ -88,9 +100,11 @@ Item {
             }
         }
         Label {
-            text: qsTr("Laboratory emulation: generated test image only. No connection to real receivers or vehicles.")
+            text: qsTr("Laboratory bench: synthetic test image or a standard UVC lab device only. No connection to real receivers or vehicles.")
             color: win.p.muted
             font.pixelSize: 16 * win.s
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
         }
     }
 }

@@ -4,7 +4,8 @@
 
 Декодирует отдельный процесс gst-launch-1.0; кадры читает фоновый поток и хранит только последний.
 Основной поток GUI лишь забирает кадр по таймеру, поэтому сбой, зависание или отсутствие видео
-не блокируют интерфейс. Источник — только синтетический генератор (sheregesh.video).
+не блокируют интерфейс. Источник — синтетический генератор (sheregesh.video) или локальный видеовход пульта
+(S3.3, sheregesh.videoinput: стандартное устройство V4L2/UVC) — тот же процесс, тот же разбор кадров и перезапуск.
 Удалённый блок (S3.1-VIDEO): RTP приходит по защищённому видеоканалу (sheregesh.videolink, TLS 1.3 с взаимной
 аутентификацией) и подаётся декодеру через stdin; разрыв канала завершает декодер, и он перезапускается с новым
 подключением. Незащищённого удалённого источника нет.
@@ -26,6 +27,8 @@ from sheregesh import video as gst
 FRAME_W, FRAME_H = 640, 360
 NO_VIDEO_AFTER_S = 1.5
 RESTART_BACKOFF_S = (1.0, 2.0, 4.0)
+RESCAN_S = 2.0               # локальный вход: повторный поиск устройства (нет устройства / режим не поддерживается)
+STALL_RESTART_S = 5.0        # локальный вход: нет кадров дольше — перезапуск захвата с новым поиском устройства
 
 
 class VideoReceiver(QObject):
@@ -38,6 +41,8 @@ class VideoReceiver(QObject):
         self._codec = None
         self._port = None
         self._remote = None                # (ключ, фабрика VideoClient) — удалённый блок по защищённому каналу
+        self._local = None                 # (ключ, opener() → VideoSource) — локальный видеовход пульта (S3.3)
+        self._source = None                # текущий VideoSource локального входа
         self._client = None
         self._feeder = None
         self._sessions = 0
@@ -51,7 +56,8 @@ class VideoReceiver(QObject):
         self._last_frame_t = None
         self._fps = 0.0
         self._fps_window = []
-        self._state = "off"                # off | waiting | playing | no-video | restarting | unavailable
+        # off | waiting | playing | no-video | restarting | unavailable | no-device | unsupported
+        self._state = "off"
         self._error = ""
         self._restarts = 0
         self._next_start = 0.0
@@ -96,13 +102,19 @@ class VideoReceiver(QObject):
     def resolution(self):
         return f"{FRAME_W}×{FRAME_H}"
 
+    @Property(dict, notify=stateChanged)
+    def source(self):
+        """Локальный видеовход: имя устройства, формат, разрешение и частота режима (VideoSource.info); иначе {}."""
+        return self._source.info() if self._local is not None and self._source is not None else {}
+
     # ---------- управление ----------
     def configure(self, codec, port):
         """Источник сообщил кодек и порт. Перезапуск только при изменении."""
-        if (codec, port) == (self._codec, self._port) and self._remote is None and self._proc is not None:
+        if (codec, port) == (self._codec, self._port) and self._remote is None and self._local is None and \
+                self._proc is not None:
             return
         self.stop()
-        self._remote = None
+        self._remote = self._local = self._source = None
         self._codec, self._port = codec, port
         if codec is None or port is None:
             self._set_state("off")
@@ -118,7 +130,23 @@ class VideoReceiver(QObject):
         if self._remote is not None and self._remote[0] == (codec, key) and self._state != "off":
             return
         self.stop()
+        self._local = self._source = None
         self._remote, self._codec, self._port = ((codec, key), factory), codec, key[1]
+        if self._command is None and not gst.available():
+            self._error = "gst-launch-1.0 not found"
+            self._set_state("unavailable")
+            return
+        self._start()
+
+    def configure_local(self, key, opener):
+        """Локальный видеовход пульта (S3.3). opener() → VideoSource; вызывается при каждом (пере)запуске, поэтому
+        отключённое и вновь подключённое устройство находится заново (номер /dev/videoN может измениться).
+        key — конфигурация источника: перезапуск только при её изменении."""
+        if self._local is not None and self._local[0] == key and self._state != "off":
+            return
+        self.stop()
+        self._remote, self._codec, self._port, self._source = None, None, None, None
+        self._local = (key, opener)
         if self._command is None and not gst.available():
             self._error = "gst-launch-1.0 not found"
             self._set_state("unavailable")
@@ -133,15 +161,29 @@ class VideoReceiver(QObject):
             frames = self._seq
         out = {"state": self._state, "codec": self._codec, "frames_decoded": frames, "restarts": self._restarts,
                "decoded_fps_5s": round(len(recent) / 5.0, 1) if recent else 0.0, "output": f"{FRAME_W}x{FRAME_H}",
-               "error": self._error, "mode": "remote-tls" if self._remote else ("local" if self._codec else "off"),
-               "sessions": self._sessions}
+               "error": self._error, "mode": "remote-tls" if self._remote else "local-input" if self._local else
+               ("local" if self._codec else "off"), "sessions": self._sessions}
+        if self._local is not None and self._source is not None:
+            out["source"] = self._source.info()
         if self._client is not None:
             out["link"] = self._client.stats()
         return out
 
     def _start(self):
         remote = self._remote is not None
-        if remote:
+        if self._local is not None:
+            try:
+                src = self._source = self._local[1]()
+            except OSError as e:            # sysfs/ioctl: сбой опроса не должен останавливать интерфейс
+                src = None
+                self._error = f"device scan failed: {e}"
+            if src is None or not src.available:
+                self._error = src.error if src is not None else self._error
+                self._next_start = time.monotonic() + RESCAN_S
+                self._set_state("no-device" if src is None or getattr(src, "missing", False) else "unsupported")
+                return
+            args = self._command or gst.capture_args(src, FRAME_W, FRAME_H)
+        elif remote:
             args = self._command or gst.stream_receiver_args(self._codec, FRAME_W, FRAME_H)
         else:
             args = self._command or gst.receiver_args(self._codec, self._port, FRAME_W, FRAME_H)
@@ -250,11 +292,18 @@ class VideoReceiver(QObject):
 
     def _poll(self):
         now = time.monotonic()
-        if self._state == "restarting" and now >= self._next_start and self._codec:
+        if self._state in ("restarting", "no-device", "unsupported") and now >= self._next_start and \
+                (self._codec or self._local):
             self._start()
             return
         if self._proc is not None and self._proc.poll() is not None:
-            self._error = f"decoder exited with code {self._proc.returncode}"
+            self._error = f"{'capture' if self._local else 'decoder'} exited with code {self._proc.returncode}"
+            self.stop()
+            self._schedule_restart()
+            return
+        if self._local is not None and self._proc is not None and self._state == "no-video" and \
+                now - max(self._last_frame_t or 0.0, self._started_at) > STALL_RESTART_S:
+            self._error = f"no frames for {STALL_RESTART_S:.0f} s; capture restarted"   # устройство зависло/отключено
             self.stop()
             self._schedule_restart()
             return
