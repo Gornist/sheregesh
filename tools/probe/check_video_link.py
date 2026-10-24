@@ -16,7 +16,8 @@
                видео; сравнение с режимом без видео (pi1 3,0 % / 297 МБ, pi2 0,5 % / 149 МБ)
   telemetry    канал управления под нагрузкой видео: heartbeat/с, события, RTT, разрывы seq
   no-plain     нет UDP вне loopback и видеопортов UDP; видео — TCP 7444 ESTABLISHED между платами
-  ctl-loss     пауза службы блока 8 с: пульт теряет управление → видео выключено; после — сеанс и видео снова
+  ctl-loss     пауза службы блока 8 с: «нет видео» ≤ 3 с, затем потеря управления → видео выключено; после —
+               сеанс и видео снова ≤ 10 с (REQ-SW-002)
   sender-kill  SIGKILL генератора на pi2: видеосеанс кончается, пульт переподключается, видео восстановлено
   restart      штатный перезапуск sheregesh-remote-net: управление и видео восстанавливаются
   leftovers    после испытаний: на каждой плате ровно один конвейер видео текущего сеанса, сирот нет
@@ -311,6 +312,11 @@ def _sessions(ch):
 
 
 def sc_ctl_loss(ch, rh, pause=8):
+    """REQ-SW-002 п. 3: «нет видео» в GUI ≤ 3 с после обрыва (состояние приёмника не «playing»), видео снова ≤ 10 с
+    после возобновления. Выключение видео по потере управления (mode «off») наступает по тайм-ауту heartbeat канала
+    управления (link.yaml, 3 с) и критерием «нет видео» не является — записывается отдельно.
+    Замер — с момента, когда ssh с kill -STOP вернулся (до него — установление ssh до pi2), до первого чтения
+    ui-state.json с не-«playing»; дамп пишется раз в 1 с, поэтому значение — верхняя оценка (+≤ 1 с)."""
     if not wait(playing(ch), 60):
         return {"verdict": "ERROR", "reason": "нет видео до сценария"}
     pid = ssh(rh, "systemctl show -p MainPID --value sheregesh-remote-net")
@@ -320,19 +326,25 @@ def sc_ctl_loss(ch, rh, pause=8):
     t0 = time.monotonic()
     try:
         ssh(rh, f"kill -STOP {pid}")
+        t0 = time.monotonic()
+        no_video = wait(lambda: cv(ch).get("state") not in (None, "playing"), pause, 0.2)
         video_off = wait(lambda: cv(ch).get("mode") == "off", pause + 10, 0.5)
+        video_off = None if video_off is None else round(time.monotonic() - t0, 2)
         during = cv(ch)
         time.sleep(max(0.0, pause - (time.monotonic() - t0)))
     finally:
         resumed = ssh(rh, f"kill -CONT {pid} 2>/dev/null && echo resumed || echo gone")
     back = wait(lambda: playing(ch)() and _sessions(ch) > n0, 90, 0.5)
-    res = {"pause_s": pause, "video_off_after_s": video_off, "console_video_during": {k: during.get(k) for k in
-           ("mode", "state", "error")}, "video_back_after_resume_s": back, "sessions_before": n0,
-           "sessions_after": _sessions(ch), "final_cont": resumed,
+    res = {"pause_s": pause, "no_video_after_s": no_video, "video_off_after_s": video_off,
+           "console_video_during": {k: during.get(k) for k in ("mode", "state", "error")},
+           "video_back_after_resume_s": back, "sessions_before": n0, "sessions_after": _sessions(ch),
+           "final_cont": resumed, "criteria": {"no_video_after_s": "<= 3.0 (REQ-SW-002)",
+                                               "video_back_after_resume_s": "<= 10.0 (REQ-SW-002)"},
            "remote_log": journal(rh, "sheregesh-remote-net", time.time() - 120, "video|session")}
     if resumed not in ("resumed", "gone"):
         return {**res, "verdict": "ERROR", "abort": True, "reason": "возобновление блока не подтверждено"}
-    return {**res, "verdict": "PASS" if video_off is not None and back is not None else "FAIL"}
+    ok = no_video is not None and no_video <= 3.0 and video_off is not None and back is not None and back <= 10.0
+    return {**res, "verdict": "PASS" if ok else "FAIL"}
 
 
 def sc_sender_kill(ch, rh):
