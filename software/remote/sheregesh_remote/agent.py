@@ -40,6 +40,9 @@ from sheregesh_emulators.devices import FanEmulator, PowerEmulator, SimClock, Th
 
 # Демонстрационный сценарий удалённого блока (секунды модельного времени, как у пульта — sheregesh_emulators.demo)
 DEMO_FAULTS = ["60:video-off:15", "95:silence:20"]
+# Пульт не забирает данные дольше — соединение зависло (буфер отправки полон): разрыв, а не ожидание в основном цикле,
+# который же шлёт WATCHDOG (WatchdogSec=15 у службы) и heartbeat новому сеансу.
+DRAIN_TIMEOUT_S = 3.0
 
 
 class Agent:
@@ -117,16 +120,24 @@ class Agent:
             self.sent[self.seq] = (mtype, time.monotonic())
             if len(self.sent) > 256:
                 self.sent.pop(next(iter(self.sent)))
-        try:
-            self.writer.write(encode(self.proto, mtype, self.seq, time.time(), body))
-            await self.writer.drain()
-        except (ConnectionError, RuntimeError):
-            self.writer = None
+        await self.send_raw(encode(self.proto, mtype, self.seq, time.time(), body))
 
     async def send_raw(self, data: bytes):
-        if self.writer is not None:
-            self.writer.write(data)
-            await self.writer.drain()
+        writer = self.writer
+        if writer is None:
+            return
+        try:
+            writer.write(data)
+            await asyncio.wait_for(writer.drain(), DRAIN_TIMEOUT_S)
+        except (ConnectionError, RuntimeError):
+            if self.writer is writer:
+                self.writer = None
+        except (asyncio.TimeoutError, TimeoutError):
+            log(f"console does not read for {DRAIN_TIMEOUT_S:.0f} s (send buffer full): connection dropped")
+            self.stats["peer_timeouts"] += 1
+            writer.transport.abort()
+            if self.writer is writer:
+                self.writer = None
 
     def status_body(self):
         p = self.power.read()

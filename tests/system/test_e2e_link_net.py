@@ -533,3 +533,37 @@ def test_e2e11_cycles_no_resource_growth(stand):
     assert s["cable"].live() == 1                       # одна живая пара: текущая сессия, без «висящих»
     assert all(c["console_detect_s"] <= DETECT_S and c["remote_detect_s"] <= DETECT_S
                and c["recover_s"] <= RECOVER_S for c in cycles), cycles
+
+
+# ---------------------------------------------------------------- основной цикл блока при непрочитанном буфере
+
+@pytest.mark.test_id("TEST-SYS-002")
+def test_e2e07_remote_ticker_not_blocked_by_unread_send_buffer(lab, tmp_path):
+    """Пульт держит соединение, но не читает (долгий обрыв в ускоренном виде: буфер отправки блока заполняется).
+    Проверка живости по ack отключена (--peer-timeout 0, как у сессии 1.0 без ack), поток ускорен — основной цикл
+    блока (WATCHDOG, файл состояния, heartbeat) не должен вставать на drain(): зависшее соединение разрывается."""
+    from sheregesh import PROTOCOL_VERSION
+    from sheregesh.link import tls
+    from sheregesh.link.codec import encode
+    status = tmp_path / "remote-link-status.json"
+    a = Agent("--link-config", str(lab["remote"].source), "--bind", "127.0.0.1", "--no-video", "--status-file",
+              str(status), "--heartbeat-interval", "0.002", "--peer-timeout", "0")
+    a.status = status
+    raw = socket.socket()
+    raw.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)        # маленькое окно: буфер блока заполнится быстро
+    try:
+        raw.connect(("127.0.0.1", a.port))
+        s = tls.make_context(lab["console"], server=False).wrap_socket(raw)
+        s.sendall(encode(PROTOCOL_VERSION, "hello", 1, time.time(),
+                         {"role": "console", "proto": PROTOCOL_VERSION, "software": "0", "hardware": "HW-1.0 Rev A"}))
+        assert wait_for(lambda: remote_connected(a), 5)
+        worst, t_end = 0.0, time.monotonic() + 25
+        while time.monotonic() < t_end:                              # пульт не читает ничего
+            worst = max(worst, time.time() - status.stat().st_mtime)
+            time.sleep(0.1)
+        REPORT.setdefault("E2E-07/09", {})["unread-send-buffer"] = {"status_file_max_age_s": round(worst, 2),
+                                                                    "remote_connected_end": remote_connected(a)}
+        assert worst < 5.0, f"основной цикл блока стоял {worst:.1f} с (WatchdogSec=15 у службы)"
+    finally:
+        raw.close()
+        a.stop()
