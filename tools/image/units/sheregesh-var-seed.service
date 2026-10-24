@@ -18,7 +18,7 @@ ConditionPathExists=/usr/share/sheregesh/var-seed.tar.gz
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/tar -xzf /usr/share/sheregesh/var-seed.tar.gz -C /var --skip-old-files --numeric-owner --no-overwrite-dir
+ExecStart=/usr/bin/tar -xzf /usr/share/sheregesh/var-seed.tar.gz -C /var --skip-old-files --numeric-owner
 ExecStartPost=/bin/sh -c 'echo "sheregesh-var-seed: /var дополнен из образца образа"'
 
 [Install]

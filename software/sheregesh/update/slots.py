@@ -318,7 +318,8 @@ class VarSeeder:
                 subprocess.run(["umount", mnt], capture_output=True)
         self.carry(dst)
 
-    SEED_TAR = ("tar", "-xzf", "{seed}", "-C", "{dst}", "--skip-old-files", "--numeric-owner", "--no-overwrite-dir")
+    # GNU tar (trixie): --no-overwrite-dir несовместим с --skip-old-files (найдено испытанием на образе диска)
+    SEED_TAR = ("tar", "-xzf", "{seed}", "-C", "{dst}", "--skip-old-files", "--numeric-owner")
 
     def fill_from_seed(self, seed: Path, dst: Path):
         """На системном разделе image-rota оставляет почти пустой /var (содержимое — на persistent образа).

@@ -56,6 +56,13 @@ def sha_dev(dev, size=None):
     return h.hexdigest()
 
 
+def text(path):
+    try:
+        return Path(path).read_text()
+    except OSError:
+        return None
+
+
 def tree_hashes(root, skip=()):
     out = {}
     for p in sorted(Path(root).rglob("*")):
@@ -224,7 +231,7 @@ def main():
               tree_hashes(pers, skip=keep) == pers0)
         var_b = pers / "slots/system_b/var"
         check("/var слота B создан из нового образа", (var_b / "lib/dpkg/status").exists())
-        check("конфигурация пульта перенесена в B", (var_b / "lib/sheregesh/config/active").read_text() == "r7\n")
+        check("конфигурация пульта перенесена в B", text(var_b / "lib/sheregesh/config/active") == "r7\n")
         check("/var слота A не изменён", cfg_a.read_text() == "r7\n")
         exp = res["state"].get("expect", {})
         check("отпечатки для подтверждения сняты (роль console, ключ, machine-id)",
@@ -282,8 +289,7 @@ def main():
         check("tryboot: OK (перезагрузка подменена)", res["result"] == "OK", res.get("reason"))
         check("autoboot.txt на FAT: [all]=2 (основной A), [tryboot]=3",
               slots.autoboot_parts((mnt / "bootfs/autoboot.txt").read_text()) == (2, 3))
-        check("конфигурация перенесена заново перед tryboot (r8)", (var_b / "lib/sheregesh/config/active").read_text()
-              == "r8\n")
+        check("конфигурация перенесена заново перед tryboot (r8)", text(var_b / "lib/sheregesh/config/active") == "r8\n")
         # 6. Повторная установка во время пробной загрузки — отказ; отмена — без смены основного слота
         with open(W / "payload.shota", "rb") as f:
             res, _ = request("install", f)
