@@ -18,3 +18,12 @@
 
 Ожидается после загрузки: прошивка — A (`[all]` boot_partition=2, tryboot одноразовый уже израсходован), агент
 57e8fe4 создаёт `IDLE`, active=A, version_active 0.1.1792843040; `ota-status` работает, `consistent: true`.
+
+## Результат после загрузки (01:29) — PASS
+- Загрузилась A (`/dev/mmcblk0p2`/`p4`, `tryboot_now: false`), новый boot_id `3c83b42d…`, `systemctl is-system-running` →
+  running, упавших юнитов нет; `sheregesh-ota-boot` Result=success (агент 57e8fe4 больше не падает).
+- [`ota-status-after-repair.json`](ota-status-after-repair.json): `IDLE`, active A, version_active 0.1.1792843040,
+  `consistent: true`, autoboot [all]=2, разрешение переключения для 100000009d497e91 сохранено. `state.json` 157 байт
+  создан агентом 57e8fe4 (поля expect нет), прежний сохранён как `state.json.a7f1b74`.
+- `sheregesh-health`: PASS 14/0/0/0 (канал, сертификаты, службы). DEV-выпуск `0.1.0~dev0+ga0ba6311bee4` работает.
+- Снимок slot_guard: [`pi2-after-repair.json`](pi2-after-repair.json) (53 поля, активный A) — «до» для шага 1 нового цикла.
