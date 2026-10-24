@@ -107,7 +107,7 @@ Root-входа нет: root и пароли заблокированы (S2-1 `v
 
 **E. Предусловия pi2**
 - [x] R2a выполнен ([`hardware/REPAIR.md`](hardware/REPAIR.md)): A, IDLE, `consistent: true`, `ota-boot` success, health 14/14.
-- [ ] `rollback` против `s3.2-ota/step1`: 37 PASS, 1 FAIL `same.tree.boot` — `.Spotlight-V100` на p2 от macOS. Закрыть доказательством: файлы p2 вне `.Spotlight-V100` = образ 57e8fe4. **До закрытия — STOP.**
+- [x] `rollback` против `s3.2-ota/step1`: 37 PASS, 1 FAIL `same.tree.boot` — `.Spotlight-V100` на p2 от macOS. **Закрыто** (5b15dda, `hardware/REPAIR.md`): на p2 вне `.Spotlight-V100` ровно `boot.img` и `config.txt`, SHA-256 побайтно = boot_a образа 57e8fe4 (`4e6da3f9…5067`, `c4318a93…4f45`).
 - [ ] Разрешение переключения отозвать на шаге 0 (`ota-disable`) и выдать снова на шаге 2 (`ota-enable`), как в s3.2.
 - [ ] pi1 не меняется (`unchanged`).
 
