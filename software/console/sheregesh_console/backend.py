@@ -28,6 +28,7 @@ from sheregesh_emulators import Bench
 from sheregesh_emulators.demo import DEMO
 from sheregesh_emulators.scenario import TICK_S
 
+from . import journal as jr
 from .video import VideoReceiver
 
 LOG_LIMIT = 2000
@@ -126,7 +127,7 @@ class Backend(QObject):
     message = Signal(str, str)          # уровень (info/warning/error), текст
 
     def __init__(self, data_dir, demo=False, speed=1.0, autostart=True, peer=None, local_video=False,
-                 video_command=None, link_cfg=None, link_status_file=None, video_scan=None):
+                 video_command=None, link_cfg=None, link_status_file=None, video_scan=None, journal=None):
         """peer=None — удалённый блок эмулируется в процессе пульта; peer=(host, port) — внешний процесс-эмулятор.
         local_video — локальный синтетический генератор видео (без удалённого блока).
         video_scan — для испытаний: корни sysfs/dev и ioctl обнаружения устройств UVC (sheregesh.videoinput.scan)."""
@@ -144,6 +145,9 @@ class Backend(QObject):
         self._log_seq = 0
         self._last_event_id = 0
         self._last_phase = None
+        self.journal = journal if journal is not None else jr.Journal()
+        self._journal_link = None                   # последнее записанное в системный журнал (только переходы)
+        self._journal_video = None
         self._auth_episodes = 0                     # переходы канала в auth-failed (если клиент не ведёт счётчик)
         self._last_video_state = None
         self._power_history = collections.deque(maxlen=POWER_HISTORY)
@@ -320,6 +324,7 @@ class Backend(QObject):
             "activeCount": len(s.active),
         }
         self._status.update(self._link_status(s))
+        self._journal_transitions()
         if p is not None:
             self._power_history.append(round(p.percent, 1))
         self._mirror_to_log(s)
@@ -387,7 +392,8 @@ class Backend(QObject):
             "linkAuthFailures": cnt.get("auth_failures", self._auth_episodes),
             "linkSecure": bool(snap.get("secure")), "linkTls": snap.get("tls") or "", "linkHost": snap.get("host") or "",
             "linkPeerUri": snap.get("peer_uri") or "",
-            "linkRttMs": (tel.get("link") or {}).get("rtt_avg_ms", -1),
+            # круговая задержка — из телеметрии блока; без связи прежнее значение не показывается
+            "linkRttMs": (tel.get("link") or {}).get("rtt_avg_ms", -1) if s.peer_state == "connected" else -1,
             "peerDetail": s.peer.detail, "peerSession": s.peer.session or "",
             "peerHardware": s.peer.hardware or "",
             "linkConnects": cnt["connects"], "linkBad": cnt["bad_messages"], "linkIgnored": cnt["ignored_messages"],
@@ -403,6 +409,29 @@ class Backend(QObject):
             "batteryCritical": self._rev.data["diagnostics.yaml"]["battery_critical_pct"],
             "undervoltage": bool(s.power and s.power.undervoltage),
         }
+
+    def _journal_transitions(self):
+        """Системный журнал (E2E-12): только смены обобщённого состояния канала и наличия видеопотока."""
+        st = self._status
+        view = st["linkView"]
+        if view != self._journal_link:
+            prio = {"CONNECTED": jr.INFO, "CONNECTING": jr.NOTICE, "ERROR": jr.ERR}.get(view, jr.WARNING)
+            peer = st["peerDevice"] or "-"
+            self.journal.emit(prio, f"link: {view} (state={st['peerLink']} detail={st['peerDetail'] or '-'} "
+                                    f"peer={peer} host={st['linkHost'] or '-'} tls={st['linkTls'] or 'none'} "
+                                    f"mode={st['peerMode']})")
+            self._journal_link = view
+        cls = jr.video_class(self.video.state)
+        if cls is not None and cls != self._journal_video:
+            if cls == "playing":
+                self.journal.emit(jr.INFO, f"video: stream {'restored' if self._journal_video == 'no-stream' else 'started'} "
+                                           f"(codec={self.video.codec or '-'} source={self._video_source})")
+            elif cls == "no-stream":
+                self.journal.emit(jr.WARNING, f"video: no stream (state={self.video.state} "
+                                              f"error={self.video.error or '-'} source={self._video_source})")
+            elif self._journal_video is not None:
+                self.journal.emit(jr.NOTICE, f"video: off (source={self._video_source})")
+            self._journal_video = cls
 
     def _mirror_to_log(self, s):
         for e in self.bench.monitor.log.events:

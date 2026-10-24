@@ -221,7 +221,10 @@ def main(argv=None):
             st = backend.status
             label = ui.find("peerValue")
             detail = ui.find("peerDetail")
-            data = {"time": time.time(), "peerLink": st.get("peerLink"), "peerState": st.get("peerState"),
+            badge = ui.find("linkBadgeText")
+            data = {"time": time.time(), "linkView": st.get("linkView"),
+                    "linkBadgeText": badge.property("text") if badge else None, "peerLink": st.get("peerLink"),
+                    "peerState": st.get("peerState"),
                     "peerDetail": st.get("peerDetail"), "linkTls": st.get("linkTls"), "linkHost": st.get("linkHost"),
                     "linkRttMs": st.get("linkRttMs"), "peerValueText": label.property("text") if label else None,
                     "peerDetailText": detail.property("text") if detail and detail.property("visible") else "",
@@ -234,6 +237,18 @@ def main(argv=None):
                 pass
         ui_timer.timeout.connect(dump_ui)
         ui_timer.start(1000)
+        # Переходы — сразу, а не с периодом 1 с: иначе замер времени индикации по файлу (REQ-SW-002 «нет видео»
+        # ≤ 3 с, REQ-SW-004) получает до 1 с запаздывания самого файла.
+        last_key = {"k": None}
+
+        def dump_on_change():
+            st = backend.status
+            key = (st.get("linkView"), st.get("peerLink"), st.get("peerDetail"), backend.video.state)
+            if key != last_key["k"]:
+                last_key["k"] = key
+                dump_ui()
+        backend.statusChanged.connect(dump_on_change)
+        backend.video.stateChanged.connect(dump_on_change)
     mark = os.environ.get("SHEREGESH_FIRST_FRAME_MARK")
     if mark:                                 # проба S2-2: время от загрузки ядра до первого показанного кадра
         def first_frame():

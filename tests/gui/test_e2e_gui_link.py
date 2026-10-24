@@ -20,6 +20,7 @@ from procs import Agent, free_port
 from sheregesh_console import backend as backend_mod
 from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations
 from sheregesh_console.backend import Backend, link_view, peer_link, peer_role
+from sheregesh_console.journal import Journal, MemoryJournal
 from sheregesh_console.qtwait import pump, wait_until
 from sheregesh_console.video import VideoReceiver
 
@@ -100,11 +101,15 @@ def test_link_states_autoupdate_and_gui_responsive_during_loss(make_ui, monkeypa
     теста)."""
     monkeypatch.setattr(backend_mod, "RECONNECT_WINDOW_S", 3.0)     # окно RECONNECTING укорочено для теста
     port = free_port()
-    u = make_ui(peer=("127.0.0.1", port))
+    jl = MemoryJournal()
+    t_start = time.monotonic()
+    u = make_ui(peer=("127.0.0.1", port), journal=jl)
     st = lambda: u.backend.status                                    # noqa: E731
     lat = Latency()
     assert st()["linkView"] == "CONNECTING" and text(u, "linkBadgeText") == "Удалённый блок: подключение…"
     assert wait_until(lambda: st()["linkView"] == "DISCONNECTED", 8)            # таймаут heartbeat 3 с
+    t_absent = time.monotonic() - t_start
+    assert t_absent <= 10, f"REQ-SW-004: «удалённый блок недоступен» через {t_absent:.1f} с"
     assert text(u, "linkBadgeText") == "Удалённый блок: нет связи"
     gap_nopeer = lat.stop()
     agent = Agent("--heartbeat-interval", "0.2", port=port)
@@ -122,6 +127,7 @@ def test_link_states_autoupdate_and_gui_responsive_during_loss(make_ui, monkeypa
         t0 = time.monotonic()
         assert wait_until(lambda: st()["linkView"] == "CONNECTING", 8)
         t_detect = time.monotonic() - t0
+        assert t_detect <= 3 + 1, f"потеря показана через {t_detect:.1f} с (таймаут heartbeat 3 с)"
         assert st()["peerLink"] == "RECONNECTING" and text(u, "linkBadgeText") == "Удалённый блок: подключение…"
         assert wait_until(lambda: st()["linkView"] == "DISCONNECTED", 10)
         agent.signal(signal.SIGCONT)
@@ -133,7 +139,10 @@ def test_link_states_autoupdate_and_gui_responsive_during_loss(make_ui, monkeypa
         worst = lat.stop()
     finally:
         agent.stop()
-    print(f"\nE2E-GUI link: connect {t_connect:.2f} s, loss detected {t_detect:.2f} s, recovered {t_recover:.2f} s; "
+    views = [t.split()[1] for _, t in jl.records if t.startswith("link: ")]
+    assert views == ["CONNECTING", "DISCONNECTED", "CONNECTED", "CONNECTING", "DISCONNECTED", "CONNECTED"], jl.records
+    print(f"\nE2E-GUI link: absent shown {t_absent:.2f} s after start, connect {t_connect:.2f} s, "
+          f"loss detected {t_detect:.2f} s, recovered {t_recover:.2f} s; "
           f"event loop worst gap: no peer {gap_nopeer} ms, loss→recovery {worst} ms ({lat.ticks} ticks)")
     assert gap_nopeer < GAP_LIMIT_MS and worst < GAP_LIMIT_MS, f"событийный цикл GUI стоял {gap_nopeer}/{worst} мс"
 
@@ -249,3 +258,72 @@ def test_auth_failure_shown_as_error_then_tls_session_shown(make_ui, lab):
         assert "роль remote" in text(u2, "peerIdentity")                     # из проверенного URI сертификата
     finally:
         agent.stop()
+
+
+# ---------------- системный журнал (E2E-12) и «нет видео» ≤ 3 с (REQ-SW-002) ----------------
+def test_journal_writes_syslog_prefixed_lines_off_gui_thread():
+    import io
+    buf = io.StringIO()
+    j = Journal(stream=buf)
+    j.emit(4, "link: DISCONNECTED (state=DISCONNECTED)")
+    end = time.monotonic() + 2                        # без событийного цикла Qt: запись идёт в своём потоке
+    while time.monotonic() < end and not buf.getvalue():
+        time.sleep(0.01)
+    assert buf.getvalue() == "<4>link: DISCONNECTED (state=DISCONNECTED)\n", buf.getvalue()
+
+
+def test_console_process_logs_link_transitions_to_stderr(tmp_path):
+    """Служба: stderr → journald. Без блока за 6 с — ровно два перехода, с уровнями syslog."""
+    import os
+    import subprocess
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software",
+           "PYTHONPATH": os.pathsep.join(str(root / p) for p in ("software", "software/emulators", "software/console"))}
+    p = subprocess.Popen([sys.executable, "-m", "sheregesh_console", "--data-dir", str(tmp_path),
+                          "--peer", f"127.0.0.1:{free_port()}"], env=env, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.PIPE, text=True)
+    try:
+        time.sleep(7)
+    finally:
+        p.send_signal(signal.SIGTERM)
+        err = p.communicate(timeout=10)[1]
+    lines = [ln for ln in err.splitlines() if "link: " in ln]
+    assert [ln.split(" ")[0] for ln in lines] == ["<5>link:", "<4>link:"], err
+    assert "CONNECTING" in lines[0] and "DISCONNECTED" in lines[1], lines
+
+
+@pytest.mark.skipif(__import__("sheregesh.video", fromlist=["x"]).choose_codec() is None, reason="нет GStreamer")
+@pytest.mark.test_id("TEST-SW-002")
+def test_no_video_shown_within_3s_and_restored_within_10s_with_journal(make_ui):
+    """Блок с видео убит: «нет видео» в GUI ≤ 3 с; блок снова запущен: поток ≤ 10 с (REQ-SW-002 п. 3).
+    Журнал: по одной записи на переход, без повторов."""
+    vport = free_port(kind=2)
+    args = ("--heartbeat-interval", "0.2", "--video", "--video-port", str(vport), "--video-width", "640",
+            "--video-height", "360", "--video-fps", "25")
+    agent = Agent(*args)
+    jl = MemoryJournal()
+    try:
+        u = make_ui(peer=("127.0.0.1", agent.port), journal=jl)
+        u.window.setProperty("currentPage", PAGE_NAMES.index("video"))
+        rx = u.backend.video
+        assert wait_until(lambda: rx.state == "playing", 15), rx.metrics()
+        pump(1000)
+        agent.signal(signal.SIGKILL)
+        t0 = time.monotonic()
+        assert wait_until(lambda: visible(u, "videoPlaceholder") and text(u, "videoStateText") == "Нет видео", 6)
+        t_lost = time.monotonic() - t0
+        agent.proc.wait(5)
+        agent = Agent(*args, port=agent.port)
+        t0 = time.monotonic()
+        assert wait_until(lambda: rx.state == "playing" and not visible(u, "videoPlaceholder"), 12), rx.metrics()
+        t_back = time.monotonic() - t0
+        pump(700)                                     # запись в журнал — на следующем такте бэкенда (0,5 с)
+    finally:
+        agent.stop()
+    video = [t for _, t in jl.records if t.startswith("video: ")]
+    print(f"\nE2E-GUI video: «нет видео» {t_lost:.2f} s after source killed, restored {t_back:.2f} s after restart "
+          f"(incl. emulator start); journal {video}")
+    assert t_lost <= 3, f"REQ-SW-002: «нет видео» через {t_lost:.2f} с"
+    assert t_back <= 10, f"REQ-SW-002: восстановление через {t_back:.2f} с"
+    assert [t.split(" (")[0] for t in video] == ["video: stream started", "video: no stream", "video: stream restored"]
