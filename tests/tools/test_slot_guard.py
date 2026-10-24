@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """slot_guard (S3.2): нет ложного PASS при недостатке доказательств. Сверка снимков-файлов «до/после» записи слота B
 (шаг 1) и пробной загрузки (шаг 4); функции снимка на настоящем bash — отсутствующий файл, недоступный каталог,
-сбой конвейера, прерванный сбор, неудачный SSH."""
+сбой конвейера, прерванный сбор, неудачный SSH. Запуск: unittest (CI) или pytest."""
 import copy
 import hashlib
 import json
@@ -10,12 +10,26 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import unittest
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools/deploy/ota-check"))
 import slot_guard as g  # noqa: E402
+
+
+def cases(*items):
+    """Параметризация без pytest: CI запускает tests/tools через unittest."""
+    def deco(fn):
+        fn.cases = list(items)
+        return fn
+    return deco
+
+
+def with_tmp(fn):
+    fn.needs_tmp = True
+    return fn
+
 
 V = "0.1.1792865618"
 H = lambda s: hashlib.sha256(s.encode()).hexdigest()           # noqa: E731
@@ -93,12 +107,12 @@ def run(before, after, mode="install"):
 
 # ---------------------------------------------------------------- шаг 1: запись слота B
 
-def test_normal_install_passes():
+def check_normal_install_passes():
     assert run(fields_a(), installed()) == ("PASS", [])
 
 
-@pytest.mark.parametrize("key", ["io.p4", "fp.~/.local/share/sheregesh/link/device.key", "slot.dt", "health"])
-def test_partial_snapshot_is_error(key):
+@cases(*["io.p4", "fp.~/.local/share/sheregesh/link/device.key", "slot.dt", "health"])
+def check_partial_snapshot_is_error(key):
     a = installed()
     del a[key]
     assert run(fields_a(), a)[0] == "ERROR"
@@ -107,52 +121,52 @@ def test_partial_snapshot_is_error(key):
     assert g.compare(snapshot(fields_a()), s, "install", V)[0] == "ERROR"
 
 
-@pytest.mark.parametrize("key,value", [("tree.system", ""), ("fp./etc/machine-id", g.EMPTY_SHA),
+@cases(*[("tree.system", ""), ("fp./etc/machine-id", g.EMPTY_SHA),
                                        ("tree.boot", g.EMPTY_SHA + " 0"), ("io.p2", "x 0"),
                                        ("fp./etc/ssh/ssh_host_ed25519_key.pub", "absent"),
                                        ("fp.~/.config/sheregesh/remote.role", "absent"), ("ota.status", "{")])
-def test_empty_or_bad_values_are_error(key, value):
+def check_empty_or_bad_values_are_error(key, value):
     a = installed()
     a[key] = value
     assert run(fields_a(), a)[0] == "ERROR"
 
 
-def test_failed_command_is_error():
+def check_failed_command_is_error():
     s = snapshot(installed())
     s["errors"] = ["tree.system: код 1"]                        # find/sha256sum не смогли прочитать
     assert g.compare(snapshot(fields_a()), s, "install", V)[0] == "ERROR"
 
 
-def test_foreign_serial_and_board_mismatch_are_error():
+def check_foreign_serial_and_board_mismatch_are_error():
     a = installed()
     a["serial"] = g.BOARDS["pi1"]["serial"]
     assert run(fields_a(), a)[0] == "ERROR"
     assert g.compare(snapshot(fields_a()), snapshot(fields_a("pi1"), "pi1"), "install", V)[0] == "ERROR"
 
 
-@pytest.mark.parametrize("key,value", [("slot.dt", "boot_b"), ("slot.root", "system_b"),
+@cases(*[("slot.dt", "boot_b"), ("slot.root", "system_b"),
                                        ("slot.link.other.system", "system_a"), ("slot.boot", "bootconfig")])
-def test_ambiguous_active_slot_is_error(key, value):
+def check_ambiguous_active_slot_is_error(key, value):
     a = installed()
     a[key] = value
     assert run(fields_a(), a)[0] == "ERROR"
 
 
-def test_disk_counter_not_equal_to_partitions_is_error():
+def check_disk_counter_not_equal_to_partitions_is_error():
     a = installed()
     w, d = a["io.disk"].split()
     a["io.disk"] = f"{int(w) + 8} {d}"                          # запись через /dev/mmcblk0 в обход разделов
     assert run(fields_a(), a)[0] == "ERROR"
 
 
-@pytest.mark.parametrize("p,dw,dd", [("p4", 8, 0), ("p2", 1, 0), ("p4", 0, 2048)])
-def test_write_or_discard_on_active_slot_fails(p, dw, dd):
+@cases(*[("p4", 8, 0), ("p2", 1, 0), ("p4", 0, 2048)])
+def check_write_or_discard_on_active_slot_fails(p, dw, dd):
     a = installed()
     set_io(a, p, dw, dd)
     assert run(fields_a(), a) == ("FAIL", [f"untouched.{p}.{g.LAYOUT[p]}"])
 
 
-def test_active_slot_change_fails():
+def check_active_slot_change_fails():
     a = installed()
     a.update({"slot.root": "system_b", "slot.boot": "boot_b", "slot.link.active.system": "system_b",
               "slot.link.active.boot": "boot_b", "slot.link.other.system": "system_a",
@@ -161,7 +175,7 @@ def test_active_slot_change_fails():
     assert v == "FAIL" and "slot.active_unchanged" in bad and "same.slot.dt" in bad
 
 
-def test_bootconfig_change_fails():
+def check_bootconfig_change_fails():
     a = installed()
     set_io(a, "p1", 8)
     assert run(fields_a(), a) == ("FAIL", ["untouched.p1.bootconfig"])
@@ -171,17 +185,17 @@ def test_bootconfig_change_fails():
     assert run(fields_a(), a) == ("FAIL", ["bootconfig.autoboot", "same.autoboot.sha256"])
 
 
-@pytest.mark.parametrize("key", ["fp.~/.local/share/sheregesh/link/device.key",
+@cases(*["fp.~/.local/share/sheregesh/link/device.key",
                                  "fp.~/.local/share/sheregesh/link/device.crt", "fp.~/.config/sheregesh/link.json",
                                  "fp.~/.config/sheregesh/remote.role", "fp./etc/machine-id",
                                  "fp./etc/ssh/ssh_host_ed25519_key.pub", "fp.~/.ssh/authorized_keys"])
-def test_identity_change_fails(key):
+def check_identity_change_fails(key):
     a = installed()
     a[key] = H("other") + " 600"
     assert run(fields_a(), a) == ("FAIL", [f"same.{key}"])
 
 
-def test_unexpected_restart_or_reboot_fails():
+def check_unexpected_restart_or_reboot_fails():
     a = installed()
     a["unit.sheregesh-remote-net"] = UNIT.format("new").replace("NRestarts=0", "NRestarts=1")
     assert run(fields_a(), a) == ("FAIL", ["same.unit.sheregesh-remote-net"])
@@ -190,7 +204,7 @@ def test_unexpected_restart_or_reboot_fails():
     assert run(fields_a(), a) == ("FAIL", ["same.boot_id"])
 
 
-def test_incomplete_write_fails():
+def check_incomplete_write_fails():
     a = fields_a()
     set_io(a, "p3", g.BOOT_SIZE // 512)
     set_io(a, "p5", 100000)                                     # запись system_b оборвалась
@@ -198,7 +212,7 @@ def test_incomplete_write_fails():
     assert run(fields_a(), a) == ("FAIL", ["ota.state", "written.p5.system_b"])
 
 
-def test_enable_token_or_mounted_other_slot_fails():
+def check_enable_token_or_mounted_other_slot_fails():
     a = installed()
     a["ota.enable_present"] = "YES"
     v, bad = run(fields_a(), a)
@@ -209,7 +223,7 @@ def test_enable_token_or_mounted_other_slot_fails():
     assert v == "FAIL" and "other_slot_not_mounted" in bad
 
 
-def test_unchanged_board_mode():
+def check_unchanged_board_mode():
     a = fields_a()
     set_io(a, "p6", 500)                                         # журнал и состояние на persistent — допустимо
     assert run(fields_a(), a, "unchanged") == ("PASS", [])
@@ -221,18 +235,18 @@ def test_unchanged_board_mode():
 
 # ---------------------------------------------------------------- шаг 4: пробная загрузка B (expect нет)
 
-def test_trial_with_same_identity_passes():
+def check_trial_with_same_identity_passes():
     assert run(fields_a(), trial(), "trial") == ("PASS", [])
 
 
-@pytest.mark.parametrize("key", [k for k in fields_a() if k.startswith("fp.") and fields_a()[k] != "absent"])
-def test_trial_identity_change_fails(key):
+@cases(*[k for k in fields_a() if k.startswith("fp.") and fields_a()[k] != "absent"])
+def check_trial_identity_change_fails(key):
     t = trial()
     t[key] = H("replaced") + (" 600" if key.startswith("fp.~/") else "")
     assert run(fields_a(), t, "trial") == ("FAIL", [f"same.{key}"])
 
 
-def test_trial_negative_cases():
+def check_trial_negative_cases():
     t = trial()
     t["dt.tryboot"] = "0"                                       # B стал основным без пробной загрузки
     assert "dt.tryboot" in run(fields_a(), t, "trial")[1]
@@ -249,7 +263,7 @@ def test_trial_negative_cases():
 
 # ---------------------------------------------------------------- сбор снимка
 
-def test_parse_detects_interruption_errors_and_duplicates():
+def check_parse_detects_interruption_errors_and_duplicates():
     f, e, done = g.parse("serial\t1\n!ERR\ttree.boot\tкод 1\nserial\t2\n")
     assert not done and any("tree.boot" in x for x in e) and any("повторяется" in x for x in e)
     assert g.parse("a\tb\n!END\tok\n")[2]
@@ -260,7 +274,7 @@ class _R:
         self.returncode, self.stdout, self.stderr = rc, out, err
 
 
-def test_ssh_failure_and_truncated_output_are_error():
+def check_ssh_failure_and_truncated_output_are_error():
     s = g.snap("pi2", "h", runner=lambda *a, **k: _R(255, "", "Permission denied (publickey)."))
     assert g.validate(s)[0]
     full = "".join(f"{k}\t{v}\n" for k, v in installed().items())
@@ -272,20 +286,22 @@ def test_ssh_failure_and_truncated_output_are_error():
     assert g.validate(s)[0]
 
 
-def test_snapshot_script_is_strict():
+def check_snapshot_script_is_strict():
     assert "set -euo pipefail" in g.SNAP and g.SNAP.rstrip().endswith("printf '!END\\tok\\n'")
     assert "2>/dev/null)" not in g.SNAP.replace('out=$("$@" 2>/dev/null)', "")
 
 
-BASH_OK = shutil.which("bash") and shutil.which("sha256sum")
+BASH_OK = bool(shutil.which("bash") and shutil.which("sha256sum"))
 
 
 def sh(script, cwd):
     return subprocess.run(["bash", "-c", g.PRELUDE + script], cwd=cwd, capture_output=True, text=True).stdout
 
 
-@pytest.mark.skipif(not BASH_OK, reason="нужны bash и sha256sum")
-def test_bash_helpers_fail_closed(tmp_path):
+@with_tmp
+def check_bash_helpers_fail_closed(tmp_path):
+    if not BASH_OK:
+        raise unittest.SkipTest("нужны bash и sha256sum")
     (tmp_path / "d").mkdir()
     (tmp_path / "d/f").write_text("x")
     (tmp_path / "locked").mkdir()
@@ -308,10 +324,12 @@ def test_bash_helpers_fail_closed(tmp_path):
             os.chmod(tmp_path / "locked", 0o755)
 
 
-@pytest.mark.skipif(not BASH_OK, reason="нужны bash и sha256sum")
-def test_bash_unreadable_file_is_error(tmp_path):
+@with_tmp
+def check_bash_unreadable_file_is_error(tmp_path):
+    if not BASH_OK:
+        raise unittest.SkipTest("нужны bash и sha256sum")
     if os.geteuid() == 0:
-        pytest.skip("root читает без прав")
+        raise unittest.SkipTest("root читает без прав")
     (tmp_path / "k").write_text("key")
     os.chmod(tmp_path / "k", 0)
     try:
@@ -321,8 +339,35 @@ def test_bash_unreadable_file_is_error(tmp_path):
         os.chmod(tmp_path / "k", 0o600)
 
 
-def test_validate_rejects_unknown_board_and_copy_is_not_mutated():
+def check_validate_rejects_unknown_board_and_copy_is_not_mutated():
     s = snapshot(installed())
     s2 = copy.deepcopy(s)
     s2["meta"]["board"] = "pi9"
     assert g.validate(s2)[0] and g.validate(s)[0] == []
+
+
+class SlotGuardTests(unittest.TestCase):
+    pass
+
+
+def _attach():
+    for name, fn in list(globals().items()):
+        if not name.startswith("check_"):
+            continue
+
+        def method(self, fn=fn):
+            for case in getattr(fn, "cases", [()]):
+                case = case if isinstance(case, tuple) else (case,)
+                with self.subTest(case=case):
+                    if getattr(fn, "needs_tmp", False):
+                        with tempfile.TemporaryDirectory() as d:
+                            fn(Path(d), *case)
+                    else:
+                        fn(*case)
+        setattr(SlotGuardTests, "test_" + name[len("check_"):], method)
+
+
+_attach()
+
+if __name__ == "__main__":
+    unittest.main()
