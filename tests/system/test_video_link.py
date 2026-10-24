@@ -172,7 +172,7 @@ def test_no_control_session_rejected_and_no_sender_started(lab, tmp_path):
 
 def _children_with(pattern):
     import subprocess
-    out = subprocess.run(["ps", "-eo", "pid,args"], capture_output=True, text=True).stdout
+    out = subprocess.run(["ps", "-ww", "-eo", "pid,args"], capture_output=True, text=True).stdout   # без обрезки по ширине
     return [ln for ln in out.splitlines() if pattern in ln and "ps -eo" not in ln]
 
 
