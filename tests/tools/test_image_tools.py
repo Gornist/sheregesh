@@ -234,6 +234,8 @@ class DeployImageTest(unittest.TestCase):
         files = {"/" + k: v for k, v in t.items()}
         files["/etc/systemd/system/sockets.target.wants/sheregesh-ota.socket"] = "x"
         files["/etc/systemd/system/multi-user.target.wants/sheregesh-ota-boot.service"] = "x"
+        files["/etc/systemd/system/sysinit.target.wants/sheregesh-var-seed.service"] = "x"
+        files["/usr/share/sheregesh/var-seed.tar.gz"] = "seed"
         if dev:
             files[vi.SIGNERS] = 'sheregesh-deploy namespaces="sheregesh-deploy" ssh-ed25519 SIGNERKEY\n'
             files["/etc/polkit-1/rules.d/50-sheregesh-dev.rules"] = \
@@ -266,8 +268,9 @@ class DeployImageTest(unittest.TestCase):
         root.files["/usr/bin/sheregesh-console"] = "exec /usr/bin/python3 -m sheregesh_console\n"
         root.files["/etc/polkit-1/rules.d/50-sheregesh-dev.rules"] += '\n"sheregesh-deploy@shell.service"\n'
         del root.files["/etc/systemd/system/sockets.target.wants/sheregesh-ota.socket"]
+        del root.files["/usr/share/sheregesh/var-seed.tar.gz"]       # S3.2-OTA: без образца новый слот без /var
         r = self.run_checks(root, data, True)
-        for cid in ("deploy.launcher", "deploy.polkit", "deploy.enabled"):
+        for cid in ("deploy.launcher", "deploy.polkit", "deploy.enabled", "deploy.varseed"):
             self.assertEqual(r[cid]["status"], "FAIL", cid)
         root, data = self.image_root(dev=False)
         root.files[vi.SIGNERS] = "x"

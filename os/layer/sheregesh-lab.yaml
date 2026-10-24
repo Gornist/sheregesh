@@ -38,7 +38,7 @@ mmdebstrap:
         >> $1/boot/firmware/config.txt
     # sheregesh-ota.socket и sheregesh-ota-boot (S3.1-DEPLOY) включены всегда, но работают только при открытом
     # ключе подписи владельца (/etc/sheregesh/deploy/allowed_signers — только dev-образ).
-    - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console sheregesh-remote-net sheregesh-health.timer sheregesh-ota.socket sheregesh-ota-boot
+    - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console sheregesh-remote-net sheregesh-health.timer sheregesh-ota.socket sheregesh-ota-boot sheregesh-var-seed
     - |-
       set -eu
       # Найдено при первой загрузке на Pi 4 (S2-BOOT), корень только для чтения:
@@ -64,3 +64,13 @@ mmdebstrap:
       rm -f $1/tmp/pkgs.tsv
   cleanup-hooks:
     - rm -rf $1/tmp/sheregesh-debs
+    - |-
+      set -eu
+      # S3.2-OTA: образец /var этого образа на системном разделе (только чтение). image-rota позже переносит /var
+      # на persistent образа; поток обновления A/B несёт только boot и system — без образца новый слот получил бы
+      # почти пустой /var. Журнал (bind на persistent) и временные файлы не входят. Время — SOURCE_DATE_EPOCH.
+      mkdir -p $1/usr/share/sheregesh
+      tar -C $1/var --numeric-owner --sort=name --mtime="@${SOURCE_DATE_EPOCH:-0}" \
+          --exclude=./log/journal --exclude='./tmp/*' --exclude='./cache/apt/*' --exclude='./lib/apt/lists/*' \
+          -cf - . | gzip -n -9 > $1/usr/share/sheregesh/var-seed.tar.gz
+      tar -tzf $1/usr/share/sheregesh/var-seed.tar.gz ./lib/dpkg/status >/dev/null

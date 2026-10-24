@@ -243,3 +243,34 @@ def test_remote_role_gates(tmp_path):
     res, _ = b.request("confirm")
     assert res["result"] == "FAILED" and "unit.sheregesh-remote-net" in res["reason"]
     assert "unit.sheregesh-console" not in {c["id"] for c in res["checks"]}   # у блока пульт не обязателен
+
+
+def _gnu_tar():
+    import subprocess
+    try:
+        return "GNU tar" in subprocess.run(["tar", "--version"], capture_output=True, text=True).stdout
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _gnu_tar(), reason="нужен GNU tar (как на платах)")
+def test_var_seed_fills_missing_and_keeps_existing(tmp_path):
+    """Образец /var нового образа дополняет почти пустой /var слота; перенесённое и существующее не перезаписывается."""
+    import subprocess
+    src = tmp_path / "imgvar"
+    for rel, text in (("lib/dpkg/status", "new image\n"), ("lib/sheregesh/config/active", "image-default\n"),
+                      ("lib/systemd/keep-me", "from-image\n")):
+        (src / rel).parent.mkdir(parents=True, exist_ok=True)
+        (src / rel).write_text(text)
+    seed = tmp_path / "var-seed.tar.gz"
+    subprocess.run(f"tar -C {src} --numeric-owner -cf - . | gzip -n > {seed}", shell=True, check=True)
+    dst = tmp_path / "slotvar"
+    (dst / "lib/sheregesh/config").mkdir(parents=True)
+    (dst / "lib/sheregesh/config/active").write_text("carried-r8\n")
+    (dst / "lib/systemd").mkdir(parents=True)
+    (dst / "lib/systemd/keep-me").write_text("existing\n")
+    assert slots.VarSeeder(slots.Paths()).fill_from_seed(seed, dst)
+    assert (dst / "lib/dpkg/status").read_text() == "new image\n"
+    assert (dst / "lib/sheregesh/config/active").read_text() == "carried-r8\n"
+    assert (dst / "lib/systemd/keep-me").read_text() == "existing\n"
+    assert not slots.VarSeeder(slots.Paths()).fill_from_seed(tmp_path / "absent.tar.gz", dst)

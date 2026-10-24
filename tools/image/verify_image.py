@@ -189,6 +189,11 @@ def deploy_checks(rep, root, data, dev, groups):
                      root.ls("/etc/systemd/system/multi-user.target.wants"))
     rep.add("deploy.enabled", "включены sheregesh-ota.socket и sheregesh-ota-boot (учёт загрузки без переключений)",
             "sheregesh-ota.socket" in wants and "sheregesh-ota-boot.service" in wants)
+    seed_unit = root.cat("/usr/lib/systemd/system/sheregesh-var-seed.service")
+    sysinit = " ".join(root.ls("/etc/systemd/system/sysinit.target.wants"))
+    rep.add("deploy.varseed", "образец /var на системном разделе и служба sheregesh-var-seed (S3.2-OTA: /var слота "
+            "после A/B)", root.exists("/usr/share/sheregesh/var-seed.tar.gz") and "--skip-old-files" in seed_unit
+            and "sheregesh-var-seed.service" in sysinit)
     build = root.cat("/usr/share/sheregesh/build.json")
     rep.add("deploy.build", "версия системной части для OTA (/usr/share/sheregesh/build.json)",
             '"ota_version"' in build, build.replace("\n", " ")[:120])

@@ -247,8 +247,27 @@ def main():
                      for u in manifest.get("units", {})}
             check("новый слот: юниты = манифест", units == manifest.get("units") and len(units) >= 9,
                   f"{len(units)} юнитов")
-            priv = sh("sh", "-c", f"grep -rIl 'PRIVATE KEY' {mnt}/newsys/usr/lib/sheregesh {mnt}/newsys/etc/sheregesh "
-                      f"2>/dev/null | head -3", check_rc=False)
+            priv = sh("sh", "-c", f"grep -rIlE -- '-----BEGIN [A-Z ]*PRIVATE KEY-----' {mnt}/newsys/usr "
+                      f"{mnt}/newsys/etc 2>/dev/null | head -3", check_rc=False)
+            # Первая установка СТАРЫМ агентом (57e8fe4 на платах): /var слота — только из системного раздела +
+            # перенесённая конфигурация; при первой загрузке служба sheregesh-var-seed дополняет недостающее.
+            unit = (mnt / "newsys/usr/lib/systemd/system/sheregesh-var-seed.service").read_text()
+            cmd = next(x.split("=", 1)[1] for x in unit.splitlines() if x.startswith("ExecStart="))
+            old_var = W / "oldagent-var"
+            shutil.rmtree(old_var, ignore_errors=True)
+            sh("rsync", "-aHAXS", "--numeric-ids", f"{mnt}/newsys/var/", f"{old_var}/")
+            (old_var / "lib/sheregesh/config").mkdir(parents=True, exist_ok=True)
+            (old_var / "lib/sheregesh/config/active").write_text("r7-carried\n")
+            (old_var / "lib/systemd").mkdir(parents=True, exist_ok=True)
+            (old_var / "lib/systemd/keep-me").write_text("existing\n")
+            check("старый агент: /var из системного раздела почти пуст", not (old_var / "lib/dpkg/status").exists())
+            sh("sh", "-c", cmd.replace("/usr/share/sheregesh", f"{mnt}/newsys/usr/share/sheregesh")
+               .replace("-C /var", f"-C {old_var}"))
+            check("служба var-seed: dpkg, systemd и прочее дополнено из образца", (old_var / "lib/dpkg/status").exists()
+                  and (old_var / "lib/systemd").is_dir())
+            check("служба var-seed: перенесённая конфигурация и существующие файлы не перезаписаны",
+                  (old_var / "lib/sheregesh/config/active").read_text() == "r7-carried\n"
+                  and (old_var / "lib/systemd/keep-me").read_text() == "existing\n")
             check("новый слот: закрытых ключей в /usr/lib/sheregesh и /etc/sheregesh нет", not priv, priv)
         finally:
             sh("umount", str(mnt / "newsys"), check_rc=False)
@@ -273,7 +292,11 @@ def main():
         check("abort: OK, основной слот A", res["result"] == "OK"
               and slots.autoboot_parts((mnt / "bootfs/autoboot.txt").read_text())[0] == 2, res.get("reason"))
         check("в конце A не изменён", {n: sha_dev(p(n)) for n in (2, 4)} == a_before)
-        check("в конце общие данные не изменились", tree_hashes(pers, skip=keep) == pers0)
+        # конфигурацию слота A на r8 менял сам сценарий (проверка свежего переноса) — она сравнивается отдельно
+        skip_cfg = (*keep, "slots/system_a/var/lib/sheregesh")
+        check("в конце общие данные не изменились", tree_hashes(pers, skip=skip_cfg) ==
+              {k: v for k, v in pers0.items() if not k.startswith("slots/system_a/var/lib/sheregesh")})
+        check("конфигурация слота A — последняя записанная (r8)", cfg_a.read_text() == "r8\n")
         print(f"размеры: boot {sz[3]} system {sz[5]}; установка {dt} с; всего {round(time.monotonic() - t0)} с")
     finally:
         for d in ("newsys", "bootfs", "persistent"):

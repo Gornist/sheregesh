@@ -12,8 +12,10 @@ autoboot.txt для tryboot (S3.1-DEPLOY, подготовка OTA; ADR-0006, п
   • прошивка: /proc/device-tree/chosen/bootloader/partition — номер раздела active/boot.
 Запись — только в разделы other (O_EXCL на блочном устройстве дополнительно отказывает, если раздел смонтирован),
 поток xz → раздел с SHA-256, fsync, сброс кэша и повторное чтение для сверки. /var целевого слота
-(/persistent/slots/system_Y/var) пересоздаётся из /var нового образа (как делает image-rota при сборке), затем в
-него переносится конфигурация пульта /var/lib/sheregesh (REQ-CFG-006: у прежнего слота остаётся своя).
+(/persistent/slots/system_Y/var) пересоздаётся из /var нового образа и дополняется его образцом
+/usr/share/sheregesh/var-seed.tar.gz (на системном разделе image-rota оставляет /var почти пустым), затем в него
+переносится конфигурация пульта /var/lib/sheregesh (REQ-CFG-006: у прежнего слота остаётся своя); перед tryboot
+перенос повторяется с рабочего слота.
 autoboot.txt пишется в том же виде, что rpi-slot-tryboot: [all] boot_partition — основной, [tryboot] — пробный.
 """
 import hashlib
@@ -311,9 +313,23 @@ class VarSeeder:
                 raise UpdateError(f"не удалось смонтировать новый system только для чтения: {r.stderr.strip()}")
             try:
                 self.copy_tree(Path(mnt) / "var", dst)
+                self.fill_from_seed(Path(mnt) / "usr/share/sheregesh/var-seed.tar.gz", dst)
             finally:
                 subprocess.run(["umount", mnt], capture_output=True)
         self.carry(dst)
+
+    SEED_TAR = ("tar", "-xzf", "{seed}", "-C", "{dst}", "--skip-old-files", "--numeric-owner", "--no-overwrite-dir")
+
+    def fill_from_seed(self, seed: Path, dst: Path):
+        """На системном разделе image-rota оставляет почти пустой /var (содержимое — на persistent образа).
+        Образец /var нового образа дополняет недостающее; существующее не перезаписывается (S3.2-OTA).
+        Нет образца (старый образ) — новый слот дополнит /var службой sheregesh-var-seed при первой загрузке."""
+        if not seed.is_file():
+            return False
+        r = subprocess.run([a.format(seed=seed, dst=dst) for a in self.SEED_TAR], capture_output=True, text=True)
+        if r.returncode:
+            raise UpdateError(f"образец /var: {r.stderr.strip()[-200:]}")
+        return True
 
     def copy_tree(self, src: Path, dst: Path):
         dst.mkdir(parents=True, exist_ok=True)

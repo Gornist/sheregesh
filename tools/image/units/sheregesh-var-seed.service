@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# /var слота после обновления A/B (S3.2-OTA). image-rota при сборке кладёт содержимое /var только на раздел
+# persistent образа (slots/system_X/var), а на системном разделе /var почти пуст; поток обновления несёт boot и
+# system — агент OTA старого образа создаёт новому слоту почти пустой /var (найдено испытанием на файловом образе).
+# При первой загрузке такого слота недостающее дополняется из образца, снятого при сборке этого же образа
+# (/usr/share/sheregesh/var-seed.tar.gz, корень только для чтения). Существующие файлы НЕ перезаписываются:
+# перенесённая конфигурация пульта новее образца. Служба срабатывает только при пустом /var (нет dpkg/status).
+[Unit]
+Description=Sheregesh: seed per-slot /var after A/B update (fill missing, keep existing)
+DefaultDependencies=no
+RequiresMountsFor=/var
+After=local-fs.target
+Before=sysinit.target systemd-tmpfiles-setup.service systemd-sysusers.service
+ConditionPathExists=!/var/lib/dpkg/status
+ConditionPathExists=/usr/share/sheregesh/var-seed.tar.gz
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/tar -xzf /usr/share/sheregesh/var-seed.tar.gz -C /var --skip-old-files --numeric-owner --no-overwrite-dir
+ExecStartPost=/bin/sh -c 'echo "sheregesh-var-seed: /var дополнен из образца образа"'
+
+[Install]
+WantedBy=sysinit.target
