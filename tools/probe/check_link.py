@@ -141,7 +141,12 @@ def sc_pause(ch, rh, seconds, expect_watchdog):
     try:
         ssh(rh, f"kill -STOP {pid}", check=True)
         detect = wait(lambda: jread(ch, C_STATUS).get("phase") != "connected", seconds + 10, 0.25)
+        # Плитка пульта обновляется раз в секунду — ждём её состояния, пока пауза не кончилась.
         ui_during = jread(ch, C_UI)
+        while ((ui_during or {}).get("peerLink") == "CONNECTED"
+               and time.monotonic() - t_stop < (seconds if not expect_watchdog else seconds + 10)):
+            time.sleep(0.25)
+            ui_during = jread(ch, C_UI)
         if not expect_watchdog:
             time.sleep(max(0.0, seconds - (time.monotonic() - t_stop)))
             ssh(rh, f"kill -CONT {pid}", check=True)
@@ -397,8 +402,12 @@ def sc_version(ch, rh):
     try:
         r = _client_run(ch, f"remote:{rid}", 7543, rh)
     finally:                                     # временный сервер 2.0 не остаётся
-        log = ssh(rh, "kill $(cat /tmp/v2.pid) 2>/dev/null; sleep 1; grep -E 'hello|session' /tmp/v2.log | tail -2; "
-                      "rm -f /tmp/v2.pid; pgrep -f 'protocol 2.0' || echo stopped")
+        # Остановка — по PID и по слушающему порту 7543 (0x1D77), а не pgrep -f: тот находит саму команду ssh.
+        log = ssh(rh, "p=$(cat /tmp/v2.pid 2>/dev/null); kill $p 2>/dev/null; sleep 1; "
+                      "grep -E 'hello|session' /tmp/v2.log | tail -2; rm -f /tmp/v2.pid; "
+                      "if [ -n \"$p\" ] && kill -0 $p 2>/dev/null; then echo \"alive $p\"; "
+                      "elif awk 'NR>1 && $4==\"0A\"' /proc/net/tcp /proc/net/tcp6 | grep -qi ':1D77 '; then echo listening; "
+                      "else echo stopped; fi")
     if r is None or r.get("phase") not in ("auth-failed", "connected", "incompatible"):
         return {"verdict": "ERROR", "reason": "клиент не дал определённого результата", "result": r, "server": log}
     restored = wait(connected(ch), 30)
