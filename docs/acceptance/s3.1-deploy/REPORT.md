@@ -99,3 +99,41 @@ polkit: правило разрешает sheregesh-ui только `verb == "st
 Испытания после исправления: pytest 391 passed / 1 skipped (Mac), CI `cac9f4e` — success (392 passed, tools 46 OK), контейнер systemd 257 на `5b85bc6` — [27 PASS / 0 FAIL](container-systemd-check-5b85bc6.log) (в том числе «байт-кода в выпуске нет», пульт работает из выпуска).
 
 Единый образ для записи: коммит `57e8fe4` (после него менялся только `tools/probe/check_pi_deploy.py`, в образ не входит), `image.yml` https://github.com/Gornist/sheregesh/actions/runs/40091950426 — success, проверка структуры 70/70, пакет `0.1.0~dev0+g57e8fe4`, `image_sha256 ca5e81eaf30784153d45c7fbb7199a4516de28e779e4fa3ad6602a6926799297`, `sheregesh-lab-dev-pi4.img.zst` `bab6d3521daca9606be76582a9a8a9d09d189ccf25131b13a8d8a974ff37625e`. Установщик в пакете образа совпадает с репозиторием, `compileall` в нём нет. Образы `722210d` и `ac64aad` устарели — не записывать.
+
+## Аппаратная приёмка DEV deploy на pi1 (2026-10-24)
+
+**Носитель.** `/dev/disk5` — внешний USB, 31 914 983 424 Б, «STORAGE DEVICE», GPT image-rota. Опознан как рабочая карта pi1: GUID первого раздела `33530462-6500-5391-FF64-09FD65520036` совпадает с образом `ee56bf1` и ни с одним другим из девяти скачанных образов. Владелец подтвердил запись именно на `disk5`. Исходные microSD и карта pi2 не затрагивались.
+
+**Запись.** Образ `57e8fe4`, CI image run 40091950426. До записи — SHA-256 сжатого образа `bab6d352…625e` OK. После записи карта прочитана тем же дескриптором: `ca5e81eaf30784153d45c7fbb7199a4516de28e779e4fa3ad6602a6926799297` = `image_sha256`, карта извлечена. Журнал: [`../s3.1/pi1/flash-57e8fe4.log`](../s3.1/pi1/flash-57e8fe4.log).
+
+**Плата.** pi1, серийный номер `10000000568152de`, 192.168.1.92, пакет `0.1.0~dev0+g57e8fe4`, `build.json` commit `57e8fe4`. Корень `ro` (`/dev/disk/by-slot/active/system`), `/persistent`, `/home` и `/var` — `rw` с `mmcblk0p6`. Загрузка 2,4 с ядро + 18,2 с пространство пользователя, `system running`, отказавших юнитов нет. `sheregesh-console` — `active`, READY («first frame shown»), launcher: «заводской код». `sheregesh-ota.socket` слушает, `sheregesh-ota-boot` — oneshot: слот A, `IDLE → IDLE`, без переключения. health: 10 PASS / 3 SKIP (сеть не настроена — не PASS). Из сети открыт только TCP 22 ([`ports-standalone.json`](../s3.1/pi1/deploy/ports-standalone.json)).
+
+**Результаты** `tools/probe/check_pi_deploy.py` — протоколы в [`../s3.1/pi1/deploy/`](../s3.1/pi1/deploy/), сводка [`summary-all.json`](../s3.1/pi1/deploy/summary-all.json): **20 PASS, 1 SKIP, 0 FAIL, 0 ERROR**.
+
+| Сценарий | Итог | Доказательство |
+|---|---|---|
+| image | PASS | ключ подписи в образе = `~/.ssh/sheregesh-deploy.pub`, ≠ ключ входа; установщик — заводской код |
+| polkit (настоящий polkitd) | PASS | `start sheregesh-deploy@install` разрешён — установщик выполнился от root (REJECTED: нет входящих). Запрещены (`Interactive authentication required`): другой экземпляр, stop/restart установщика, transient-юниты (своё имя, `User=root`, произвольный), `set-environment`, `daemon-reload`, `enable`, `mask`, агент OTA, stop/restart/kill `ssh`. Transient-юнит с именем установщика systemd отверг сам («already loaded or has a fragment») |
+| tamper | PASS | sheregesh-ui не может писать в `releases/`, `current`, `state.json`, файлы выпуска, `allowed_signers`, `/usr/lib/sheregesh` |
+| app-stop / app-kill / app-restart | PASS ×3 | служба восстановлена; новые соединения SSH каждые 2 с — без отказов |
+| watchdog-freeze | PASS | SIGSTOP → `Watchdog timeout (limit 20s)` → перезапуск; старых ретранслятора, cage и пульта нет, группа пуста, tty1 свободен |
+| relay-kill-frozen (`ac64aad`) | PASS | пульт заморожен, SIGKILL ретранслятора → ни cage, ни пульта, служба перезапущена |
+| deploy-good | PASS | `OK`, launcher: «выпуск 0.1.0~dev0+g339f6d4854e5» |
+| no-bytecode | PASS | в выпусках нет `__pycache__`/`.pyc`, владелец root, 755 |
+| foreign-sig / tampered / login-key-sig | PASS ×3 | `REJECTED` «подпись не принята», `current` и PID службы не изменились; ключ входа не даёт права установки |
+| deploy-good2 | PASS | `OK`, предыдущий = первый выпуск |
+| deploy-bad-start | PASS | `ROLLED_BACK` (в `state.json`, не «успех юнита»), `current` прежний |
+| deploy-crash-window | PASS | падение через 15 с после READY → `ROLLED_BACK` |
+| rollback / factory | PASS ×2 | `OK`; после factory launcher — «заводской код» |
+| reboot | PASS | штатная перезагрузка → SSH, служба `active`, тот же выпуск |
+| corrupt | SKIP | повредить выпуск на плате можно только от root (см. tamper); отказ launcher на посторонний `.pyc`/файл — контейнер systemd 257 и тесты |
+
+Во всех сценариях с отказами новые соединения SSH открывались каждые 2 с — **ни одного отказа**.
+
+**Найдено и исправлено на плате:**
+1. Исправный выпуск откатывался (`ROLLED_BACK`, история установщика — [`board-state-history.json`](../s3.1/pi1/deploy/board-state-history.json)). Установщик пишет файлы по алфавиту, `sheregesh_ru.ts` оказывается «новее» `.qm`; пульт пытался пересобрать перевод, `lrelease` на плате нет → `RuntimeError`. Контейнер этого не видел: там пульт был подставной, без Qt. Исправлено в приложении (`339f6d4`) — готовый `.qm` используется с предупреждением. Исправление доставлено **самим DEV deploy**, без перезаписи карты. Выравнивание mtime в установщике — доработка для следующего образа.
+2. Записи пульта идут из `session-N.scope` под идентификатором ретранслятора, а не под юнитом службы: `journalctl -u sheregesh-console` их не показывает. Инструмент читает журнал с учётом этого (`88f1951`). `/proc/<pid>/environ` пульта не читается — выпуск определяется по строке launcher.
+3. Подряд идущие сценарии исчерпали `StartLimitBurst=5/300 с`: на 6-м запуске за 300 с перезапуски прекратились («Start request repeated too quickly») — защита от цикла работает как задумано ([`start-limit-evidence-run1.*`](../s3.1/pi1/deploy/)). Инструмент перед сценарием делает `reset-failed` (действие стенда, в протоколе).
+4. Ошибки инструмента: разбор `allowed_signers`, `kill` незагруженного oneshot, ожидание перезапуска после SIGKILL — исправлено (`88f1951`).
+
+**Итог.** pi1 — первая плата, где приложение обновляется без извлечения microSD: deploy, автоматический откат, rollback, factory и перезагрузка проверены на железе. OTA tryboot/confirm на pi1 не запускались. Аппаратный watchdog BCM2835 не менялся (`RuntimeWatchdogUSec=0`). ADR-0009/0010 — proposed. Гейт — NO-GO.
