@@ -31,7 +31,8 @@ Item {
             focus: true
             KeyNavigation.right: tilePower
             KeyNavigation.down: tileTemp
-            Label { objectName: "overallLabel"; text: win.stateText(st.overall); font.pixelSize: page.big; font.bold: true; color: win.stateColor(st.overall) }
+            Label { objectName: "overallLabel"; text: win.stateText(st.overall); font.pixelSize: page.big; font.bold: true; color: win.stateColor(st.overall)
+                    Layout.fillWidth: true; fontSizeMode: Text.HorizontalFit; minimumPixelSize: 18 * win.s; elide: Text.ElideRight }
             RowLayout {
                 spacing: 10 * win.s
                 Rectangle { objectName: "indicatorLamp"; width: 22 * win.s; height: width; radius: width / 2; color: win.stateColor(st.indicator) }
@@ -62,6 +63,10 @@ Item {
                 text: st.powerAvailable ? qsTr("%1\u00a0%").arg(win.num(st.powerPercent, 0)) : qsTr("No data")
                 font.pixelSize: page.big
                 font.bold: true
+                Layout.fillWidth: true
+                fontSizeMode: Text.HorizontalFit
+                minimumPixelSize: 18 * win.s
+                elide: Text.ElideRight
             }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap;
                 objectName: "powerSource"
@@ -90,10 +95,15 @@ Item {
                     : st.peerState === "connecting" ? qsTr("Connecting…") : qsTr("No link")
                 font.pixelSize: page.big
                 font.bold: true
+                Layout.fillWidth: true
+                fontSizeMode: Text.HorizontalFit
+                minimumPixelSize: 18 * win.s
+                elide: Text.ElideRight
             }
             Label {
                 objectName: "peerDetail"
                 Layout.fillWidth: true; wrapMode: Text.WordWrap
+                maximumLineCount: 2; elide: Text.ElideRight      // 1280×800: высота плитки ограничена (дефект E2E gui-pi1)
                 visible: st.peerState !== "connected"
                 text: st.peerDetail === "refused" ? qsTr("Remote unit process is not running (connection refused)")
                     : st.peerDetail === "heartbeat" ? qsTr("Remote unit stopped sending heartbeat")
@@ -108,6 +118,7 @@ Item {
             Label {
                 objectName: "peerIdentity"
                 Layout.fillWidth: true; wrapMode: Text.WordWrap
+                maximumLineCount: 2; elide: Text.ElideRight
                 text: qsTr("Remote unit: %1").arg(st.peerDevice !== "" ? st.peerDevice : "—")
                       + (st.peerRole !== "" ? qsTr(" · role %1").arg(st.peerRole) : "")
                       + (st.peerSoftware !== "" ? qsTr(" · software %1").arg(st.peerSoftware) : "")
@@ -120,10 +131,18 @@ Item {
                 text: qsTr("SoC %1\u00a0°C · power %2\u00a0% · uptime %3\u00a0s").arg(win.num(st.remoteTempSoc, 1)).arg(win.num(st.remotePowerPercent, 0)).arg(win.num(st.remoteUptime, 0))
                 color: win.p.muted
             }
-            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: qsTr("Protocol: remote %1 / console %2").arg(st.peerProtocol).arg(st.localProtocol); color: win.p.muted }
+            Label {
+                objectName: "linkProtocol"
+                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                maximumLineCount: 2; elide: Text.ElideRight
+                // без связи версия блока — прежняя, не текущая; при несовместимости — именно она и важна
+                visible: st.peerState === "connected" || st.peerState === "incompatible"
+                text: qsTr("Protocol: remote %1 / console %2").arg(st.peerProtocol).arg(st.localProtocol); color: win.p.muted
+            }
             Label {
                 objectName: "linkSecurity"
                 Layout.fillWidth: true; wrapMode: Text.WordWrap
+                maximumLineCount: 2; elide: Text.ElideRight
                 visible: st.linkSecure === true
                 text: qsTr("Mutual TLS %1 · %2 · round trip %3 ms").arg(st.linkTls !== "" ? st.linkTls : "—")
                       .arg(st.linkHost !== "" ? st.linkHost : "—").arg(st.linkRttMs >= 0 ? win.num(st.linkRttMs, 1) : "—")
@@ -132,6 +151,7 @@ Item {
             Label {
                 objectName: "linkPlain"
                 Layout.fillWidth: true; wrapMode: Text.WordWrap
+                maximumLineCount: 2; elide: Text.ElideRight
                 visible: st.linkSecure !== true && st.peerMode !== "emulated"
                 text: qsTr("No TLS (local test channel) · round trip %1 ms").arg(st.linkRttMs >= 0 ? win.num(st.linkRttMs, 1) : "—")
                 color: win.p.muted
@@ -139,6 +159,7 @@ Item {
             Label {
                 objectName: "linkAuthFailures"
                 Layout.fillWidth: true; wrapMode: Text.WordWrap
+                maximumLineCount: 1; elide: Text.ElideRight
                 visible: st.linkAuthFailures > 0
                 text: qsTr("Authentication failures: %1").arg(st.linkAuthFailures)
                 color: win.p.fault
@@ -154,7 +175,8 @@ Item {
                 color: rx.state === "playing" || rx.state === "off" ? win.p.muted
                      : rx.state === "waiting" || rx.state === "restarting" ? win.p.info : win.p.warning
             }
-            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap;
+            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 1; elide: Text.ElideRight
+                objectName: "linkHeartbeat"
                 text: st.peerHeartbeatAge >= 0 ? qsTr("Last heartbeat %1\u00a0s ago").arg(win.num(st.peerHeartbeatAge, 1)) : qsTr("No heartbeat")
                 color: win.p.muted
             }
@@ -175,6 +197,10 @@ Item {
                 text: st.tempAvailable ? qsTr("SoC %1\u00a0°C").arg(win.num(st.tempSoc, 1)) : qsTr("No data")
                 font.pixelSize: page.big
                 font.bold: true
+                Layout.fillWidth: true
+                fontSizeMode: Text.HorizontalFit
+                minimumPixelSize: 18 * win.s
+                elide: Text.ElideRight
             }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: st.tempAvailable; text: qsTr("Board %1\u00a0°C").arg(win.num(st.tempBoard, 1)); color: win.p.muted }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap;

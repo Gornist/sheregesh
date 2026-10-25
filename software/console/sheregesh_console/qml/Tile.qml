@@ -33,6 +33,8 @@ Rectangle {
             text: tile.title
             color: win.p.muted
             font.pixelSize: 18 * win.s
+            elide: Text.ElideRight
+            Layout.fillWidth: true
         }
         ColumnLayout {
             id: body
