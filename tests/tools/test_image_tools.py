@@ -292,6 +292,48 @@ class DeployImageTest(unittest.TestCase):
         self.assertIn("systemd-sysusers.service", r["detail"])
 
 
+class ConsoleSetupCacheTest(unittest.TestCase):
+    """E2E-13 OTA pi1: в образе devbox (mke2fs 1.47.2 зажимает mtime к SOURCE_DATE_EPOCH) конфиги и кэш console-setup
+    получили одно время — служба пересоздавала кэш в ro-корне и падала. Кэш должен быть строго новее конфигов."""
+
+    CACHE = ("/etc/console-setup/cached_setup_terminal.sh", "/etc/console-setup/cached_setup_keyboard.sh",
+             "/etc/console-setup/cached_UTF-8_del.kmap.gz")
+
+    def mtimes(self, conf, cache):
+        return {**{p: conf for p in vi.CONSOLE_CONFIGS}, **{p: cache for p in self.CACHE}}
+
+    def test_strictly_newer_cache_passes(self):
+        self.assertEqual(vi.console_setup_stale(self.mtimes(99, 100)), [])
+
+    def test_equal_or_older_cache_is_stale(self):
+        equal = vi.console_setup_stale(self.mtimes(100, 100))          # образ devbox 09fca4e: всё 09:10:12
+        self.assertTrue(any("cached_setup_terminal.sh не новее keyboard" in s for s in equal), equal)
+        self.assertTrue(any("cached_setup_terminal.sh не новее console-setup" in s for s in equal), equal)
+        self.assertTrue(vi.console_setup_stale(self.mtimes(101, 100)))
+        self.assertEqual(vi.console_setup_stale({vi.CONSOLE_CONFIGS[0]: 1}), ["нет cached_setup_terminal.sh"])
+
+    def test_ci_57e8fe4_times_pass(self):
+        """Реальные mtime образа CI 57e8fe4 (работает на платах): kmap того же времени, что конфиг, — не мешает."""
+        m = {"/etc/default/keyboard": 1792843237, "/etc/default/console-setup": 1792843241,
+             "/etc/console-setup/cached_UTF-8_del.kmap.gz": 1792843241,
+             "/etc/console-setup/cached_setup_terminal.sh": 1792843274}
+        self.assertEqual(vi.console_setup_stale(m), [])
+
+    def test_debugfs_mtime_parsing(self):
+        ext = vi.Ext4.__new__(vi.Ext4)
+        ext.run = lambda cmd: ("Inode: 12   Type: regular    Mode:  0644\n ctime: 0x6a1c8f34:00000000 -- Sun Oct 25\n"
+                               " mtime: 0x6a1c8f34:00000000 -- Sun Oct 25 09:10:12 2026\n")
+        self.assertEqual(ext.mtime("/etc/default/keyboard"), 0x6a1c8f34)
+        ext.run = lambda cmd: "/etc/x: File not found by ext2_lookup\n"
+        self.assertIsNone(ext.mtime("/etc/x"))
+
+    def test_layer_orders_console_setup_cache_after_configs(self):
+        lab = (ROOT / "os/layer/sheregesh-lab.yaml").read_text()
+        i = lab.index("setupcon --force --save-only")
+        self.assertIn('touch -m -d "@$((sde - 1))" $1/etc/default/keyboard $1/etc/default/console-setup', lab[i:])
+        self.assertIn('touch -h -m -d "@$sde" $1/etc/console-setup/cached_*', lab[i:])
+
+
 if __name__ == "__main__":
     unittest.main()
 

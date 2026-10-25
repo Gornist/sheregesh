@@ -44,6 +44,15 @@ mmdebstrap:
       # Найдено при первой загрузке на Pi 4 (S2-BOOT), корень только для чтения:
       # console-setup пишет кэш раскладки в /etc при каждой загрузке — готовим кэш при сборке.
       chroot $1 setupcon --force --save-only || chroot $1 systemctl mask console-setup.service
+      # Кэш годен, только если он СТРОГО новее /etc/default/{keyboard,console-setup} (console-setup.sh: -nt, setupcon:
+      # -ot). mke2fs ≥ 1.47.1 зажимает все mtime новее SOURCE_DATE_EPOCH к нему — конфиг и кэш, созданные при
+      # сборке, получали одно время, служба пересоздавала кэш в ro-корне и падала (E2E-13, OTA pi1; сборка devbox,
+      # e2fsprogs 1.47.2; в CI 1.47.0 зажима нет). Явный порядок не зависит от версии e2fsprogs: конфиги — SDE−1, кэш — SDE.
+      if ls $1/etc/console-setup/cached_* >/dev/null 2>&1; then
+        sde=${SOURCE_DATE_EPOCH:?}
+        touch -m -d "@$((sde - 1))" $1/etc/default/keyboard $1/etc/default/console-setup
+        touch -h -m -d "@$sde" $1/etc/console-setup/cached_*
+      fi
       # rpi-eeprom-update готовит обновление загрузчика записью в /boot/firmware; обновление EEPROM —
       # отдельная явная процедура, не автоматическая (влияет на tryboot, ADR-0006).
       chroot $1 systemctl mask rpi-eeprom-update.service

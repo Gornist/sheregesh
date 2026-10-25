@@ -145,6 +145,28 @@ class Ext4:
     def ls(self, path):
         return [x for x in self.run(f"ls -p {path}").splitlines() if x.startswith("/")]
 
+    def mtime(self, path):
+        """mtime (секунды) по debugfs stat: «mtime: 0x6a1b2c3d:…» или «mtime: 0x6a1b2c3d -- …»; None — нет файла."""
+        m = re.search(r"^\s*mtime:\s*0x([0-9a-f]+)", self.run(f"stat {path}"), re.M)
+        return int(m.group(1), 16) if m else None
+
+
+CONSOLE_CONFIGS = ("/etc/default/keyboard", "/etc/default/console-setup")
+
+
+def console_setup_stale(mtimes):
+    """Кэш console-setup, который служба при загрузке сочтёт устаревшим и станет пересоздавать в ro-корне.
+    Решение принимает /lib/console-setup/console-setup.sh: setupcon --save вызывается, если cached_setup_terminal.sh
+    НЕ строго новее (-nt) /etc/default/keyboard или /etc/default/console-setup. Равные mtime (mke2fs ≥ 1.47.1 зажимает
+    время к SOURCE_DATE_EPOCH) — устаревший кэш. (Проверки setupcon по cached_*.kmap.gz срабатывают только внутри
+    setupcon; в образе CI 57e8fe4 kmap того же времени, что конфиг, и это не мешает.)"""
+    conf = {p: mtimes.get(p) for p in CONSOLE_CONFIGS}
+    caches = [p for p in mtimes if p == "/etc/console-setup/cached_setup_terminal.sh" and mtimes[p] is not None]
+    if not caches:
+        return ["нет cached_setup_terminal.sh"]
+    return [f"{c.rsplit('/', 1)[1]} не новее {p.rsplit('/', 1)[1]} ({mtimes[c]} ≤ {t})"
+            for c in sorted(caches) for p, t in conf.items() if t is not None and mtimes[c] <= t]
+
 
 def mtype(img, part, name):
     r = subprocess.run(["mtype", "-i", f"{img}@@{part['offset']}", f"::{name}"], capture_output=True, text=True)
@@ -309,9 +331,12 @@ def verify(img, variant, out):
                     "/dev/null" in root.run("stat /etc/systemd/system/rpi-eeprom-update.service"))
             rep.add("resolved.no-llmnr", "systemd-resolved: LLMNR и mDNS выключены (нет 0.0.0.0:5355)",
                     "LLMNR=no" in (rc := root.cat("/etc/systemd/resolved.conf.d/90-sheregesh.conf")) and "MulticastDNS=no" in rc)
-            rep.add("console-setup.ro", "console-setup не пишет в ro-корень (кэш собран или служба замаскирована)",
-                    any("cached_" in x for x in root.ls("/etc/console-setup")) or
-                    "/dev/null" in root.run("stat /etc/systemd/system/console-setup.service"))
+            masked = "/dev/null" in root.run("stat /etc/systemd/system/console-setup.service")
+            cs = [f"/etc/console-setup/{n}" for n in ls_names(root, "/etc/console-setup") if n.startswith("cached_")]
+            stale = [] if masked else console_setup_stale({p: root.mtime(p) for p in (*cs, *CONSOLE_CONFIGS)})
+            rep.add("console-setup.ro", "console-setup не пишет в ro-корень: кэш строго новее конфигов (или служба "
+                    "замаскирована; E2E-13 OTA pi1 — равные mtime → пересоздание кэша → failed)",
+                    masked or not stale, "замаскирована" if masked else ("; ".join(stale) or "кэш новее конфигов"))
             shadow = {x.split(":")[0]: x.split(":")[1] for x in root.cat("/etc/shadow").splitlines() if x.count(":") >= 2}
             locked = lambda h: h.startswith(("!", "*"))                                    # noqa: E731
             rep.add("users.locked", "root и sheregesh-ui без пароля (заблокированы)",
