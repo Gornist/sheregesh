@@ -102,6 +102,7 @@ Item {
             Layout.fillHeight: true
             KeyNavigation.left: tilePower
             KeyNavigation.down: tileEvents
+            optional: remoteTelemetry      // телеметрия блока (есть и на «Диагностике») уступает место остальным строкам
             Label {
                 objectName: "peerValue"
                 text: st.peerLink === "CONNECTED" ? qsTr("Connected") : st.peerLink === "RECONNECTING" ? qsTr("Reconnecting…")
@@ -139,9 +140,12 @@ Item {
                 color: win.p.muted
             }
             Label {
+                id: remoteTelemetry
                 objectName: "remoteTelemetry"
                 Layout.fillWidth: true; wrapMode: Text.WordWrap
-                visible: st.remoteAvailable && st.peerState === "connected"
+                maximumLineCount: 2; elide: Text.ElideRight
+                // 1280×800 + несовпадение версий протокола и др.: убирается, а не выталкивает heartbeat за рамку
+                visible: st.remoteAvailable && st.peerState === "connected" && tileLink.optionalFits
                 text: qsTr("SoC %1\u00a0°C · power %2\u00a0% · uptime %3\u00a0s").arg(win.num(st.remoteTempSoc, 1)).arg(win.num(st.remotePowerPercent, 0)).arg(win.num(st.remoteUptime, 0))
                 color: win.p.muted
             }

@@ -46,6 +46,15 @@ STATES = {
     "incompatible": {"peerLink": "INCOMPATIBLE", "linkView": "ERROR", "peerState": "incompatible",
                      "peerDetail": "protocol 2.0 is not supported (console 1.1)", "peerDevice": LONG_DEVICE,
                      "peerSoftware": "2.0.0", "linkSecure": False, "peerMode": "process"},
+    # смешанные версии (блок 1.1, пульт 1.2, найдено агентом B): строка «Протокол: …» на 1280×800 выталкивала
+    # heartbeat за рамку плитки
+    "connected-protocol-mismatch": {"peerLink": "CONNECTED", "linkView": "CONNECTED", "peerState": "connected",
+                                    "peerDetail": "ok", "peerDevice": LONG_DEVICE, "peerSoftware": "0.1.0.dev0",
+                                    "peerRole": "remote", "peerProtocol": "1.1", "linkSecure": True,
+                                    "linkTls": "TLSv1.3", "linkHost": "192.168.1.171", "linkRttMs": 1.8,
+                                    "linkAuthFailures": 2, "peerHeartbeatAge": 0.2, "remoteAvailable": True,
+                                    "remoteTempSoc": 47.3, "remotePowerPercent": 85, "remoteUptime": 123456,
+                                    "peerMode": "network"},
 }
 
 
@@ -132,3 +141,32 @@ def test_reconnecting_identity_wraps_inside_link_tile_at_1280(ui):
         r = rect(find(ui, name))
         assert tile.left() <= r.left() and r.right() <= tile.right(), (name, r, tile)
     assert "remote-emu-01" in find(ui, "peerIdentity").property("text")
+
+
+@pytest.mark.test_id("TEST-UI-002")
+def test_protocol_mismatch_line_does_not_push_heartbeat_out_at_1280(ui):
+    """Блок 1.1 / пульт 1.2: строка несовпадения версий видна, heartbeat и остальные — в рамке плитки; уступает
+    место только второстепенная телеметрия блока (она есть на «Диагностике»), и только когда не помещается."""
+    st = STATES["connected-protocol-mismatch"]
+    force_status(ui, **st)
+    assert ui.backend.status["localProtocol"] != st["peerProtocol"]
+    ui.window.setProperty("currentPage", PAGE_NAMES.index("dashboard"))
+    seen = {}
+    for w, h in SIZES:
+        ui.window.resize(w, h)
+        pump(250)
+        tile = rect(find(ui, "tileLink")).adjusted(-1, -1, 1, 1)
+        for name in ("peerValue", "peerIdentity", "linkProtocol", "linkSecurity", "linkAuthFailures", "linkVideo",
+                     "linkHeartbeat"):
+            o = find(ui, name)
+            assert o.isVisible(), (w, name)
+            assert tile.contains(rect(o)), (w, name, rect(o), tile)
+        assert tile_overflow(ui) + text_problems(ui) == [], w
+        seen[w] = find(ui, "remoteTelemetry").isVisible()
+    assert seen[1920], "на 1920×1200 места хватает — телеметрия блока видна"
+    # без несовпадения версий на 1280×800 телеметрия блока по-прежнему видна
+    force_status(ui, peerProtocol=ui.backend.status["localProtocol"], linkAuthFailures=0)
+    ui.window.resize(1280, 800)
+    pump(250)
+    assert find(ui, "remoteTelemetry").isVisible() and not find(ui, "linkProtocol").isVisible()
+    assert tile_overflow(ui) == []
