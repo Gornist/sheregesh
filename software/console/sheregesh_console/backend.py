@@ -79,13 +79,12 @@ def _yaml(data: dict) -> str:
 RECONNECT_WINDOW_S = 30.0
 SELECT_TIMEOUT_S = 15.0      # выбор источника видео: блок должен отметить новый источник активным за это время
 # Ответ блока/клиента на выбор источника → код ошибки для экрана (VideoPage.selectErrorText)
-_SELECT_ERRORS = (("unknown", ("unknown", "not-found", "not_found", "no-such", "invalid-id", "bad-id")),
-                  ("unavailable", ("unavailable", "not-available", "not_available", "no-device", "offline")),
-                  ("unsupported", ("unsupported", "not-supported", "not_supported", "not-implemented",
-                                   "not_implemented")),
-                  ("no-link", ("not-connected", "not_connected", "no-link", "no_link", "disconnected", "no session")),
-                  ("busy", ("busy", "in-progress", "in_progress")),
-                  ("timeout", ("timeout", "timed out", "timed-out")))
+_SELECT_ERRORS = (("unknown", ("unknown", "not-found", "no-such", "invalid-id", "bad-id")),
+                  ("unavailable", ("unavailable", "not-available", "no-device", "offline")),
+                  ("unsupported", ("unsupported", "not-supported", "not-implemented")),
+                  ("no-link", ("not-connected", "no-link", "disconnected", "no-session")),
+                  ("busy", ("busy", "in-progress")),
+                  ("timeout", ("timeout", "timed-out")))
 
 
 def select_error(result):
@@ -109,7 +108,7 @@ def select_error(result):
         code, detail = result, ""
     else:
         return "", ""
-    probe = f"{code} {detail}".lower()
+    probe = re.sub(r"[\s_]+", "-", f"{code} {detail}".lower())
     for norm, keys in _SELECT_ERRORS:
         if any(k in probe for k in keys):
             return norm, vsrc.scrub(detail)[:200]
@@ -538,6 +537,11 @@ class Backend(QObject):
         report = self._video_report()
         src = vsrc.describe(rx_state=self.video.state, rx_error=self.video.error, **report)
         src.update(vsrc.display(src, self.video.state))
+        self._update_video_sources(vsrc.sources(report.get("telemetry_video"))
+                                   if report["mode"] == "remote" and src["state"] != vsrc.RECONNECTING else [])
+        if self._vsel["state"] == "switching" and src["display"] == "playing":
+            # до подтверждения блоком (активный id в телеметрии) кадры — прежнего источника: не выдаются за новый
+            src.update(display="switching", live=False)
         if src != self._vsrc:
             # переходы состояния источника (у приёмника — свой журнал «state …» в _link_status)
             source_level = vsrc.BLOCKING + ("starting",)
@@ -547,8 +551,6 @@ class Backend(QObject):
                          f"source {src['input'] or '-'} {src['display']} {src['error']}".strip())
             self._vsrc = src
             self.videoSourceChanged.emit()
-        self._update_video_sources(vsrc.sources(report.get("telemetry_video"))
-                                   if report["mode"] == "remote" and src["state"] != vsrc.RECONNECTING else [])
 
     # ---------- выбор источника видео на блоке (S4) ----------
     def _video_peer(self):
@@ -562,8 +564,8 @@ class Backend(QObject):
         """Почему выбор сейчас невозможен: "" | local | no-link | no-list | unsupported."""
         if self._video_report()["mode"] != "remote":
             return "local"
-        if self._vsrc.get("state") == vsrc.RECONNECTING or (self.client is not None and
-                                                            self._status.get("peerState", "connected") != "connected"):
+        if self._video_report().get("link") == "RECONNECTING" or (
+                self.client is not None and self._status.get("peerState", "connected") != "connected"):
             return "no-link"
         if not self._vsources:
             return "no-list"
@@ -578,9 +580,11 @@ class Backend(QObject):
             self.videoSourcesChanged.emit()
 
     def _update_video_sources(self, sources):
+        changed = sources != self._vsources
+        self._vsources = sources
         blocker = self._select_blocker() if hasattr(self, "_status") else "local"
-        changed = sources != self._vsources or blocker != getattr(self, "_sel_blocker", None)
-        self._vsources, self._sel_blocker = sources, blocker
+        changed = changed or blocker != getattr(self, "_sel_blocker", None)
+        self._sel_blocker = blocker
         switching = self._vsel["state"] == "switching"
         if switching and any(x["id"] == self._vsel["id"] and x["active"] for x in sources):
             self.log("info", "video", f"source selected {self._vsel['id']}")
@@ -629,6 +633,7 @@ class Backend(QObject):
         seq, call = self._sel_seq, self._selector()
         self.log("info", "video", f"source select {source_id} ({src['input'] or '-'})")
         self._set_selection(state="switching", id=source_id, name=name, error="", detail="")
+        self._update_video_source()
 
         def run():                                  # вызов идёт по сети — не в потоке интерфейса
             try:
@@ -637,7 +642,7 @@ class Backend(QObject):
                 result = e
             self._selectDone.emit(seq, result)
         threading.Thread(target=run, name="video-select", daemon=True).start()
-        QTimer.singleShot(int(SELECT_TIMEOUT_S * 1000), lambda: self._on_select_done(seq, TimeoutError("timeout")))
+        QTimer.singleShot(int(SELECT_TIMEOUT_S * 1000), lambda: self._on_select_done(seq, {"ok": False, "error": "timeout"}))
         return True
 
     @Slot(int, object)
@@ -649,8 +654,7 @@ class Backend(QObject):
             self._sel_seq += 1
             self.log("warning", "video", f"source select {self._vsel['id']}: {code} {detail}".strip())
             self._set_selection(state="error", error=code, detail=detail)
-        else:
-            self._update_video_source()             # блок мог уже отметить источник активным
+        self._update_video_source()                 # блок мог уже отметить источник активным; снять «Переключение»
 
     @Property(list, notify=statusChanged)
     def powerHistory(self):

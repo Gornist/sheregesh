@@ -21,6 +21,8 @@ Item {
         case "unsupported": return qsTr("mode not supported")
         case "no-video": return qsTr("stream interrupted")
         case "unavailable": return qsTr("GStreamer missing")
+        case "reconnecting": return qsTr("reconnecting")
+        case "switching": return qsTr("switching source…")
         default: return d
         }
     }
@@ -183,11 +185,20 @@ Item {
                 maximumLineCount: 2; elide: Text.ElideRight
                 readonly property var rx: backend.videoReceiver
                 readonly property var vs: backend.videoSource
+                readonly property string active: {      // имя активного источника блока (если блок сообщает список)
+                    var l = backend.videoSources
+                    for (var i = 0; i < l.length; i++)
+                        if (l[i].active)
+                            return l[i].name
+                    return ""
+                }
                 // тип входа — когда источник известен; состояние — источника на блоке, если он его сообщает, иначе приёмника
-                text: (vs.input !== "" ? qsTr("Video (%1): %2").arg(win.videoInputText(vs.input)) : qsTr("Video: %1"))
+                text: (vs.input !== "" ? qsTr("Video (%1): %2").arg(win.videoInputText(vs.input) + (active !== "" ? " · " + active : ""))
+                                       : qsTr("Video: %1"))
                       .arg(page.videoShort(vs.display, rx.fps))
                 color: vs.display === "playing" || vs.display === "off" ? win.p.muted
-                     : vs.display === "waiting" || vs.display === "restarting" || vs.display === "starting" ? win.p.info
+                     : vs.display === "switching" || vs.display === "waiting" || vs.display === "restarting" || vs.display === "starting"
+                       || vs.display === "reconnecting" ? win.p.info
                      : win.p.warning
             }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 1; elide: Text.ElideRight

@@ -374,6 +374,16 @@
         <source>Video: %1</source>
         <translation>Видео: %1</translation>
     </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="24" />
+        <source>reconnecting</source>
+        <translation>переподключение</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="25" />
+        <source>switching source…</source>
+        <translation>переключение источника…</translation>
+    </message>
 </context>
 <context>
     <name>DiagnosticsPage</name>
@@ -642,6 +652,11 @@
         <location filename="../qml/Main.qml" line="44" />
         <source>not reported</source>
         <translation>не сообщается</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="45" />
+        <source>reconnecting</source>
+        <translation>переподключение</translation>
     </message>
 </context>
 <context>
@@ -1069,6 +1084,101 @@
         <location filename="../qml/VideoPage.qml" line="100" />
         <source>Source mode %1 · shown %2&#160;fps · %3 · frames %4 · decoder restarts %5</source>
         <translation>Режим источника %1 · показано %2&#160;к/с · %3 · кадров %4 · перезапусков декодера %5</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="29" />
+        <source>Source: remote unit · state: %1</source>
+        <translation>Источник: удалённый блок · состояние: %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="44" />
+        <source>Reconnecting to the remote unit: the link is being restored. The last frame is not shown; video returns automatically.</source>
+        <translation>Переподключение к удалённому блоку: связь восстанавливается. Последний кадр не показывается; видео вернётся автоматически.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="79" />
+        <source>The remote unit does not know the source «%1»; the list of sources may have changed.</source>
+        <translation>Удалённый блок не знает источник «%1»; возможно, список источников изменился.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="80" />
+        <source>Source «%1» is unavailable on the remote unit; choose another source.</source>
+        <translation>Источник «%1» на удалённом блоке недоступен; выберите другой источник.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="81" />
+        <source>Source selection is not supported by the link to the remote unit.</source>
+        <translation>Выбор источника не поддерживается каналом связи с удалённым блоком.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="82" />
+        <source>No link to the remote unit; switching to «%1» is not confirmed.</source>
+        <translation>Нет связи с удалённым блоком; переключение на «%1» не подтверждено.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="83" />
+        <source>The remote unit is busy switching sources; try again in a few seconds.</source>
+        <translation>Удалённый блок занят переключением источника; повторите через несколько секунд.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="84" />
+        <source>The remote unit did not confirm switching to «%1».</source>
+        <translation>Удалённый блок не подтвердил переключение на «%1».</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="85" />
+        <source>Switching to «%1» failed.</source>
+        <translation>Переключение на «%1» не выполнено.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="91" />
+        <source>Switching to «%1»…</source>
+        <translation>Переключение на «%1»…</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="95" />
+        <source>The remote unit does not report a list of sources: only the synthetic source, selection is not available.</source>
+        <translation>Удалённый блок не сообщает список источников: только синтетический источник, выбор недоступен.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="97" />
+        <source>Source selection is not available: the link client of this console does not support it.</source>
+        <translation>Выбор источника недоступен: клиент канала связи этого пульта его не поддерживает.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="101" />
+        <source>Switching…</source>
+        <translation>Переключение…</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="203" />
+        <source>active</source>
+        <translation>активный</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="203" />
+        <source>switching…</source>
+        <translation>переключение…</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="204" />
+        <source>available</source>
+        <translation>доступен</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="204" />
+        <source>unavailable</source>
+        <translation>недоступен</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="294" />
+        <source>Switch video source?</source>
+        <translation>Переключить источник видео?</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="299" />
+        <source>The remote unit will switch to «%1» (%2). The current picture is interrupted until the new source starts.</source>
+        <translation>Удалённый блок переключится на «%1» (%2). Текущее изображение прервётся, пока не запустится новый источник.</translation>
     </message>
 </context>
 </TS>

@@ -41,7 +41,8 @@ ApplicationWindow {
     function videoSourceStateText(state) {
         return state === "streaming" ? qsTr("streaming") : state === "no-signal" ? qsTr("no signal")
              : state === "no-device" ? qsTr("no device") : state === "starting" ? qsTr("starting")
-             : state === "connect-error" ? qsTr("connection error") : state === "error" ? qsTr("error") : qsTr("not reported")
+             : state === "connect-error" ? qsTr("connection error") : state === "error" ? qsTr("error")
+             : state === "reconnecting" ? qsTr("reconnecting") : qsTr("not reported")
     }
     function stateText(state) {
         return state === "fault" ? qsTr("Fault") : state === "warning" ? qsTr("Warning")
