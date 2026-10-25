@@ -94,8 +94,9 @@ def test_input_type_heuristics(v4l2):
     v4l2.add("video3", "unicam", "unicam-image", 0, formats=[("UYVY", "discrete", [((1920, 1080), [30])])],
              inputs=[{"name": "unicam", "capabilities": vi.V4L2_IN_CAP_DV_TIMINGS}], bus="platform:fe801000.csi")
     v4l2.add("video4", "vivid", "vivid", 0, formats=[("YUYV", "discrete", [((640, 480), [30])])], bus="platform:vivid-000")
+    v4l2.add("video5", "uvcvideo", "AV TO USB2.0", 0, ("534d", "0021", ""), formats=MJPEG_HDMI)   # EasyCAP MS210x
     types = {n.name: n.input_type for n in vi.scan(**v4l2.scan_kw()) if n.capture}
-    assert types == {"video0": "HDMI", "video2": "USB", "video3": "HDMI", "video4": "V4L2"}
+    assert types == {"video0": "HDMI", "video2": "USB", "video3": "HDMI", "video4": "V4L2", "video5": "CVBS"}
 
 
 def test_select_by_every_stable_identifier(v4l2):
@@ -140,6 +141,8 @@ def test_signal_reported_by_driver_and_device_loss(v4l2):
     v4l2.devices["video0"]["inputs"][0]["status"] = vi.V4L2_IN_ST_NO_SIGNAL      # кабель CVBS вынут
     assert src.signal() == "no-signal"
     v4l2.devices["video0"]["inputs"][0]["status"] = vi.V4L2_IN_ST_NO_SYNC
+    assert src.signal() == "no-signal"
+    v4l2.devices["video0"]["inputs"][0]["status"] = vi.V4L2_IN_ST_NO_H_LOCK          # аналог: нет строчной синхр.
     assert src.signal() == "no-signal"
     v4l2.devices["video0"]["inputs"][0]["status"] = 0
     assert src.signal() is None

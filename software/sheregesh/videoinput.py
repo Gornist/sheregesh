@@ -42,8 +42,9 @@ V4L2_FRMIVAL_TYPE_DISCRETE = 1
 # struct v4l2_input: status и capabilities
 V4L2_IN_ST_NO_POWER = 0x00000001
 V4L2_IN_ST_NO_SIGNAL = 0x00000002
+V4L2_IN_ST_NO_H_LOCK = 0x00000100        # аналоговые входы: нет строчной синхронизации (нет сигнала CVBS)
 V4L2_IN_ST_NO_SYNC = 0x00010000           # цифровые входы (HDMI): нет синхронизации
-NO_SIGNAL_FLAGS = V4L2_IN_ST_NO_POWER | V4L2_IN_ST_NO_SIGNAL | V4L2_IN_ST_NO_SYNC
+NO_SIGNAL_FLAGS = V4L2_IN_ST_NO_POWER | V4L2_IN_ST_NO_SIGNAL | V4L2_IN_ST_NO_H_LOCK | V4L2_IN_ST_NO_SYNC
 V4L2_IN_CAP_DV_TIMINGS = 0x00000002       # вход с DV timings — HDMI/DVI (tc358743, adv7604 …)
 V4L2_IN_CAP_STD = 0x00000004              # аналоговый вход со стандартом PAL/NTSC/SECAM
 # v4l2_std_id
@@ -87,6 +88,8 @@ ANALOG_DRIVERS = frozenset({"usbtv", "stk1160", "em28xx", "em28xx_v4l", "cx231xx
                             "cx23885", "tw686x", "tw5864", "go7007", "hdpvr"})
 # HDMI→USB-адаптеры класса UVC, которые представляются безликим «USB Video» (MacroSilicon MS2109/MS2130).
 HDMI_USB_IDS = frozenset({"534d:2109", "534d:2130", "345f:2130", "345f:2131"})
+# Аналоговые захваты, которые работают как обычный UVC без стандартов (MacroSilicon MS210x «EasyCAP»).
+CVBS_USB_IDS = frozenset({"534d:0021"})
 
 
 def fourcc(code: str) -> int:
@@ -290,7 +293,8 @@ class Node:
         text = f"{self.card} {cur['name'] if cur else ''}".lower()
         if caps & V4L2_IN_CAP_DV_TIMINGS or "hdmi" in text or self.usb_id[:9] in HDMI_USB_IDS:
             return "HDMI"
-        if self.analog or self.driver in ANALOG_DRIVERS or any(k in text for k in ("composite", "cvbs", "s-video")):
+        if self.analog or self.driver in ANALOG_DRIVERS or self.usb_id[:9] in CVBS_USB_IDS or \
+                any(k in text for k in ("composite", "cvbs", "s-video", "av to usb")):
             return "CVBS"
         if self.driver == "uvcvideo":
             return "USB"              # UVC-камера или неопознанный UVC-адаптер
@@ -432,7 +436,7 @@ def _open_dev(opener, dev):
 
 def probe_signal(dev, input_index=0, ioctl=fcntl.ioctl, opener=os.open):
     """Состояние входа без захвата: «no-device» (узла нет / ENODEV), «no-signal» (драйвер сообщает
-    V4L2_IN_ST_NO_SIGNAL / NO_POWER / NO_SYNC через VIDIOC_ENUMINPUT) или None (сигнал есть или драйвер не сообщает —
+    V4L2_IN_ST_NO_SIGNAL / NO_POWER / NO_H_LOCK / NO_SYNC через VIDIOC_ENUMINPUT) или None (сигнал есть или драйвер не сообщает —
     тогда решает поток кадров). Второй дескриптор допустим и во время захвата: ENUMINPUT владения не требует."""
     try:
         fd = _open_dev(opener, dev)
@@ -625,6 +629,7 @@ class Unavailable(VideoSource):
     def __init__(self, kind, error, missing=False, formats=(), name=""):
         self.kind, self.id, self.error, self.missing, self.formats, self.name = kind, kind, error, missing, \
             tuple(formats), name
+        self.input_type = {"rtsp": "RTSP", "synthetic": "Synthetic", "uvc": "USB"}.get(kind, "V4L2")
 
 
 def select_mode(modes, width, height, fps, fmt="auto"):
