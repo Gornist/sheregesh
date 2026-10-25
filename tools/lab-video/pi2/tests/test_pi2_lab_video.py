@@ -207,7 +207,8 @@ class HelperUsbipCycle(FakeSysfs):
 
 class HidPretender(FakeSysfs):
     """Подменённый сервер заявляет в 1-1 HID-приёмник: отказ до attach."""
-    PROFILES = (usbip_uvc.Profile("evil", "1-1", 0x046D, 0xC52B, "Logitech", "USB Receiver", [], 0x1201),)
+    PROFILES = (usbip_uvc.Profile("evil", "1-1", 0x046D, 0xC52B, "Logitech", "USB Receiver",
+                                  [(usbip_uvc.FMT_MJPEG, [usbip_uvc.Frame(640, 480, (30,))])], 0x1201),)
 
     def test_claimed_vidpid_mismatch(self):
         with self.assertRaises(helper.Refused) as e:

@@ -89,25 +89,23 @@ def import_device(host, port, busid, expect=None):
     """OP_REQ_IMPORT и передача сокета ядру. expect="vvvv:pppp" — отказ ДО attach, если сервер заявил другое
     устройство. → {vport, devid, vid, pid, speed}."""
     ensure_vhci()
-    s = socket.create_connection((host, port), timeout=5)
-    s.sendall(struct.pack(">HHI", USBIP_VERSION, OP_REQ_IMPORT, 0) + busid.encode().ljust(32, b"\0"))
-    _v, _code, status = struct.unpack(">HHI", recv_exact(s, 8))
-    if status != 0:
-        raise SystemExit(f"сервер отказал в импорте {busid} (status {status}): занят или нет такого")
-    info = parse_devinfo(recv_exact(s, 312))
-    claimed = f"{info['vid']:04x}:{info['pid']:04x}"
-    if expect and claimed != expect:
-        s.close()
-        raise SystemExit(f"сервер предлагает {claimed} вместо {expect} в {busid} — не подключаю")
-    hub = SPEED_HUB.get(info["speed"], "hs")
-    free = [(ctl, p) for ctl, h, p, st in vhci_ports() if h == hub and st == VDEV_ST_NULL]
-    if not free:
-        raise SystemExit(f"нет свободного порта vhci ({hub})")
-    ctl, vport = free[0]
-    s.settimeout(None)
-    devid = info["busnum"] << 16 | info["devnum"]
-    (ctl / "attach").write_text(f"{vport} {s.fileno()} {devid} {info['speed']}")
-    s.close()                                   # ядро держит свою ссылку на сокет
+    with socket.create_connection((host, port), timeout=5) as s:   # после attach ядро держит свою ссылку на сокет
+        s.sendall(struct.pack(">HHI", USBIP_VERSION, OP_REQ_IMPORT, 0) + busid.encode().ljust(32, b"\0"))
+        _v, _code, status = struct.unpack(">HHI", recv_exact(s, 8))
+        if status != 0:
+            raise SystemExit(f"сервер отказал в импорте {busid} (status {status}): занят или нет такого")
+        info = parse_devinfo(recv_exact(s, 312))
+        claimed = f"{info['vid']:04x}:{info['pid']:04x}"
+        if expect and claimed != expect:
+            raise SystemExit(f"сервер предлагает {claimed} вместо {expect} в {busid} — не подключаю")
+        hub = SPEED_HUB.get(info["speed"], "hs")
+        free = [(ctl, p) for ctl, h, p, st in vhci_ports() if h == hub and st == VDEV_ST_NULL]
+        if not free:
+            raise SystemExit(f"нет свободного порта vhci ({hub})")
+        ctl, vport = free[0]
+        s.settimeout(None)
+        devid = info["busnum"] << 16 | info["devnum"]
+        (ctl / "attach").write_text(f"{vport} {s.fileno()} {devid} {info['speed']}")
     return {"vport": vport, "devid": devid, "vid": info["vid"], "pid": info["pid"], "speed": info["speed"]}
 
 
