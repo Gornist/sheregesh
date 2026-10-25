@@ -14,7 +14,7 @@
 --by video — фазы по видео: video.state приёмника и состояние источника (backend.videoSource, display/live):
   01/02 поток (live ≥ 3 с)                                         → главная, видео (пара кадров)
   затем для каждого состояния из --video-states (по умолчанию no-signal,no-device; также connect-error, error,
-  no-video) в том порядке, в каком оно фактически наступило и держится ≥ 2 с:
+  no-video, reconnecting — канал управления восстанавливается) в том порядке, в каком оно фактически наступило и держится ≥ 2 с:
   NN    <состояние>                                                 → главная, видео (пара кадров)
   NN    восстановлено после него (снова live ≥ 3 с)                 → главная, видео (пара кадров)
   Отказы вносятся снаружи (сигнал источника, отключение устройства, адрес RTSP); метки phase-* — для этого.
@@ -39,7 +39,7 @@ import tempfile
 import time
 from pathlib import Path
 
-FAULT_STATES = ("no-signal", "no-device", "connect-error", "error", "no-video")
+FAULT_STATES = ("no-signal", "no-device", "connect-error", "error", "no-video", "reconnecting")
 STABLE_OK_S, STABLE_FAULT_S = 3.0, 2.0
 
 
@@ -94,7 +94,10 @@ class Capture:
         self.states.append({"shot": path.name, "t": round(time.monotonic() - self.t0, 2), "linkView": s.get("linkView"),
                             "peerLink": s.get("peerLink"), "peerDetail": s.get("peerDetail"),
                             "video": {k: m.get(k) for k in ("state", "decoded_fps_5s", "sessions", "mode", "error")},
-                            "videoSource": dict(b.videoSource)})
+                            "videoSource": dict(b.videoSource),
+                            # S4: источники блока и ход выбора (пусто/no-list — блок списка не сообщает)
+                            "videoSources": list(getattr(b, "videoSources", [])),
+                            "videoSelection": dict(getattr(b, "videoSelection", {}))})
         return path, img
 
     def video_pair(self, prefix, done):
