@@ -47,7 +47,8 @@ exec docker run --rm --privileged --platform linux/arm64 \
     echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
     chown builder /work
     # Копия рабочего дерева внутри контейнера: rpi-image-gen пишет рядом с исходниками (pkgs/), /src — только чтение.
-    rsync -a --delete --exclude build --exclude .venv --exclude reports /src/ /work/src/
+    # Исключения только в корне: «--exclude build» убирал и отслеживаемый docs/acceptance/ota-closure/build/ → dirty=true.
+    rsync -a --delete --exclude /build --exclude /.venv --exclude /reports /src/ /work/src/
     git config --global --add safe.directory "*"   # /work/src — владелец с хоста (rsync -a), git от root иначе отказывается
     if [ -f /out/.src.bundle ]; then
       rm -rf /work/src/.git
