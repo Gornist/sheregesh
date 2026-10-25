@@ -393,6 +393,7 @@ def chip_problems(u):
 SHOTS = {
     "list": lambda u: None,
     "list-16": lambda u: set_report(u, telemetry_video=tel(MANY, "rtsp:1")),
+    "confirm-dialog": lambda u: tap(u, item(u, "rtsp:1")),
     "switching": lambda u: (setattr(u.backend.peer, "confirm", False), u.backend.selectVideoSource("rtsp:1", True),
                             wait_until(lambda: u.backend.peer.calls, 3),
                             set_report(u, telemetry_video={**tel(SOURCES), "source": {"input": "rtsp",
@@ -431,6 +432,10 @@ def test_snapshots_and_geometry_with_source_list(ui, out_dir, wide_font, shot):
                             problems.append(f"{n} шире элемента")
                 else:
                     problems += tile_overflow(ui) + text_problems(ui)
+                if shot == "confirm-dialog":
+                    assert dialog_open(ui) and b.peer.calls == []
+                    if page == "dashboard":
+                        continue                                   # диалог — на странице «Видео»
                 png = save_small(ui, out_dir / f"{w}x{h}-{shot}-{page}.png")
                 report.append({"size": f"{w}x{h}", "page": page, "png": png.name,
                                "display": b.videoSource["display"], "live": b.videoSource["live"],
