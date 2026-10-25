@@ -4,6 +4,10 @@
 [`docs/hardware/VIDEO_CAPTURE_COMPAT.md`](../../hardware/VIDEO_CAPTURE_COMPAT.md). Требования и пороги —
 [`MATRIX.md`](MATRIX.md).
 
+> **Обновление S4 (2026-10-25, v2 59ea0c2):** утилиты образов, CVBS PAL/NTSC, режимы HDMI, нагрузка CPU и выбор
+> источника файлом `video-input.json` + SIGHUP — [`../s4-video/USB-DIAG.md`](../s4-video/USB-DIAG.md). P4 снят
+> (юнит править не нужно); §5 п.3 снят (`gui_capture.py --by video`); P3 — модули есть в образе как файлы.
+
 Это не приёмка требований SRS: устройства захвата в SRS 1.0 не входят. Итог плана — карточка устройства в перечне
 совместимости и инженерный вывод для B (видео на блоке) и C (GUI).
 
