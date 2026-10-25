@@ -19,6 +19,13 @@
   NN    восстановлено после него (снова live ≥ 3 с)                 → главная, видео (пара кадров)
   Отказы вносятся снаружи (сигнал источника, отключение устройства, адрес RTSP); метки phase-* — для этого.
 
+--by select --select rtsp:0,synthetic — выбор источника тем же вызовом, что кнопка подтверждения на «Видео»
+(Backend.selectVideoSource(id, True) → video-select протокола 1.2):
+  01/02 поток (live ≥ 3 с)                                                   → главная, видео (пара кадров)
+  для каждого id: снимок «Видео» сразу после выбора (NN-switching-<id>-video), затем, когда источник блока стал
+  этим id (input из списка источников) и live ≥ 3 с:   NN    selected-<id>    → главная, видео (пара кадров)
+  Итог выбора (videoSelection: idle/error, код отказа) — в states.json; отказ блока завершает съёмку (rc 1).
+
 Доказательство смены кадров: пара снимков страницы видео с интервалом 1 с; frame_changed — сравнение только области
 кадра (videoView), а не всего окна (подписи частоты/счётчиков меняются и без видео): при потоке должно быть true,
 при «нет сигнала» / «нет устройства» поле чёрное (прежний кадр не показывается): frame_dark — доля почти чёрных
@@ -50,11 +57,15 @@ def parse_args(argv=None):
     ap.add_argument("--link-config", default=str(Path("~/.config/sheregesh/link.json").expanduser()))
     ap.add_argument("--peer", default="127.0.0.1:7700")
     ap.add_argument("--timeout", type=float, default=240.0)
-    ap.add_argument("--by", choices=("link", "video"), default="link", help="по чему снимать фазы")
+    ap.add_argument("--by", choices=("link", "video", "select"), default="link", help="по чему снимать фазы")
+    ap.add_argument("--select", default="", help="для --by select: id источников через запятую, по порядку")
     ap.add_argument("--video-states", default="no-signal,no-device",
                     help=f"для --by video: ожидаемые состояния отказа через запятую ({', '.join(FAULT_STATES)})")
     a = ap.parse_args(argv)
     a.video_states = [s.strip() for s in a.video_states.split(",") if s.strip()]
+    a.select = [s.strip() for s in a.select.split(",") if s.strip()]
+    if a.by == "select" and not a.select:
+        ap.error("--by select: нужен --select id[,id…]")
     bad = [s for s in a.video_states if s not in FAULT_STATES]
     if bad or not a.video_states:
         ap.error(f"--video-states: неизвестные состояния {bad}")
@@ -91,7 +102,7 @@ class Capture:
         self.a, self.backend, self.ui, self.pages = a, backend, ui, page_names
         self.states, self.t0 = [], time.monotonic()
         self.phase, self.since, self.rc, self.n = "wait-ok", None, 1, 0
-        self.pending = list(a.video_states) if a.by == "video" else []
+        self.pending = list(a.video_states) if a.by == "video" else list(a.select) if a.by == "select" else []
         self.last_fault = None
         self.busy = False
 
@@ -166,7 +177,7 @@ class Capture:
             return self.finish()
         if self.busy:
             return
-        (self.tick_video if self.a.by == "video" else self.tick_link)(now)
+        {"video": self.tick_video, "select": self.tick_select}.get(self.a.by, self.tick_link)(now)
 
     def tick_link(self, now):
         link, video = self.backend.status.get("linkView"), self.backend.video.state
@@ -200,6 +211,36 @@ class Capture:
                 self.pending.remove(fault)
                 self.last_fault = fault
                 self.shots(self.prefix(fault), lambda: self.go("wait-recovered"))
+
+    def tick_select(self, now):
+        b = self.backend
+        src, sel = b.videoSource, dict(getattr(b, "videoSelection", {}))
+        live = bool(src.get("live"))
+        if self.phase == "wait-ok":
+            if self.held(live, STABLE_OK_S, now):
+                self.since = None
+                self.shots(self.prefix("stream"), lambda: self.go("select"))
+        elif self.phase == "select":
+            sid = self.pending[0]
+            ent = next((x for x in getattr(b, "videoSources", []) if x.get("id") == sid), {})
+            self.want = (sid, str(ent.get("input", sid.split(":")[0])).lower())
+            ok = b.selectVideoSource(sid, True)
+            self.page("video")
+            self.grab(f"{self.n * 2 + 1:02d}-switching-{sid.replace(':', '_')}-video")
+            self.states[-1]["select_call"] = {"id": sid, "accepted": bool(ok)}
+            self.phase = "wait-selected"
+        elif self.phase == "wait-selected":
+            sid, kind = self.want
+            if sel.get("state") == "error":
+                self.states.append({"shot": "select-error", "select_error": sel, "t": round(now - self.t0, 2)})
+                return self.finish()
+            active = sid in [x.get("id") for x in getattr(b, "videoSources", []) if x.get("active")]
+            if self.held(live and active and str(src.get("input", "")).lower() == kind
+                         and sel.get("state") != "switching", STABLE_OK_S, now):
+                self.since = None
+                self.pending.pop(0)
+                self.shots(self.prefix(f"selected-{sid.replace(':', '_')}"),
+                           lambda: self.go("select" if self.pending else "done"))
 
     def go(self, phase):
         self.phase = phase

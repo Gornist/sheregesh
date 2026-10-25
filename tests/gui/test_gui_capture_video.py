@@ -31,6 +31,10 @@ def test_args():
     assert gui_capture.parse_args(["--out", "x"]).by == "link"
     with pytest.raises(SystemExit):
         gui_capture.parse_args(["--out", "x", "--by", "video", "--video-states", "melted"])
+    assert gui_capture.parse_args(["--out", "x", "--by", "select", "--select", "rtsp:0, synthetic"]).select == \
+        ["rtsp:0", "synthetic"]
+    with pytest.raises(SystemExit):
+        gui_capture.parse_args(["--out", "x", "--by", "select"])
 
 
 @pytest.mark.test_id("TEST-UI-002")
