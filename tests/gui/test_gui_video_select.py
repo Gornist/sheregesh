@@ -184,6 +184,16 @@ def test_select_error_mapping(result, code):
     assert select_error(result)[0] == code
 
 
+@pytest.mark.parametrize("rx,display,live", [("playing", "playing", True), ("no-video", "reconnecting", False),
+                                             ("off", "reconnecting", False), ("waiting", "reconnecting", False),
+                                             ("unavailable", "unavailable", False)])
+def test_reconnecting_follows_receiver(rx, display, live):
+    """Канал управления восстанавливается: «нет видео/переподключение» — не раньше приёмника. Иначе экран
+    опережал журнал, и разрыв короче NO_VIDEO_AFTER_S не записывался (E2E-12, CI ubuntu)."""
+    d = vs.describe("remote", tel(SOURCES), {}, rx_state=rx, link="RECONNECTING")
+    assert d["state"] == "reconnecting" and vs.display(d, rx) == {"display": display, "live": live}
+
+
 def test_select_error_detail_without_credentials():
     assert "s3cret" not in select_error(RuntimeError("cannot open rtsp://admin:s3cret@10.0.0.5/x"))[1]
 
@@ -329,7 +339,8 @@ def test_old_unit_without_sources(ui):
     ("reconnecting", "Нет видео", "Переподключение к удалённому блоку"),     # REQ-SW-002: заголовок «нет видео»
 ])
 def test_fault_states_with_list_hide_last_frame(ui, state, placeholder, reason):
-    """Приёмник кадры получает, но источник в отказе / связь восстанавливается — поле чёрное, причина названа."""
+    """Приёмник кадры получает, но источник в отказе — поле чёрное, причина названа. Связь восстанавливается —
+    «нет видео» с причиной «Переподключение», как только кадров нет и по приёмнику."""
     b = ui.backend
     assert wait_until(lambda: b.video.state == "playing", 5)
     view = find(ui, "videoView")
@@ -337,10 +348,14 @@ def test_fault_states_with_list_hide_last_frame(ui, state, placeholder, reason):
     assert lit_fraction(ui, view) > 0.6
     if state == "reconnecting":
         set_report(ui, link="RECONNECTING")
+        pump(300)
+        assert b.videoSource["live"] and lit_fraction(ui, view) > 0.6   # кадры ещё идут — они актуальны (E2E-12)
+        b.video.configure(None, None)                            # кадров нет: приёмник выключен (TLS) / «нет видео»
+        b._update_video_source()
     else:
         set_report(ui, telemetry_video=tel(SOURCES, "rtsp:1", state=state))
     pump(300)
-    assert b.video.state == "playing" and not b.videoSource["live"]
+    assert (b.video.state == "playing") == (state != "reconnecting") and not b.videoSource["live"]
     assert lit_fraction(ui, view) < 0.15 and not view.showing_frame()
     assert text(ui, "videoPlaceholder") == placeholder and reason in text(ui, "videoReason")
     if state == "reconnecting":                                   # сведения блока устарели: списка нет, выбор закрыт
@@ -349,6 +364,7 @@ def test_fault_states_with_list_hide_last_frame(ui, state, placeholder, reason):
         pump(60)
         assert text(ui, "linkVideo") == "Видео: переподключение"
         b.report.pop("link")
+        b.video.configure("h264", 5600)
     else:
         assert label(item(ui, "rtsp:1"), "videoSourceState") == "RTSP · активный"
     set_report(ui, telemetry_video=tel(SOURCES))
@@ -402,7 +418,7 @@ SHOTS = {
     "rtsp-active-connect-error": lambda u: set_report(u, telemetry_video=tel(SOURCES, "rtsp:1",
                                                                               state="connect-error")),
     "reconnecting": lambda u: (u.backend._status.update(RECONNECTING), u.backend.statusChanged.emit(),
-                               set_report(u, link="RECONNECTING")),
+                               u.backend.video.configure(None, None), set_report(u, link="RECONNECTING")),
     "old-unit-no-list": lambda u: set_report(u, telemetry_video=dict(TEL)),
     "client-without-select": lambda u: (setattr(u.backend, "peer", OldClient()), u.backend._update_video_source()),
 }

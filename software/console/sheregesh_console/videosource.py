@@ -174,9 +174,16 @@ def describe(mode, telemetry_video=None, session_info=None, local_info=None, rx_
 def display(source, rx_state):
     """Что в кадре. state — код для подписи; live — показывать ли кадры. Состояние источника на блоке (нет
     сигнала, нет устройства, ошибка подключения) важнее приёмника: кадры, если они и идут (заставка блока или
-    последний кадр), не выдаются за актуальное видео."""
+    последний кадр), не выдаются за актуальное видео.
+
+    «Переподключение» канала управления — только когда кадров нет и по приёмнику (его «нет видео» — через
+    NO_VIDEO_AFTER_S после последнего кадра): пока кадры идут (видео без TLS не зависит от канала управления),
+    они актуальны. Иначе экран говорил «нет видео» раньше приёмника, и короткий разрыв (перезапуск блока быстрее
+    NO_VIDEO_AFTER_S) не попадал в журнал (E2E-12; CI ubuntu, test_e2e_gui_link)."""
     st = source.get("state", "")
-    if (st in BLOCKING or st == RECONNECTING) and rx_state != "unavailable":
+    if st == RECONNECTING and rx_state not in ("playing", "unavailable"):
+        return {"display": st, "live": False}
+    if st in BLOCKING and rx_state != "unavailable":
         return {"display": st, "live": False}
     if rx_state == "playing":
         return {"display": "playing", "live": True}
