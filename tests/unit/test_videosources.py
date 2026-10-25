@@ -181,15 +181,20 @@ def test_console_sanitizes_sources_and_select():
 def test_select_video_source_without_link_or_on_old_session():
     c = lc.PeerClient("127.0.0.1", 1)                             # поток не запущен: соединения нет
     assert c.snapshot()["video_select"] is None
-    c.select_video_source("rtsp:0")
+    assert c.select_video_source("rtsp:0")["error"] == "not-connected"
     assert c.snapshot()["video_select"] == {"req": 1, "id": "rtsp:0", "state": "offline"} and c._outbox == []
     c._set(phase="connected", session="1.1")                       # старый блок: сессия 1.1
-    c.select_video_source("synthetic")
+    assert c.select_video_source("synthetic") == {"ok": False, "error": "unsupported",
+                                                  "detail": "remote unit does not support video-select (1.1)"}
     assert c.snapshot()["video_select"] == {"req": 2, "id": "synthetic", "state": "unsupported"} and c._outbox == []
     c._set(session="1.2")
-    c.select_video_source("v4l2:534d:2109")
+    assert c.select_video_source("v4l2:534d:2109", wait_s=0) is None   # принято, результат — в телеметрии
     assert c.snapshot()["video_select"]["state"] == "queued"
     assert c._outbox == [("video-select", {"id": "v4l2:534d:2109", "req": 3})]
+    c._set(telemetry={"video": {"select": {"req": 4, "id": "rtsp:9", "result": "unknown-id", "error": "x"}}})
+    assert c.select_video_source("rtsp:9", wait_s=1) == {"ok": False, "error": "unknown", "detail": "x"}
+    c._set(telemetry={"video": {"select": {"req": 5, "id": "rtsp:0", "result": "ok", "error": ""}}})
+    assert c.select_video_source("rtsp:0", wait_s=1) is None
     for bad in ("", "a b", "x" * 97, None, 3):
         with pytest.raises(ValueError):
             c.select_video_source(bad)

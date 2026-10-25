@@ -124,13 +124,15 @@ class PeerClient:
     def set_heartbeat_timeout(self, seconds):
         self.heartbeat_timeout_s = float(seconds)
 
-    def select_video_source(self, source_id: str) -> None:
-        """Выбрать видеоисточник блока по id из status.video.sources (протокол 1.2, video-select). Асинхронно:
-        сообщение уходит из потока канала; результат — в телеметрии (status.video.select с тем же req, затем
-        status.video.sources[].active и status.video.source.state). Состояние запроса на стороне пульта —
-        snapshot()["video_select"]: {"req", "id", "state"}: queued → sent; unsupported (сессия 1.1: старый блок),
-        offline (нет соединения) — сообщение не отправлено. Неверный id (не строка из [A-Za-z0-9._:@+/-], > 96
-        символов) — ValueError."""
+    def select_video_source(self, source_id: str, wait_s: float = 3.0):
+        """Выбрать видеоисточник блока по id из status.video.sources (протокол 1.2, video-select).
+
+        Сообщение уходит из потока канала; вызов ждёт результат блока (status.video.select с тем же req) не дольше
+        wait_s (0 — не ждать). Возврат: None — принято (блок ответил ok или ответа ещё нет: переключение видно по
+        sources[].active и source.state); отказ — {"ok": False, "error": код, "detail": текст}, код:
+        not-connected (нет соединения), unsupported (сессия 1.1: старый блок), unknown (блок не знает id),
+        unavailable (видео на блоке выключено). Неверная строка id — ValueError. Состояние запроса —
+        snapshot()["video_select"] = {"req", "id", "state": queued|sent|offline|unsupported}. Вызывать не из GUI-потока."""
         if not isinstance(source_id, str) or not VIDEO_SOURCE_ID.fullmatch(source_id):
             raise ValueError(f"bad video source id {source_id!r}")
         with self._lock:
@@ -144,6 +146,23 @@ class PeerClient:
                 state = "queued"
                 self._outbox.append(("video-select", {"id": source_id, "req": req}))
             self._vsel = {"req": req, "id": source_id, "state": state}
+        if state == "offline":
+            return {"ok": False, "error": "not-connected", "detail": "no link to remote unit"}
+        if state == "unsupported":
+            return {"ok": False, "error": "unsupported", "detail": "remote unit does not support video-select (1.1)"}
+        deadline = time.monotonic() + max(0.0, wait_s)
+        while time.monotonic() < deadline and not self._stop.is_set():
+            with self._lock:
+                sel = ((self._st.telemetry or {}).get("video") or {}).get("select")
+                if self._vsel and self._vsel["state"] == "offline":
+                    return {"ok": False, "error": "not-connected", "detail": "link lost before sending"}
+            if sel and sel.get("req") == req:
+                if sel["result"] == "ok":
+                    return None
+                return {"ok": False, "error": "unknown" if sel["result"] == "unknown-id" else "unavailable",
+                        "detail": sel.get("error", "")}
+            time.sleep(0.05)
+        return None
 
     # ---------- интерфейс Peer ----------
     def heartbeat_age(self):
@@ -467,7 +486,8 @@ def _write_cache(cfg, host):
 
 
 # Те же наборы, что у пульта (sheregesh_console/videosource.py: INPUTS, SOURCE_STATES)
-VIDEO_SOURCE_STATES = ("no-device", "no-signal", "starting", "streaming", "connect-error", "error")
+VIDEO_SOURCE_STATES = ("no-device", "no-signal", "starting", "streaming", "connect-error", "error", "reconnecting",
+                       "retrying")    # два последних блок пока не сообщает: резерв, чтобы не терять source целиком
 VIDEO_SOURCE_INPUTS = ("synthetic", "hdmi", "cvbs", "usb", "v4l2", "rtsp")
 VIDEO_SOURCE_ID = re.compile(r"[A-Za-z0-9._:@+/-]{1,96}")       # sheregesh.videosources.ID_RE
 VIDEO_SOURCES_MAX = 16

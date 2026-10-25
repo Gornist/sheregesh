@@ -314,3 +314,32 @@ def test_sighup_keeps_video_and_deleted_config_means_synthetic(lab, tmp_path):
         cam.close()
     log = u.agent.stderr()
     assert "video config unchanged" in log and "not found" not in log, log
+
+
+def test_videoselect_cli_same_path_as_gui(lab, tmp_path):
+    """python3 -m sheregesh.link.videoselect (стенд/приёмка): список, выбор (код 0, active), неизвестный id (код 1)."""
+    from procs import ENV
+    cam = FakeRTSP()
+    write_config(tmp_path, cam.port)
+    u = Unit(lab, tmp_path, video=False)
+    u.pc.stop()                                                  # блок держит один сеанс: освобождаем его для команды
+    cfg = json.loads(Path(lab["console"].source).read_text())
+    cfg["port"] = u.agent.port
+    cli_cfg = tmp_path / "console-link.json"
+    cli_cfg.write_text(json.dumps(cfg))
+
+    def cli(*args):
+        r = subprocess.run([sys.executable, "-m", "sheregesh.link.videoselect", "--link-config", str(cli_cfg), *args],
+                           env=ENV, capture_output=True, text=True, timeout=40)
+        return r.returncode, json.loads(r.stdout or "{}"), r.stderr
+    try:
+        rc, out, err = cli("--list")
+        assert rc == 0 and [e["id"] for e in out["sources"]] == ["synthetic", "rtsp:0", "rtsp:1"], (out, err)
+        rc, out, err = cli("rtsp:0", "--wait", "10")
+        assert rc == 0 and out["result"] == "ok" and out["active"] == ["rtsp:0"], (out, err)
+        assert json.loads((tmp_path / "video-input.json").read_text())["source"] == "rtsp"
+        rc, out, _ = cli("v4l2:dead:beef")
+        assert rc == 1 and out["result"] == "unknown" and out["active"] == ["rtsp:0"], out
+    finally:
+        u.agent.stop()
+        cam.close()

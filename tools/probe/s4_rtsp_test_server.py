@@ -11,6 +11,7 @@ gst-rtsp-server нет нигде). Пакеты RTP даёт настоящий
 
   python3 tools/probe/s4_rtsp_test_server.py [--bind 0.0.0.0] [--port 8554] [--codec jpeg|h264]
                                              [--size 640x480] [--fps 25] [--label CAM-A] [--outage 30:10]
+                                             [--pidfile /tmp/s4-rtsp.pid]
 
   --codec jpeg  (по умолчанию) jpegenc → rtpjpegpay; в video-input.json: {"url": …, "codec": "mjpeg"}
   --codec h264  v4l2h264enc (Pi 4), иначе x264enc / openh264enc → rtph264pay; {"url": …, "codec": "h264"}
@@ -244,6 +245,7 @@ def main(argv=None):
     ap.add_argument("--label", default="SHEREGESH RTSP TEST")
     ap.add_argument("--outage", default=None, metavar="PERIOD:DURATION", help="периодическое «падение» сервера, с")
     ap.add_argument("--check", action="store_true", help="проверить элементы и вывести конвейер, сервер не запускать")
+    ap.add_argument("--pidfile", default=None, help="записать PID (остановка с Mac: kill $(cat PIDFILE)); удаляется при выходе")
     a = ap.parse_args(argv)
     if not shutil.which("gst-launch-1.0"):
         print("нет gst-launch-1.0 (пакет gstreamer1.0-tools)", file=sys.stderr)
@@ -262,6 +264,9 @@ def main(argv=None):
         print("missing elements: " + (", ".join(missing) or "none"))
         return 1 if missing else 0
     srv = Server(a.bind, a.port, a.codec, cmd).start()
+    if a.pidfile:
+        with open(a.pidfile, "w") as f:
+            f.write(f"{os.getpid()}\n")
     host = local_addresses()[0] if a.bind in ("0.0.0.0", "") else a.bind
     codec = "mjpeg" if a.codec == "jpeg" else "h264"
     print(f"RTSP url=rtsp://{host}:{srv.port}/cam codec={codec}  video-input.json: "
@@ -281,6 +286,11 @@ def main(argv=None):
             log("outage over: server up")
             next_down = time.monotonic() + period
     srv.stop()
+    if a.pidfile:
+        try:
+            os.unlink(a.pidfile)
+        except OSError:
+            pass
     return 0
 
 
