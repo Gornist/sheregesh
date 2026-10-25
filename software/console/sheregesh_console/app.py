@@ -26,6 +26,7 @@ from sheregesh import sdnotify
 from sheregesh.notify_relay import adopt_pdeathsig
 
 from .backend import Backend
+from .control import ControlServer, server_path
 from .video import VideoView
 
 qmlRegisterType(VideoView, "Sheregesh", 1, 0, "VideoView")
@@ -158,6 +159,9 @@ def main(argv=None):
     ap.add_argument("--link-config", metavar="FILE",
                     help="сетевой лабораторный профиль (mTLS, S3.1); если файла нет — канал через --peer (loopback)")
     ap.add_argument("--link-status", metavar="FILE", help="состояние канала в JSON для sheregesh-health")
+    ap.add_argument("--control-socket", metavar="PATH", default=None,
+                    help="локальный канал управления для sheregesh.link.videoselect (S5 GUI-02); по умолчанию "
+                         "$XDG_RUNTIME_DIR/sheregesh-console.sock, \"\" — выключен")
     args = ap.parse_args(argv)
     adopt_pdeathsig()                                  # под cage в службе: не переживать композитор (S3.1)
     peer = None
@@ -188,6 +192,14 @@ def main(argv=None):
                       link_status_file=args.link_status)
     ui = Ui(backend)
     print(f"Данные эмулятора: {data_dir}", flush=True)
+    control = None
+    ctl_path = args.control_socket if args.control_socket is not None else server_path()
+    if ctl_path and not args.screenshots:
+        try:
+            control = ControlServer(backend, ctl_path).start()
+            print(f"Локальный канал управления: {ctl_path}", flush=True)
+        except OSError as e:                      # без канала пульт работает; videoselect — прямым сеансом
+            print(f"Локальный канал управления не открыт: {e}", flush=True)
     if args.screenshots:
         code = {"rc": 1}
 
@@ -267,5 +279,7 @@ def main(argv=None):
     wake.start(200)
     wake.timeout.connect(lambda: None)
     rc = app.exec()
+    if control is not None:
+        control.stop()
     ui.close()
     return rc
