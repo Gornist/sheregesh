@@ -1,0 +1,20 @@
+// SPDX-FileCopyrightText: 2026 Sheregesh contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Лабораторный dev-образ (tools/lab-video/pi2): sheregesh-ui может запускать, останавливать и перезапускать
+// ровно эти юниты эмулированных источников видео. Экземпляры перечислены полностью: шаблон с другим именем
+// не проходит. Параметров, путей и команд нет; что делает root — фиксировано в юнитах и помощнике.
+// Дополняет 50-sheregesh-dev.rules (его права не меняются).
+polkit.addRule(function(action, subject) {
+    if (subject.user != "sheregesh-ui" || action.id != "org.freedesktop.systemd1.manage-units") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    var units = ["sheregesh-lab-vivid.service",
+                 "sheregesh-lab-vivid-feed@cvbs.service", "sheregesh-lab-vivid-feed@hdmi.service",
+                 "sheregesh-lab-usbip@hdmi.service", "sheregesh-lab-usbip@cvbs.service",
+                 "sheregesh-lab-usbip@camera.service"];
+    var verb = action.lookup("verb");
+    if (units.indexOf(action.lookup("unit")) >= 0 && (verb == "start" || verb == "stop" || verb == "restart")) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

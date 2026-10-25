@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Постоянные имена узлов vivid (номера /dev/videoN меняются; by-path у двух экземпляров vivid совпадает).
+SUBSYSTEM=="video4linux", ATTR{name}=="vivid-000-vid-cap", SYMLINK+="sheregesh-lab/cvbs-cap"
+SUBSYSTEM=="video4linux", ATTR{name}=="vivid-000-vid-out", SYMLINK+="sheregesh-lab/cvbs-out"
+SUBSYSTEM=="video4linux", ATTR{name}=="vivid-001-vid-cap", SYMLINK+="sheregesh-lab/hdmi-cap"
+SUBSYSTEM=="video4linux", ATTR{name}=="vivid-001-vid-out", SYMLINK+="sheregesh-lab/hdmi-out"

@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Лабораторный dev-образ: эмулированные входы захвата vivid (аналог CVBS PAL/NTSC, HDMI) — tools/lab-video/pi2.
+# Root нужен только для modprobe; polkit разрешает sheregesh-ui start/stop/restart (51-sheregesh-lab-video.rules).
+# stop выгружает vivid: подачи (PartOf) останавливаются раньше; если узел держит видеоприём блока, выгрузка
+# откажет — сначала вернуть блок на другой источник.
+[Unit]
+Description=Sheregesh lab: vivid emulated capture inputs (dev image only)
+ConditionPathExists=/etc/sheregesh/DEV-MODE
+After=systemd-udevd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/sheregesh/lab-video/sheregesh-lab-video vivid start
+ExecStartPost=/usr/lib/sheregesh/lab-video/lab-vivid init
+ExecStop=/usr/lib/sheregesh/lab-video/sheregesh-lab-video vivid stop
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+IPAddressDeny=any
+Environment=PYTHONDONTWRITEBYTECODE=1

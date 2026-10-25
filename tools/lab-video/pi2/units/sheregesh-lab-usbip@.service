@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Лабораторный dev-образ: USB-видеоустройство эмулятора shcam по USB/IP через vhci-hcd, %i = hdmi | cvbs | camera
+# (помощник отвергает другие имена). Сервер — только SHCAM_HOST из /etc/sheregesh/lab-video.conf (root),
+# IPv4 из LAB_NET. start = «вставить», stop = «выдернуть»; polkit разрешает sheregesh-ui start/stop/restart.
+# Если устройство «выдернули» со стороны shcam (shcam-sig usb … unplug), юнит остаётся active: restart вставит заново.
+[Unit]
+Description=Sheregesh lab: USB/IP %i device from shcam (dev image only)
+ConditionPathExists=/etc/sheregesh/DEV-MODE
+ConditionPathExists=/etc/sheregesh/lab-video.conf
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/sheregesh/lab-video/sheregesh-lab-video usbip start %i
+ExecStop=/usr/lib/sheregesh/lab-video/sheregesh-lab-video usbip stop %i
+RuntimeDirectory=sheregesh-lab-usbip-%i
+# /sys остаётся доступным на запись (ProtectKernelTunables не включать: нужен /sys/devices/platform/vhci_hcd.0/attach)
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=192.168.1.0/24
+Environment=PYTHONDONTWRITEBYTECODE=1
