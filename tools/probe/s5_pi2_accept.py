@@ -46,7 +46,9 @@ import s5_accept as S5  # noqa: E402
 
 E = S4.E
 STEPS = ("P2-01", "P2-02", "P2-03", "P2-04", "P2-05", "P2-06", "P2-07")
-PHASE_STEPS = {"trial": STEPS[:6], "committed": ("P2-01", "P2-06", "P2-07")}
+# P2-05 (лабораторный эмулятор) — после confirm: упавший лабораторный юнит на пробном слоте сорвал бы гейт failed-units
+# confirm, а сбросить failed polkit не даёт — остался бы только abort (решение главного агента S5-OTA).
+PHASE_STEPS = {"trial": ("P2-01", "P2-02", "P2-03", "P2-04", "P2-06"), "committed": ("P2-01", "P2-05", "P2-06", "P2-07")}
 TRIAL_STATES = ("TRYBOOT", "HEALTH_PENDING")
 BLOCKED = S5.BLOCKED
 EXPECT_COMMIT, EXPECT_VERSION = "bd74c8c", "0.1.1792949168"      # build-report.json образа (source_date_epoch)
@@ -765,21 +767,21 @@ def step_commit(a, base):
 def plan(a):
     gui = "да (+2 мин)" if a.gui else "нет"
     tr = [
-        "S5 pi2 после OTA bd74c8c — фаза trial (пробная загрузка B, до confirm), ≈ 6–8 мин:",
+        "S5 pi2 после OTA bd74c8c — фаза trial (пробная загрузка B, до confirm), ≈ 4–5 мин (P2-05 — после confirm):",
         "  P2-01 слот B, TRYBOOT/HEALTH_PENDING, tryboot, образ bd74c8c / 0.1.1792949168, заводской код,",
         "        failed 0, health PASS; иначе активные шаги BLOCKED                                     ~0,5 мин",
         "  P2-02 SSH; check_link health,identity; TLS 1.3, видео tls1.3-mutual; check_video_link session   ~1,5 мин",
         f"  P2-03 synthetic GUI-путём (videoselect via console), live, кадры растут; снимок GUI: {gui}  ~0,3 мин",
         f"  P2-04 {a.rtsp_id} (shcam H.264 1280×720@30) — выбор, live                                ~0,3 мин",
-        f"  P2-05 start {USBIP} → {a.hdmi_id} как hdmi → выбор → stop/start (no-device ≤ 3 с, возврат ≤ 10 с),",
-        f"        enable отклонён polkit; start vivid + feed@cvbs → выбор → nosignal/ok; synthetic; stop всех ~3 мин",
         "  P2-06 S5-D1: выбор сохраняется в video-input.json, переживает systemctl restart sheregesh-remote-net ~1 мин",
         "  затем: исходный video-input.json + SIGHUP; slot_guard snap pi2 «до confirm», состояние pi1     ~0,7 мин",
         "  Перезагрузки нет: обычная перезагрузка пробной загрузки вернула бы слот A.",
     ]
     cm = [
-        "S5 pi2 — фаза committed (после ota-confirm), ≈ 2,5 мин + загрузка pi2 (~1,5–2 мин):",
+        "S5 pi2 — фаза committed (после ota-confirm), ≈ 5,5 мин + загрузка pi2 (~1,5–2 мин):",
         "  P2-01 слот B, COMMITTED, autoboot [all]=3, образ bd74c8c, failed 0, health PASS            ~0,5 мин",
+        f"  P2-05 start {USBIP} → {a.hdmi_id} как hdmi → выбор → stop/start (no-device ≤ 3 с, возврат ≤ 10 с),",
+        f"        enable отклонён polkit; start vivid + feed@cvbs → выбор → nosignal/ok; synthetic; stop всех ~3 мин",
         "  P2-06 выбор GUI-путём → video-input.json → systemctl reboot (только при COMMITTED/B/[all]=3) →",
         f"        SSH ≤ {LIMITS['boot_s']:.0f} с → тот же источник live ≤ {LIMITS['ready_s']:.0f} с, "
         "файл прежний                                                                ~1 мин",

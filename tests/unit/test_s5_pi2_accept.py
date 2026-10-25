@@ -276,10 +276,11 @@ def test_commands_within_image_polkit_rules():
 def test_plan_without_ssh(capsys):
     assert s.main(["--plan"]) == 0
     out = capsys.readouterr().out
-    assert all(k in out for k in ("P2-01", "P2-05", "P2-06", "restart sheregesh-remote-net")) and "P2-07" not in out
+    assert all(k in out for k in ("P2-01", "P2-06", "restart sheregesh-remote-net")) and "P2-07" not in out
+    assert "P2-05 start" not in out                                   # эмулятор — после confirm
     assert "Перезагрузки нет" in out
     assert s.main(["--plan", "--phase", "committed"]) == 0
     out = capsys.readouterr().out
-    assert "P2-07" in out and "systemctl reboot" in out
+    assert "P2-07" in out and "systemctl reboot" in out and "P2-05 start" in out
     with pytest.raises(SystemExit):
         s.main(["--phase", "committed", "--out", "/nonexistent-dir-x"])
