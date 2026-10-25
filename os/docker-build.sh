@@ -41,6 +41,12 @@ exec docker run --rm --privileged --platform linux/arm64 \
   -e CFG="$CFG" -e SHEREGESH_POST_ONLY="${SHEREGESH_POST_ONLY:-}" -e SHEREGESH_BUILD_AS_ROOT="${SHEREGESH_BUILD_AS_ROOT:-}" -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
   debian:trixie bash -euo pipefail -c '
     export DEBIAN_FRONTEND=noninteractive
+    # Скачанные пакеты контейнера сборки и syft — в постоянном томе /work/cache: повторная сборка их не качает
+    # (с devbox загрузки с GitHub и зеркал бывают ~30 КБ/с). Кэш — только скорость: проверки sha/подписей те же.
+    mkdir -p /work/cache/apt/partial /work/cache/syft
+    rm -f /etc/apt/apt.conf.d/docker-clean
+    echo "Dir::Cache::archives \"/work/cache/apt\";" > /etc/apt/apt.conf.d/90-sheregesh-cache
+    echo "== $(date -u +%T) подготовка контейнера сборки"
     apt-get update -qq && apt-get install -y -qq --no-install-recommends sudo git ca-certificates curl python3 python3-yaml \
       qt6-l10n-tools zstd rsync >/dev/null
     id builder >/dev/null 2>&1 || useradd -m -s /bin/bash builder
@@ -74,8 +80,10 @@ exec docker run --rm --privileged --platform linux/arm64 \
     SYFT_VER="$(sed -n "s/^SYFT_VER=v\([0-9.]*\).*/\1/p" /work/rpi-image-gen/layer/sbom/sbom.d/hooks/sbom05-syft)"
     if [ -n "$SYFT_VER" ] && ! command -v syft >/dev/null; then
       t="syft_${SYFT_VER}_linux_$(dpkg --print-architecture).tar.gz"; u="https://github.com/anchore/syft/releases/download/v$SYFT_VER"
-      if (cd /tmp && curl -fsSLO --retry 3 "$u/$t" && curl -fsSL --retry 3 "$u/syft_${SYFT_VER}_checksums.txt" | grep " $t\$" | sha256sum -c -) \
-         && tar -xzf "/tmp/$t" -C /usr/local/bin syft; then syft --version
+      if (cd /work/cache/syft && { [ -s "$t" ] || curl -fsSLO --retry 3 "$u/$t"; } && \
+          { [ -s "syft_${SYFT_VER}_checksums.txt" ] || curl -fsSLO --retry 3 "$u/syft_${SYFT_VER}_checksums.txt"; } && \
+          grep " $t\$" "syft_${SYFT_VER}_checksums.txt" | sha256sum -c -) \
+         && tar -xzf "/work/cache/syft/$t" -C /usr/local/bin syft; then syft --version
       else echo "syft $SYFT_VER с GitHub не получен — rpi-image-gen попробует get.anchore.io" >&2; fi
     fi
     mkdir -p /out/$CFG && chown builder /out/$CFG
