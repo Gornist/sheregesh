@@ -320,6 +320,7 @@ class Node:
     input: int = 0                                   # текущий вход (VIDIOC_G_INPUT)
     standards: list = field(default_factory=list)    # enum_standards: [(id, имя, к/с)]
     std: int = 0                                     # текущий стандарт (VIDIOC_G_STD), 0 — нет
+    sys_id: str = ""          # не-USB: «платформенное устройство:имя узла» из sysfs (vivid.0:vivid-000-vid-cap)
 
     def _current(self):
         return next((i for i in self.inputs if i["index"] == self.input), None)
@@ -347,7 +348,7 @@ class Node:
 
     def selectors(self):
         """Все значения, по которым устройство можно выбрать в конфигурации."""
-        out = {self.name, f"/dev/{self.name}", self.card, self.bus_info}
+        out = {self.name, f"/dev/{self.name}", self.card, self.bus_info, self.sys_id}
         for link in (self.by_id, self.by_path):
             if link:
                 out |= {link, os.path.basename(link)}
@@ -395,7 +396,9 @@ def _usb_id(dev_dir: Path) -> str:
 
 
 def scan(sys_root="/sys", dev_root="/dev", ioctl=fcntl.ioctl, opener=os.open, probe=True, drivers=None):
-    """Все узлы video4linux с классификацией. probe=False — только sysfs, устройства не открываются.
+    """Все узлы video4linux с классификацией. probe=False — только sysfs, устройства не открываются; «non-usb» — USB
+    по sysfs (тип и id — из VID:PID), а платформенные узлы захвата (vivid, CSI-мосты) ещё и опрашиваются QUERYCAP /
+    ENUMINPUT / ENUMSTD без захвата: иначе их тип (CVBS/HDMI) неизвестен.
     drivers — открывать только узлы этих драйверов (пульт S3.3: {"uvcvideo"}); None — любые, кроме служебных."""
     sys_root, dev_root = Path(sys_root), Path(dev_root)
     base = sys_root / "class" / "video4linux"
@@ -421,13 +424,18 @@ def scan(sys_root="/sys", dev_root="/dev", ioctl=fcntl.ioctl, opener=os.open, pr
             nodes.append(node)
             continue
         node.usb_id = _usb_id(d / "device")
+        if not node.usb_id:
+            node.sys_id = _sys_id(d, node.card)
         node.by_id, node.by_path = _link_to(dev_root, "by-id", name), _link_to(dev_root, "by-path", name)
         if driver == "uvcvideo" and _read(d / "index") not in ("", "0"):
             node.reason = "UVC metadata node"
-        if probe:
+        sysfs_capture = not node.reason and _read(d / "index") in ("", "0")
+        if probe is True or (probe == "non-usb" and sysfs_capture and not node.usb_id):
             _probe(node, dev_root, ioctl, opener)
+            if probe == "non-usb" and node.reason.startswith("cannot open"):
+                node.reason, node.capture = "", sysfs_capture      # не открылся (занят, права) — как без опроса
         else:
-            node.capture = not node.reason and _read(d / "index") in ("", "0")
+            node.capture = sysfs_capture
         nodes.append(node)
     return nodes
 
@@ -461,10 +469,23 @@ def _probe(node, dev_root, ioctl, opener):
         os.close(fd)
 
 
+def _sys_id(d, sys_name):
+    """Не-USB узел: имя платформенного устройства и имя узла из sysfs — не зависят ни от опроса, ни от номера videoN.
+    by-path для них ненадёжен (udev path_id даёт двум экземплярам vivid одно имя, ссылку получает любой из них)."""
+    try:
+        dev = os.path.basename(os.path.realpath(d / "device"))
+    except OSError:
+        dev = ""
+    name = re.sub(r"[^A-Za-z0-9._@+-]+", "-", sys_name).strip("-")
+    return f"{dev}:{name}" if dev and name else ""
+
+
 def stable_id(node):
-    """Постоянная часть идентификатора устройства: VID:PID[:serial], иначе имя ссылки by-path (порт), bus_info,
-    в крайнем случае videoN. Одна и та же для V4L2Source.id и списка источников (sheregesh.videosources)."""
-    return node.usb_id or (os.path.basename(node.by_path) if node.by_path else "") or node.bus_info or node.name
+    """Постоянная часть идентификатора устройства: VID:PID[:serial]; не-USB — «устройство:имя» из sysfs; иначе имя
+    ссылки by-path, bus_info, в крайнем случае videoN. Одна и та же для V4L2Source.id и списка источников
+    (sheregesh.videosources) — с опросом узла и без него."""
+    return (node.usb_id or node.sys_id or (os.path.basename(node.by_path) if node.by_path else "") or node.bus_info
+            or node.name)
 
 
 def capture_devices(**kw):

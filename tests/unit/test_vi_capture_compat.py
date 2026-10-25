@@ -278,3 +278,23 @@ def test_uvc_cvbs_auto_and_explicit_mode_unchanged(v4l2):
     assert (src.mode.width, src.mode.height) in ((720, 576), (720, 480))
     src = vi.open_v4l2(mode="720x480@30", standard="pal", **kw)
     assert isinstance(src, vi.Unavailable) and "not supported" in src.error   # режим противоречит стандарту
+
+
+def test_platform_capture_id_and_type_same_with_and_without_probe(v4l2):
+    """S5 pi2 (vivid): каталог блока видит платформенные узлы захвата с тем же id, что у открытого источника, и с
+    типом CVBS — id из sysfs («устройство:имя»), не из bus_info/by-path и не videoN; тип — опрос без захвата."""
+    from sheregesh import videosources as vs
+    v4l2.add("video2", "vivid", "vivid-000-vid-cap", 0, None, formats=[("YUYV", "discrete", [((720, 576), [25])])],
+             inputs=[{"name": "S-Video 000-0", "capabilities": STD_CAP}], standards=[PAL_STD, NTSC_STD],
+             std=vi.V4L2_STD_PAL, bus="platform:vivid-000")          # by-path одна на двоих — у второго (udev)
+    v4l2.add("video4", "vivid", "vivid-001-vid-cap", 0, None, formats=[("YUYV", "discrete", [((1280, 720), [30])])],
+             bus="platform:vivid-001", by_path="platform-vivid.0-video-index0")
+    kw = v4l2.scan_kw()
+    ids = {p: [vi.stable_id(n) for n in vi.scan(probe=p, **kw) if n.capture] for p in (False, True, "non-usb")}
+    assert ids[False] == ids[True] == ids["non-usb"] and len(set(ids[True])) == 2
+    assert all(i.endswith(("vivid-000-vid-cap", "vivid-001-vid-cap")) and ":" in i for i in ids[True])
+    got = {e["id"]: e["input"] for e in vs.build({"source": "synthetic"}, [], vi.scan(probe="non-usb", **kw))}
+    cvbs = [i for i, t in got.items() if t == "cvbs"]
+    assert len(cvbs) == 1 and cvbs[0].endswith("vivid-000-vid-cap")
+    src = vi.open_v4l2(device=cvbs[0][5:], standard="pal", **kw)
+    assert f"v4l2:{vi.stable_id(src.node)}" == cvbs[0]          # выбор из каталога = id открытого источника

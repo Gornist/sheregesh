@@ -11,7 +11,8 @@
 input — synthetic | hdmi | cvbs | usb | v4l2 | rtsp. active — источник текущего описания (ровно один, если описание
 указывает на что-то; выбранное, но отсутствующее устройство V4L2 показывается с available=false).
 
-Обнаружение V4L2 — только sysfs и ссылки /dev/v4l (videoinput.scan(probe=False)): занятые и служебные узлы не
+Обнаружение V4L2 — sysfs и ссылки /dev/v4l (videoinput.scan(probe="non-usb"): USB не открываются, платформенные узлы
+захвата — только QUERYCAP/ENUMINPUT/ENUMSTD без захвата, чтобы знать CVBS/HDMI): занятые и служебные узлы не
 открываются. Доступность RTSP — TCP-соединение с сервером (без сеанса RTSP) в фоновом потоке. Обнаружение и проверки
 выполняются не чаще раза в interval_s (2 с); флаг active пересчитывается при каждом снимке (дёшево, без ввода-вывода).
 Выбор (resolve) проверяет id по тем же правилам и возвращает описание для videoinput.open_source; сохранение —
@@ -223,9 +224,9 @@ class Catalog:
         self._thread = None
 
     def nodes(self):
-        """sysfs без открытия устройств (дёшево): для resolve — всегда свежий."""
+        """USB — по sysfs без открытия; платформенные узлы захвата — QUERYCAP/ENUMINPUT без захвата (тип CVBS/HDMI)."""
         try:
-            return videoinput.scan(probe=False, **self._scan_kw)
+            return videoinput.scan(probe="non-usb", **self._scan_kw)
         except OSError:
             return []
 
