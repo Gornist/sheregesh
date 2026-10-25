@@ -9,9 +9,10 @@
 
   usb                       USB-устройства: VID:PID, скорость, драйверы интерфейсов, гипотеза класса по VID:PID
   nodes [--no-probe]        узлы video4linux: драйвер, USB-родитель; для узлов на USB (любой драйвер, не только
-                            uvcvideo) — QUERYCAP, форматы, размеры, интервалы, входы, ТВ-стандарты. Узлы платформы
-                            (bcm2835-codec/isp, rpi-hevc-dec, unicam) не открываются никогда.
-  frames --device /dev/videoN [--caps CAPS] [--seconds 20] [--script "10:снять сигнал,25:вернуть сигнал"]
+                            uvcvideo) — QUERYCAP, форматы, размеры, интервалы, входы (с флагами статуса),
+                            ТВ-стандарты, QUERYSTD. Узлы платформы (bcm2835-codec/isp, rpi-hevc-dec, unicam) не
+                            открываются никогда.
+  frames --device /dev/videoN [--caps CAPS] [--norm PAL|NTSC] [--seconds 20] [--script "10:снять сигнал,25:вернуть сигнал"]
                             реальный поток: кадры уменьшаются до GRAY8 64×36 (gst-launch … ! fdsink), по каждому —
                             время прихода, средняя яркость, разброс, отличие от предыдущего. Итог: частота, интервалы
                             p50/p95/max, время до первого кадра, участки live / blank / frozen / no-frames.
@@ -62,6 +63,12 @@ VIDIOC_ENUMINPUT = _ioc(_RW, 26, INPUT.size)
 VIDIOC_G_INPUT = _ioc(_R, 38, 4)
 VIDIOC_ENUM_FRAMESIZES = _ioc(_RW, 74, FRMSIZE.size)
 VIDIOC_ENUM_FRAMEINTERVALS = _ioc(_RW, 75, FRMIVAL.size)
+VIDIOC_QUERYSTD = _ioc(_R, 63, 8)
+# v4l2_input.status: флаги отсутствия сигнала (аналоговые NO_H_LOCK, цифровые NO_SYNC) — как videoinput.NO_SIGNAL_FLAGS
+IN_STATUS = {0x1: "no-power", 0x2: "no-signal", 0x4: "no-color", 0x100: "no-h-lock", 0x10000: "no-sync",
+             0x20000: "no-equ", 0x40000: "no-carrier"}
+# Семейства стандартов (videoinput.V4L2_STD_625_50 / 525_60): QUERYSTD возвращает маску возможных стандартов
+STD_625_50, STD_525_60 = 0x00FF06FF, 0x0000F900
 
 # Гипотеза класса по VID:PID — открытые источники (таблицы id драйверов ядра, проекты PiKVM и т. п.), не результат
 # испытания. Одинаковая коробка «EasyCAP» встречается на разных микросхемах — определяет только VID:PID на месте.
@@ -144,6 +151,16 @@ def _enum(ioctl, fd, request, st, *head, limit=256):
     return out, None
 
 
+def status_flags(status: int):
+    return [name for bit, name in IN_STATUS.items() if status & bit]
+
+
+def std_family(std: int) -> str:
+    """PAL (625/50) | NTSC (525/60) | «» (нет сигнала, маска пуста или обе семьи сразу — стандарт не определён)."""
+    pal, ntsc = bool(std & STD_625_50), bool(std & STD_525_60)
+    return "PAL" if pal and not ntsc else "NTSC" if ntsc and not pal else ""
+
+
 def _rate(num, den):
     return f"{den}/{num}" if num else "?"            # интервал num/den с → частота den/num к/с
 
@@ -182,7 +199,8 @@ def probe_fd(fd, ioctl=fcntl.ioctl):
         info["formats"].append(f)
     inputs, info["inputs_error"] = _enum(ioctl, fd, VIDIOC_ENUMINPUT, INPUT, limit=16)
     info["inputs"] = [{"index": i, "name": _dec(n), "type": INPUT_TYPE.get(t, str(t)), "std": f"0x{std:x}",
-                       "status": f"0x{st:x}"} for i, n, t, _a, _tu, std, st, _c in inputs]
+                       "status": f"0x{st:x}", "status_flags": status_flags(st)} for i, n, t, _a, _tu, std, st, _c
+                      in inputs]
     stds, info["standards_error"] = _enum(ioctl, fd, VIDIOC_ENUMSTD, STANDARD, limit=64)
     info["standards"] = [f"{_dec(n)} {_rate(fp_n, fp_d)}" for _i, _id, n, fp_n, fp_d, _l in stds]
     for name, req, fmt in (("current_input", VIDIOC_G_INPUT, "<i"), ("current_std", VIDIOC_G_STD, "<Q")):
@@ -191,6 +209,12 @@ def probe_fd(fd, ioctl=fcntl.ioctl):
             info[name] = v if name == "current_input" else f"0x{v:x}"
         except OSError as e:
             info[name] = errno.errorcode.get(e.errno, str(e.errno))
+    if info["standards"]:            # QUERYSTD — стандарт фактического сигнала на входе (только аналоговые узлы)
+        try:
+            v = struct.unpack("<Q", ioctl(fd, VIDIOC_QUERYSTD, bytes(8)))[0]
+            info["query_std"], info["query_std_family"] = f"0x{v:x}", std_family(v)
+        except OSError as e:
+            info["query_std"], info["query_std_family"] = errno.errorcode.get(e.errno, str(e.errno)), ""
     return info
 
 
@@ -293,8 +317,10 @@ def summarize(frames, t_end, marks, **thresholds):
             "segments": classify(frames, t_end, **thresholds), "marks": marks}
 
 
-def gst_command(device, caps):
-    cmd = ["gst-launch-1.0", "-q", "v4l2src", f"device={device}", "do-timestamp=true", "!"]
+def gst_command(device, caps, norm=""):
+    """norm — аналоговый стандарт (PAL | NTSC): v4l2src norm=… выполняет VIDIOC_S_STD, как источник блока."""
+    cmd = ["gst-launch-1.0", "-q", "v4l2src", f"device={device}", *([f"norm={norm}"] if norm else []),
+           "do-timestamp=true", "!"]
     if caps:
         cmd += [caps, "!"]
     return cmd + ["decodebin", "!", "videoconvert", "!", "videoscale", "!",
@@ -382,7 +408,8 @@ def _print_nodes(nodes):
             print("         входы: " + ("; ".join(f"{i['index']} {i['name']} ({i['type']}, std {i['std']}, status {i['status']})"
                                                 for i in n["inputs"]) or n["inputs_error"]))
         if n.get("standards") or n.get("standards_error"):
-            print(f"         стандарты: {', '.join(n['standards']) or n['standards_error']}; текущий {n.get('current_std')}")
+            print(f"         стандарты: {', '.join(n['standards']) or n['standards_error']}; текущий {n.get('current_std')}"
+                  + (f"; QUERYSTD {n['query_std']} {n.get('query_std_family') or ''}".rstrip() if "query_std" in n else ""))
 
 
 def main(argv=None):
@@ -398,6 +425,7 @@ def main(argv=None):
     pf = sub.add_parser("frames")
     pf.add_argument("--device", required=True)
     pf.add_argument("--caps", default="", help="например image/jpeg,width=1280,height=720,framerate=30/1")
+    pf.add_argument("--norm", default="", help="аналоговый стандарт PAL | NTSC (v4l2src norm=…)")
     pf.add_argument("--seconds", type=float, default=20.0)
     pf.add_argument("--script", default="", help="«сек:действие,…» — подсказки оператору")
     pf.add_argument("--blank-std", type=float, default=4.0, help="разброс яркости ниже — «blank» (равномерное поле)")
@@ -413,9 +441,9 @@ def main(argv=None):
         res = video_nodes(a.sys_root, a.dev_root, probe=not a.no_probe)
         print(json.dumps(res, ensure_ascii=False, indent=1)) if a.json else _print_nodes(res)
         return 0
-    cmd = a.command or gst_command(a.device, a.caps)
+    cmd = a.command or gst_command(a.device, a.caps, a.norm)
     frames, t_end, marks, rc, err = run_frames(cmd, a.seconds, parse_script(a.script))
-    res = {"device": a.device, "caps": a.caps, "command": cmd, "seconds": round(t_end, 2), "exit_code": rc,
+    res = {"device": a.device, "caps": a.caps, "norm": a.norm, "command": cmd, "seconds": round(t_end, 2), "exit_code": rc,
            "stderr_tail": err, **summarize(frames, t_end, marks, blank_std=a.blank_std, frozen_diff=a.frozen_diff)}
     if a.json:
         res["timeline"] = [{"t_s": t, "mean": m, "std": s, "diff": d} for t, m, s, d in frames]
