@@ -32,6 +32,11 @@ IPAddressAllow=localhost 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 ProtectSystem=strict
 ProtectHome=read-only
+# S5-D1: выбор видеоисточника сохраняется в video-input.json (атомарно: временный файл + rename в том же каталоге),
+# поэтому каталог конфигурации — на запись; роль и link.json внутри него остаются только для чтения (вложенный путь
+# применяется после родительского), ключи и сертификаты (~/.local/share/sheregesh/link) — по-прежнему только чтение.
+ReadWritePaths=-/home/sheregesh-ui/.config/sheregesh
+ReadOnlyPaths=-/home/sheregesh-ui/.config/sheregesh/link.json -/home/sheregesh-ui/.config/sheregesh/remote.role
 PrivateTmp=yes
 NoNewPrivileges=yes
 Environment=PYTHONDONTWRITEBYTECODE=1

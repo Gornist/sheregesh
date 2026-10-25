@@ -323,6 +323,11 @@ def verify(img, variant, out):
                     all(f"ConditionPathExists=/home/sheregesh-ui/{p}" in net for p in
                         (".config/sheregesh/remote.role", ".local/share/sheregesh/link/device.key",
                          ".local/share/sheregesh/link/ca.crt")) and "IPAddressDeny=any" in net)
+            rep.add("net.video_config", "блок сохраняет выбор видеоисточника (S5-D1): каталог конфигурации на запись, "
+                    "роль и link.json — только чтение",
+                    "ReadWritePaths=-/home/sheregesh-ui/.config/sheregesh" in net
+                    and all(f"-/home/sheregesh-ui/.config/sheregesh/{f}" in net for f in ("link.json", "remote.role"))
+                    and "ProtectHome=read-only" in net)
             rep.add("emu.cache", "эмулятор: каталог кэша GStreamer и HOME (CacheDirectory)",
                     "CacheDirectory=sheregesh-remote-emu" in emu and "Environment=HOME=%C/sheregesh-remote-emu" in emu)
             nss = next((x for x in root.cat("/etc/nsswitch.conf").splitlines() if x.startswith("passwd:")), "")
