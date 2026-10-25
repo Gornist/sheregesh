@@ -99,3 +99,21 @@ def test_d3_permission_error_from_killpg_does_not_break_stop(qapp, monkeypatch):
         monkeypatch.undo()
         os.kill(proc.pid, signal.SIGKILL)
         rx.shutdown()
+
+
+def test_video_journal_follows_receiver_signal_not_backend_tick(qapp, tmp_path):
+    """E2E-12: переходы видео пишутся по сигналу приёмника. Бэкенд без таймера (такт не идёт) — обрывы
+    и восстановления всё равно в журнале; прежде (опрос по такту) короткий обрыв терялся (CI ubuntu)."""
+    from sheregesh_console.backend import Backend
+    from sheregesh_console.journal import MemoryJournal
+    jl = MemoryJournal()
+    b = Backend(tmp_path / "data", autostart=False, video_command=FLAPPING, journal=jl)
+    try:
+        b.video.configure("jpeg", 5999)
+        assert wait_until(lambda: b.video.restarts >= 2, 10)
+        pump(1500)
+        video = [t.split(" (")[0] for _, t in jl.records if t.startswith("video: ")]
+        assert video[:3] == ["video: stream started", "video: no stream", "video: stream restored"], video
+        assert all(a != b_ for a, b_ in zip(video, video[1:])), f"повторы подряд: {video}"
+    finally:
+        b.stop()

@@ -320,7 +320,7 @@ def test_no_video_shown_within_3s_and_restored_within_10s_with_journal(make_ui):
         t0 = time.monotonic()
         assert wait_until(lambda: rx.state == "playing" and not visible(u, "videoPlaceholder"), 12), rx.metrics()
         t_back = time.monotonic() - t0
-        pump(700)                                     # запись в журнал — на следующем такте бэкенда (0,5 с)
+        pump(200)
     finally:
         agent.stop()
     video = [t for _, t in jl.records if t.startswith("video: ")]
