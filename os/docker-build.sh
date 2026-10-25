@@ -60,7 +60,7 @@ exec docker run --rm --privileged --platform linux/arm64 \
     fi
     chown -R builder /work/src
     sudo -u builder git config --global --add safe.directory "*"
-    mkdir -p /work/rpi-image-gen && chown builder /work/rpi-image-gen
+    mkdir -p /work/rpi-image-gen && chown -R builder /work/rpi-image-gen   # -R: прошлая сборка от root (SHEREGESH_BUILD_AS_ROOT) оставила клон root
     if [ ! -x /work/rpi-image-gen/rpi-image-gen ]; then
       sudo -u builder git clone -q https://github.com/raspberrypi/rpi-image-gen.git /work/rpi-image-gen
     fi
