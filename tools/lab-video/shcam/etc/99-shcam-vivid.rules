@@ -1,5 +1,5 @@
 # shcam: постоянные имена узлов vivid (номера /dev/videoN зависят от порядка загрузки, rp1-cfe занимает video0–7).
-SUBSYSTEM=="video4linux", ATTR{name}=="vivid-000-vid-cap", SYMLINK+="shcam/cvbs-cap"
-SUBSYSTEM=="video4linux", ATTR{name}=="vivid-000-vid-out", SYMLINK+="shcam/cvbs-out"
-SUBSYSTEM=="video4linux", ATTR{name}=="vivid-001-vid-cap", SYMLINK+="shcam/hdmi-cap"
-SUBSYSTEM=="video4linux", ATTR{name}=="vivid-001-vid-out", SYMLINK+="shcam/hdmi-out"
+SUBSYSTEM=="video4linux", DRIVERS=="vivid", ATTR{name}=="vivid-000-vid-cap", SYMLINK+="shcam/cvbs-cap"
+SUBSYSTEM=="video4linux", DRIVERS=="vivid", ATTR{name}=="vivid-000-vid-out", SYMLINK+="shcam/cvbs-out"
+SUBSYSTEM=="video4linux", DRIVERS=="vivid", ATTR{name}=="vivid-001-vid-cap", SYMLINK+="shcam/hdmi-cap"
+SUBSYSTEM=="video4linux", DRIVERS=="vivid", ATTR{name}=="vivid-001-vid-out", SYMLINK+="shcam/hdmi-out"

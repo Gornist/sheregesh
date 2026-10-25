@@ -56,25 +56,49 @@ def devlist(host, port):
 
 def vhci_ports():
     """[(controller_dir, hub, port, status)] по всем vhci_hcd.N/status*."""
+    return [(p["ctl"], p["hub"], p["port"], p["sta"]) for p in vhci_port_table()]
+
+
+def vhci_port_table():
+    """Строки status*: hub port sta spd dev sockfd local_busid → [{ctl, hub, port, sta, devid, local_busid}].
+    devid — busnum<<16 | devnum, переданные при attach (у свободного порта 0)."""
     ports = []
     for ctl in sorted(VHCI.glob("vhci_hcd.*")):
         for st in sorted(ctl.glob("status*")):
             for line in st.read_text().splitlines()[1:]:
                 f = line.split()
                 if len(f) >= 3:
-                    ports.append((ctl, f[0], int(f[1]), int(f[2])))
+                    ports.append({"ctl": ctl, "hub": f[0], "port": int(f[1]), "sta": int(f[2]),
+                                  "devid": int(f[4], 16) if len(f) > 4 else 0,
+                                  "local_busid": f[6] if len(f) > 6 else ""})
     return ports
 
 
-def attach(host, port, busid):
+def port_info(vport):
+    return next((p for p in vhci_port_table() if p["port"] == vport), None)
+
+
+def ensure_vhci():
+    """Каталог контроллера vhci_hcd.0 (модуль загружается при необходимости)."""
     if not any(VHCI.glob("vhci_hcd.*")):
         subprocess.run(["modprobe", "vhci-hcd"], check=True)
+    return sorted(VHCI.glob("vhci_hcd.*"))[0]
+
+
+def import_device(host, port, busid, expect=None):
+    """OP_REQ_IMPORT и передача сокета ядру. expect="vvvv:pppp" — отказ ДО attach, если сервер заявил другое
+    устройство. → {vport, devid, vid, pid, speed}."""
+    ensure_vhci()
     s = socket.create_connection((host, port), timeout=5)
     s.sendall(struct.pack(">HHI", USBIP_VERSION, OP_REQ_IMPORT, 0) + busid.encode().ljust(32, b"\0"))
     _v, _code, status = struct.unpack(">HHI", recv_exact(s, 8))
     if status != 0:
         raise SystemExit(f"сервер отказал в импорте {busid} (status {status}): занят или нет такого")
     info = parse_devinfo(recv_exact(s, 312))
+    claimed = f"{info['vid']:04x}:{info['pid']:04x}"
+    if expect and claimed != expect:
+        s.close()
+        raise SystemExit(f"сервер предлагает {claimed} вместо {expect} в {busid} — не подключаю")
     hub = SPEED_HUB.get(info["speed"], "hs")
     free = [(ctl, p) for ctl, h, p, st in vhci_ports() if h == hub and st == VDEV_ST_NULL]
     if not free:
@@ -84,8 +108,13 @@ def attach(host, port, busid):
     devid = info["busnum"] << 16 | info["devnum"]
     (ctl / "attach").write_text(f"{vport} {s.fileno()} {devid} {info['speed']}")
     s.close()                                   # ядро держит свою ссылку на сокет
-    print(f"attached {busid} {info['vid']:04x}:{info['pid']:04x} -> vhci port {vport}")
-    return vport
+    return {"vport": vport, "devid": devid, "vid": info["vid"], "pid": info["pid"], "speed": info["speed"]}
+
+
+def attach(host, port, busid, expect=None):
+    d = import_device(host, port, busid, expect)
+    print(f"attached {busid} {d['vid']:04x}:{d['pid']:04x} -> vhci port {d['vport']}")
+    return d["vport"]
 
 
 def detach(vport):

@@ -8,6 +8,7 @@ usbip_attach.py	/usr/lib/sheregesh/lab-video/usbip_attach.py	0644
 pi2/etc/lab-video.conf	/etc/sheregesh/lab-video.conf	0644
 pi2/etc/modprobe-sheregesh-lab-vivid.conf	/etc/modprobe.d/sheregesh-lab-vivid.conf	0644
 pi2/etc/99-sheregesh-lab-vivid.rules	/etc/udev/rules.d/99-sheregesh-lab-vivid.rules	0644
+pi2/etc/98-sheregesh-lab-usbip.rules	/etc/udev/rules.d/98-sheregesh-lab-usbip.rules	0644
 pi2/etc/51-sheregesh-lab-video.rules	/etc/polkit-1/rules.d/51-sheregesh-lab-video.rules	0644
 pi2/units/sheregesh-lab-vivid.service	/usr/lib/systemd/system/sheregesh-lab-vivid.service	0644
 pi2/units/sheregesh-lab-vivid-feed@.service	/usr/lib/systemd/system/sheregesh-lab-vivid-feed@.service	0644

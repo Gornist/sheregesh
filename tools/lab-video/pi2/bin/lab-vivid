@@ -44,10 +44,11 @@ NEXT_CTRL = 0x80000000
 
 
 def node(kind, role, sys_root=SYS):
+    """Узел по имени И драйверу (LS-4): имя задаёт драйвер, UVC-устройство по USB/IP может назваться так же."""
     want = NODES[(kind, role)]
     for d in sorted(sys_root.glob("video*")):
         try:
-            if (d / "name").read_text().strip() == want:
+            if (d / "name").read_text().strip() == want and (d / "device" / "driver").resolve().name == "vivid":
                 return Path("/dev") / d.name
         except OSError:
             continue

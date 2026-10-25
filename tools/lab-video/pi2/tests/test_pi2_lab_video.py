@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -99,7 +100,8 @@ class HelperConfig(unittest.TestCase):
                 helper.usbip_target(self.conf(**kw))
 
     def test_slots_are_fixed(self):
-        self.assertEqual(helper.SLOTS, {"hdmi": "1-1", "cvbs": "1-2", "camera": "1-3"})
+        self.assertEqual(helper.SLOTS, {"hdmi": ("1-1", "534d:2109"), "cvbs": ("1-2", "534d:0021"),
+                                        "camera": ("1-3", "1d6b:0102")})
         with self.assertRaises(SystemExit):
             helper.main(["usbip", "start", "evil"])
 
@@ -111,51 +113,200 @@ class HelperConfig(unittest.TestCase):
                 helper.read_conf(f.name)
 
 
-class HelperUsbipCycle(unittest.TestCase):
-    """start → OP_REQ_IMPORT к настоящему эмулятору → запись «порт fd devid скорость» в подменённый attach;
-    stop → detach того же порта; повторный stop без файла порта — без ошибок."""
+HEAD = "hub port sta spd dev      sockfd local_busid\n"
+FREE = "hs  {p:04d} 004 000 00000000 000000 0-0\n"
+USED = "hs  {p:04d} 006 003 {devid:08x} 000003 {busid}\n"
+
+
+class FakeSysfs(unittest.TestCase):
+    """Подменённые sysfs vhci (VHCI) и /sys/bus/usb/devices (USB_DEVICES) + настоящий эмулятор USB/IP."""
+    PROFILES = (usbip_uvc.PROFILES["cvbs-ms2106"],)
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         self.ctl = root / "platform/vhci_hcd.0"
         self.ctl.mkdir(parents=True)
-        (self.ctl / "status").write_text("hub port sta spd dev      sockfd local_busid\n"
-                                         "hs  0000 004 000 00000000 000000 0-0\n"
-                                         "hs  0001 004 000 00000000 000000 0-0\n")
-        self.orig_vhci, usbip_attach.VHCI = usbip_attach.VHCI, root / "platform"
-        self.loop = asyncio.new_event_loop()
-        server = usbip_uvc.Server([usbip_uvc.PROFILES["cvbs-ms2106"]], "test", root / "state", log=lambda m: None)
+        self.status(FREE.format(p=0) + FREE.format(p=1))
+        self.usb = root / "usb"
+        self.usb.mkdir()
+        self.orig = usbip_attach.VHCI, helper.USB_DEVICES
+        usbip_attach.VHCI, helper.USB_DEVICES = root / "platform", self.usb
         (root / "state").mkdir()
+        self.loop = asyncio.new_event_loop()
+        server = usbip_uvc.Server(list(self.PROFILES), "test", root / "state", log=lambda m: None)
         self.srv = self.loop.run_until_complete(asyncio.start_server(server.handle, "127.0.0.1", 0))
-        self.port = self.srv.sockets[0].getsockname()[1]
+        self.conf = {"SHCAM_HOST": "127.0.0.1", "SHCAM_USBIP_PORT": str(self.srv.sockets[0].getsockname()[1]),
+                     "LAB_NET": "127.0.0.0/8"}
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
         self.run_dir = root / "run"
         self.run_dir.mkdir()
 
     def tearDown(self):
         self.loop.call_soon_threadsafe(self.loop.stop)
-        usbip_attach.VHCI = self.orig_vhci
+        usbip_attach.VHCI, helper.USB_DEVICES = self.orig
         self.tmp.cleanup()
 
+    def status(self, rows):
+        (self.ctl / "status").write_text(HEAD + rows)
+
+    def device(self, busid, vidpid, classes=("0e", "0e")):
+        d = self.usb / busid
+        d.mkdir()
+        vid, pid = vidpid.split(":")
+        (d / "idVendor").write_text(vid + "\n")
+        (d / "idProduct").write_text(pid + "\n")
+        for n, c in enumerate(classes):
+            i = self.usb / f"{busid}:1.{n}"
+            i.mkdir()
+            (i / "bInterfaceClass").write_text(c + "\n")
+
+
+class HelperUsbipCycle(FakeSysfs):
+    """start → OP_REQ_IMPORT к настоящему эмулятору → «порт fd devid скорость» в подменённый attach;
+    stop → detach, только если на порту всё ещё наш devid (LS-2)."""
+    DEVID = 1 << 16 | 2                                                   # busnum 1, devnum 2 (первый профиль)
+
     def test_start_stop(self):
-        conf = {"SHCAM_HOST": "127.0.0.1", "SHCAM_USBIP_PORT": str(self.port), "LAB_NET": "127.0.0.0/8"}
-        helper.usbip_start("cvbs", conf, self.run_dir)
-        vport, fd, devid, speed = (self.ctl / "attach").read_text().split()
-        self.assertEqual((vport, devid, speed), ("0", str(1 << 16 | 2), str(usbip_uvc.USB_SPEED_HIGH)))
-        self.assertEqual((self.run_dir / "port").read_text().strip(), "0")
-        (self.ctl / "status").write_text("hub port sta spd dev      sockfd local_busid\n"
-                                         "hs  0000 006 003 00010002 000003 5-1\n")
+        helper.usbip_start("cvbs", self.conf, self.run_dir, check=lambda *a: None)
+        vport, _fd, devid, speed = (self.ctl / "attach").read_text().split()
+        self.assertEqual((vport, devid, speed), ("0", str(self.DEVID), str(usbip_uvc.USB_SPEED_HIGH)))
+        state = json.loads((self.run_dir / "state.json").read_text())
+        self.assertEqual((state["vport"], state["devid"], state["expect"]), (0, self.DEVID, "534d:0021"))
+        self.status(USED.format(p=0, devid=self.DEVID, busid="5-1"))
         helper.usbip_stop(self.run_dir)
         self.assertEqual((self.ctl / "detach").read_text(), "0")
-        self.assertFalse((self.run_dir / "port").exists())
-        helper.usbip_stop(self.run_dir)
+        self.assertFalse((self.run_dir / "state.json").exists())
+        helper.usbip_stop(self.run_dir)                                  # повторный stop — без ошибок
 
     def test_stop_after_remote_unplug_is_quiet(self):
-        (self.run_dir / "port").write_text("1\n")                       # порт уже свободен (shcam «выдернул»)
-        helper.usbip_stop(self.run_dir)
-        self.assertFalse((self.run_dir / "port").exists())
+        (self.run_dir / "state.json").write_text(json.dumps({"vport": 1, "devid": self.DEVID}))
+        helper.usbip_stop(self.run_dir)                                  # порт 1 свободен
+        self.assertFalse((self.run_dir / "state.json").exists())
         self.assertFalse((self.ctl / "detach").exists())
+
+    def test_ls2_stop_does_not_detach_foreign_device_on_reused_port(self):
+        # наш слот «выдернули» со стороны shcam, порт 0 занял другой слот (другой devid) — его не трогаем
+        (self.run_dir / "state.json").write_text(json.dumps({"vport": 0, "devid": self.DEVID}))
+        self.status(USED.format(p=0, devid=1 << 16 | 3, busid="5-1"))
+        helper.usbip_stop(self.run_dir)
+        self.assertFalse((self.ctl / "detach").exists())
+        self.assertFalse((self.run_dir / "state.json").exists())
+
+    def test_ls1_refuses_wrong_claimed_device_before_attach(self):
+        with self.assertRaises(helper.Refused):                           # слот hdmi ждёт 534d:2109 в 1-1
+            helper.usbip_start("hdmi", self.conf, self.run_dir, check=lambda *a: None)
+        self.assertFalse((self.ctl / "attach").exists())
+        self.assertFalse((self.run_dir / "state.json").exists())
+
+    def test_ls1_failed_post_check_detaches(self):
+        with self.assertRaises(helper.Refused):
+            helper.usbip_start("cvbs", self.conf, self.run_dir, check=lambda *a: "класс 03")
+        self.assertFalse((self.run_dir / "state.json").exists())
+
+
+class HidPretender(FakeSysfs):
+    """Подменённый сервер заявляет в 1-1 HID-приёмник: отказ до attach."""
+    PROFILES = (usbip_uvc.Profile("evil", "1-1", 0x046D, 0xC52B, "Logitech", "USB Receiver", [], 0x1201),)
+
+    def test_claimed_vidpid_mismatch(self):
+        with self.assertRaises(helper.Refused) as e:
+            helper.usbip_start("hdmi", self.conf, self.run_dir, check=lambda *a: None)
+        self.assertIn("046d:c52b", str(e.exception))
+        self.assertFalse((self.ctl / "attach").exists())
+
+
+class CheckAttached(FakeSysfs):
+    """LS-1 после attach: VID:PID и классы интерфейсов в sysfs на порту с нашим devid."""
+    DEVID = 1 << 16 | 2
+
+    def test_ok(self):
+        self.status(USED.format(p=0, devid=self.DEVID, busid="5-1"))
+        self.device("5-1", "534d:0021")
+        self.assertIsNone(helper.check_attached(0, self.DEVID, "534d:0021", timeout=0.5))
+
+    def test_wrong_vidpid(self):
+        self.status(USED.format(p=0, devid=self.DEVID, busid="5-1"))
+        self.device("5-1", "0781:5567")
+        self.assertIn("0781:5567", helper.check_attached(0, self.DEVID, "534d:0021", timeout=0.5))
+
+    def test_non_video_interface(self):
+        self.status(USED.format(p=0, devid=self.DEVID, busid="5-1"))
+        self.device("5-1", "534d:0021", classes=("0e", "03"))           # «видео» + HID
+        self.assertIn("03", helper.check_attached(0, self.DEVID, "534d:0021", timeout=0.5))
+
+    def test_other_device_on_port_times_out(self):
+        self.status(USED.format(p=0, devid=1 << 16 | 9, busid="5-1"))
+        self.device("5-1", "534d:0021")
+        self.assertIn("не появилось", helper.check_attached(0, self.DEVID, "534d:0021", timeout=0.3))
+
+
+class Ls3Lock(FakeSysfs):
+    """LS-3: выбор свободного порта и attach — под flock; два одновременных start берут разные порты."""
+
+    def test_concurrent_starts_get_distinct_ports(self):
+        orig = usbip_attach.import_device
+        taken = []
+
+        def slow_import(host, port, busid, expect=None):              # читает свободный порт, «думает», занимает
+            free = [p for _c, _h, p, st in usbip_attach.vhci_ports() if st == usbip_attach.VDEV_ST_NULL]
+            time.sleep(0.2)
+            vport = free[0]
+            rows = "".join(USED.format(p=p, devid=1, busid="5-9") if p in taken + [vport] else FREE.format(p=p)
+                           for p in (0, 1))
+            self.status(rows)
+            taken.append(vport)
+            return {"vport": vport, "devid": 1, "vid": 0x534D, "pid": 0x0021, "speed": 3}
+
+        usbip_attach.import_device = slow_import
+        try:
+            dirs = [self.run_dir / "a", self.run_dir / "b"]
+            for d in dirs:
+                d.mkdir()
+            ts = [threading.Thread(target=helper.usbip_start, args=("cvbs", self.conf, d),
+                                   kwargs={"check": lambda *a: None}) for d in dirs]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+        finally:
+            usbip_attach.import_device = orig
+        self.assertEqual(sorted(taken), [0, 1])
+
+
+class Hardening(unittest.TestCase):
+    def test_ls1_udev_authorizes_only_video_on_vhci(self):
+        rules = (PI2 / "etc/98-sheregesh-lab-usbip.rules").read_text()
+        self.assertIn('ATTR{interface_authorized_default}="0"', rules)
+        self.assertIn('DEVPATH=="/devices/platform/vhci_hcd.*/usb[0-9]*"', rules)
+        authorize = [ln for ln in rules.splitlines() if 'ATTR{authorized}="1"' in ln]
+        self.assertEqual(len(authorize), 1)
+        self.assertIn('ATTR{bInterfaceClass}=="0e"', authorize[0])
+
+    def test_ls4_vivid_symlinks_require_driver(self):
+        for line in (PI2 / "etc/99-sheregesh-lab-vivid.rules").read_text().splitlines():
+            if "SYMLINK" in line:
+                self.assertIn('DRIVERS=="vivid"', line)
+
+    def test_ls4_node_requires_vivid_driver(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            for n, drv in (("video3", "uvcvideo"), ("video7", "vivid")):
+                d = root / "class" / n
+                (d / "device").mkdir(parents=True)
+                (d / "name").write_text("vivid-000-vid-cap\n")
+                (root / "drivers" / drv).mkdir(parents=True, exist_ok=True)
+                (d / "device" / "driver").symlink_to(root / "drivers" / drv)
+            self.assertEqual(labvivid.node("cvbs", "cap", sys_root=root / "class"), Path("/dev/video7"))
+
+    def test_ls7_root_units_keep_only_sys_module(self):
+        for name in ("sheregesh-lab-vivid.service", "sheregesh-lab-usbip@.service"):
+            text = (PI2 / "units" / name).read_text()
+            self.assertIn("CapabilityBoundingSet=CAP_SYS_MODULE\n", text, name)
+            self.assertNotIn("ProtectKernelModules=yes", text, name)
+        feed = (PI2 / "units/sheregesh-lab-vivid-feed@.service").read_text()
+        self.assertIn("CapabilityBoundingSet=\n", feed)
+        self.assertIn("User=sheregesh-ui", feed)
 
 
 class Manifest(unittest.TestCase):
