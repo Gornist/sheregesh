@@ -17,12 +17,22 @@
 Принимаются и близкие имена (kind/type, status, name/url, reason/detail, resolution "WxH", framerate "30/1"),
 чтобы окончательные имена у блока не требовали правки здесь. Блок 1.1 этих полей не передаёт: тогда вход —
 синтетический (иного у 1.1 нет), legacy=True, состояние — по приёмнику пульта.
+
+«Переподключение» (reconnecting) — состояние для экрана, не из контракта SOURCE_STATES: канал управления с блоком
+потерян и восстанавливается (peer_link RECONNECTING; сведения блока устарели, кадр не актуален) либо блок сам сообщает
+reconnecting/retrying.
+
+СПИСОК ИСТОЧНИКОВ — sources(): телеметрия status.video.sources, ≤ 16 объектов {id, input, name, available, active};
+id — стабильная строка ("synthetic", "v4l2:…", "rtsp:<n>"), выбор — PeerClient.select_video_source(id). Блок без
+sources (1.1 и ранние 1.x) — список пуст: только синтетический источник, выбор с пульта недоступен.
 """
 import re
 
 INPUTS = ("synthetic", "hdmi", "cvbs", "usb", "v4l2", "rtsp")
 SOURCE_STATES = ("no-device", "no-signal", "starting", "streaming", "connect-error", "error")
 BLOCKING = ("no-device", "no-signal", "connect-error", "error")      # кадра нет: чёрное поле и причина
+RECONNECTING = "reconnecting"                                        # только для экрана (см. выше)
+MAX_SOURCES = 16
 
 _INPUT_ALIASES = {"uvc": "usb", "usb-uvc": "usb", "webcam": "usb", "composite": "cvbs", "analog": "cvbs",
                   "pal": "cvbs", "ntsc": "cvbs", "av": "cvbs", "hdmi-csi": "hdmi", "csi-hdmi": "hdmi",
@@ -34,7 +44,8 @@ _STATE_ALIASES = {"playing": "streaming", "ok": "streaming", "active": "streamin
                   "missing": "no-device", "absent": "no-device", "no_device": "no-device", "nodevice": "no-device",
                   "not-found": "no-device", "connecting": "starting", "probing": "starting", "start": "starting",
                   "waiting": "starting", "connect_error": "connect-error", "unreachable": "connect-error",
-                  "refused": "connect-error", "timeout": "connect-error", "failed": "error", "fault": "error"}
+                  "refused": "connect-error", "timeout": "connect-error", "failed": "error", "fault": "error",
+                  "retrying": RECONNECTING, "reconnect": RECONNECTING, "re-connecting": RECONNECTING}
 _CREDS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/@\s]+@")
 
 
@@ -78,7 +89,8 @@ def _fields(d):
     if (not w or not h) and isinstance(res, str) and "x" in res.lower().replace("×", "x"):
         w, h = res.lower().replace("×", "x").split("x", 1)
     available = d.get("available")
-    state = _norm(d.get("state", d.get("status", d.get("source_state"))), _STATE_ALIASES, SOURCE_STATES)
+    state = _norm(d.get("state", d.get("status", d.get("source_state"))), _STATE_ALIASES,
+                  SOURCE_STATES + (RECONNECTING,))
     if not state and available is False:
         state = "no-device" if d.get("missing") else "error"
     return {"input": _norm(d.get("input", d.get("kind", d.get("type", d.get("source_type")))), _INPUT_ALIASES, INPUTS,
@@ -102,14 +114,42 @@ def remote_fields(telemetry_video, session_info):
     return out
 
 
+def sources(telemetry_video):
+    """status.video.sources → список для экрана: не больше MAX_SOURCES, id — непустая строка без повторов, имя без
+    учётных данных, активный — не больше одного. Данные блока недоверенные: лишнее отбрасывается."""
+    raw = telemetry_video.get("sources") if isinstance(telemetry_video, dict) else None
+    if not isinstance(raw, list):
+        return []
+    out, seen, active = [], set(), False
+    for d in raw:
+        if not isinstance(d, dict) or not isinstance(d.get("id"), str):
+            continue
+        sid = d["id"].strip()[:96]
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        is_active = d.get("active") is True and not active
+        active = active or is_active
+        out.append({"id": sid, "input": _norm(d.get("input", d.get("kind", d.get("type"))), _INPUT_ALIASES, INPUTS,
+                                              keep_unknown=True),
+                    "name": scrub(d.get("name") or sid)[:64], "available": d.get("available") is not False,
+                    "active": is_active})
+        if len(out) >= MAX_SOURCES:
+            break
+    return out
+
+
 def empty(origin="none"):
     return {"origin": origin, "input": "", "reported": False, "legacy": False, "state": "", "device": "",
             "error": "", "width": 0, "height": 0, "fps": 0.0}
 
 
-def describe(mode, telemetry_video=None, session_info=None, local_info=None, rx_state="off", rx_error=""):
-    """mode: remote | local-input | local-synthetic | off. Возвращает словарь для QML (все ключи всегда есть)."""
+def describe(mode, telemetry_video=None, session_info=None, local_info=None, rx_state="off", rx_error="", link=""):
+    """mode: remote | local-input | local-synthetic | off. link — peer_link канала управления (для remote).
+    Возвращает словарь для QML (все ключи всегда есть)."""
     if mode == "remote":
+        if link == "RECONNECTING":            # связь восстанавливается: прежние сведения блока не выдаются за текущие
+            return {**empty("remote"), "state": RECONNECTING}
         f = remote_fields(telemetry_video or {}, session_info or {})
         out = {**empty("remote"), **f}
         out["reported"] = bool(f["input"])
@@ -136,7 +176,7 @@ def display(source, rx_state):
     сигнала, нет устройства, ошибка подключения) важнее приёмника: кадры, если они и идут (заставка блока или
     последний кадр), не выдаются за актуальное видео."""
     st = source.get("state", "")
-    if st in BLOCKING and rx_state != "unavailable":
+    if (st in BLOCKING or st == RECONNECTING) and rx_state != "unavailable":
         return {"display": st, "live": False}
     if rx_state == "playing":
         return {"display": "playing", "live": True}
