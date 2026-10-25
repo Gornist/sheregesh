@@ -60,17 +60,18 @@ FAIL > ERROR > BLOCKED > PASS > SKIP.
 
 ### 1.1. RTSP-матрица — `s5_rtsp_matrix.py`, ≈ 7 мин (с `--gui` ≈ 10 мин)
 
-Серверы pi1: **8601** mjpeg tcp,udp · **8602** h264 tcp,udp · **8603** mjpeg только tcp · **8604** mjpeg только udp.
-Ячейки — `rtsp_urls` = `rtsp:0…9` (разные пути: `videosources.active_id` ищет источник по адресу).
+Серверы pi1: **8601** mjpeg tcp,udp · **8602** h264 tcp,udp · **8603** mjpeg только tcp · **8604** mjpeg только udp ·
+**8605** mjpeg tcp,udp `--udp-drop` (SETUP по UDP принят, датаграммы не идут — «фаервол»). Ячейки — `rtsp_urls` =
+`rtsp:0…10` (разные пути: `videosources.active_id` ищет источник по адресу).
 
 | ID | Мин | Действие | PASS | FAIL | ERROR | Реально / модель |
 |---|---|---|---|---|---|---|
 | S5-01 | 0,3 | службы обеих плат, failed, health; пульт CONNECTED (ui-state) | active/running, failed нет, health PASS, CONNECTED | иное | SSH | реально |
 | S5-02 | 1 | `rtsp:0…5` = {udp, tcp, auto} × {mjpeg, h264} @ 8601/8602: выбор файлом; ожидание; кадры; транспорт | блок `streaming` с этим адресом ≤ 15 с; пульт `live` (rtsp); `video.frames_decoded` растёт за 2 с; фактический транспорт = заданному (auto — любой, записывается) | нет streaming/live, кадры стоят, транспорт другой, статус и сокеты расходятся | транспорт не определён; контракт не развёрнут | реально (сеть, rtspsrc, UDP/TCP, декодер пульта); камера — тестовый сервер |
-| S5-03 | 1 | `rtsp:6` auto@только-tcp, `rtsp:7` auto@только-udp, `rtsp:8` udp@только-tcp, `rtsp:9` tcp@только-udp | 6 → tcp, 7 → udp (как S5-02); 8/9: за 15 с ни разу `streaming`, на блоке `error`/`connect-error`/`no-signal`, пульт «нет видео», затем synthetic ≤ 15 с | streaming при недоступном транспорте; видео на пульте; synthetic не вернулся (зависание) | контракт не развёрнут | реально |
+| S5-03 | 1,3 | `rtsp:6` auto@только-tcp, `rtsp:7` auto@только-udp, `rtsp:8` udp@только-tcp, `rtsp:9` tcp@только-udp, `rtsp:10` auto@UDP-молчит | 6 → tcp, 7 → udp, 10 → tcp после тайм-аута UDP (как S5-02, ≤ 15 с); 8/9: за 15 с ни разу `streaming`, на блоке `error`/`connect-error`/`no-signal`, пульт «нет видео», затем synthetic ≤ 15 с | streaming при недоступном транспорте; видео на пульте; synthetic не вернулся (зависание) | контракт не развёрнут | реально |
 | S5-04 | 0,5 | при `rtsp:2` (auto, mjpeg) — kill сервера 8601 на 6 с, запуск снова | «нет видео» ≤ 3 с; на блоке `connect-error`/`no-signal`; `live` ≤ 10 с после запуска, без действий | > 3 / > 10 с, не наблюдалось | ячейка не дошла до пульта | **модель** «камера/кодер пропал» (остановка процесса сервера) |
 | S5-05 | 1,5 | synthetic → rtsp:0 → rtsp:4 → rtsp:8 (отказ) → rtsp:2 → synthetic × `--switches`; ресурсы до/после | каждое ≤ 15 с; 1 конвейер на плате, сирот/зомби нет, fd ±3, потоки ±2, MainPID и NRestarts прежние (обе службы) | зависание, рост fd/потоков, лишний конвейер | — | реально |
-| S5-06 | 3 | `--gui`: `gui_capture --by select --select rtsp:0…7,synthetic` — кнопка «Видео» (`selectVideoSource`) | для каждой положительной ячейки снимок `NN-selected-rtsp_N`: источник rtsp, `frame_changed=true` (таймкод сервера) | кадр стоит, источник не тот, отказ выбора | без `--gui` (ui-state не доказательство) | рендеринг Qt offscreen, без cage/HDMI пульта |
+| S5-06 | 3 | `--gui`: `gui_capture --by select --select rtsp:0…7,10,synthetic` — кнопка «Видео» (`selectVideoSource`) | для каждой положительной ячейки снимок `NN-selected-rtsp_N`: источник rtsp, `frame_changed=true` (таймкод сервера) | кадр стоит, источник не тот, отказ выбора | без `--gui` (ui-state не доказательство) | рендеринг Qt offscreen, без cage/HDMI пульта |
 | S5-07 | 2,5 | журналы с начала прогона, Traceback, failed; `check_video_link --only session,stream,leftovers`; slot_guard «до/после» | как S4 VID-08; OTA: только FAIL базовой линии платы (+ `same.unit.sheregesh-console` при `--gui`) | что-то найдено / изменение | нет summary / ERROR slot_guard | реально |
 
 Доля тёмного поля для RTSP не критерий: кадр тестового сервера сам почти чёрный (0,99, S4 D-3) — меняется таймкод.
@@ -78,7 +79,16 @@ FAIL > ERROR > BLOCKED > PASS > SKIP.
 **Фактический транспорт.** Поле статуса блока, если NETWORK его даёт, — главное; сокеты процесса `gst-launch … rtspsrc`
 на pi2 — сверка (или единственный источник): `/proc/PID/fd` → inode → `/proc/net/udp{,6}`, `/proc/net/tcp{,6}`
 (`ss`/`lsof` на платах нет, USB-DIAG §1). Есть UDP-сокеты у процесса → udp (RTSP-управление при этом тоже TCP);
-нет UDP и есть TCP ESTABLISHED к порту сервера → tcp (interleaved). Расхождение статуса и сокетов — FAIL.
+нет UDP и есть TCP ESTABLISHED к порту сервера → tcp (interleaved). Расхождение статуса и сокетов — FAIL. У NETWORK
+(2a3137a) `status.video.source.transport` при tcp/udp — заданный режим (rtspsrc другого не пробует), при auto — «»,
+поэтому для auto решают сокеты, а для tcp/udp сокеты — независимая сверка.
+
+**Замечание к ветке NETWORK `s5/network-rtsp` (2a3137a, чтение кода, не прогон).** `videoinput`/`videosources` знают
+`transport`, но `agent.SPEC_KEYS` (software/remote/sheregesh_remote/agent.py) — нет: при чтении `video-input.json`
+(запуск, SIGHUP) ключ описания `transport` отбрасывается, и `save_spec` выбора из GUI его не сохраняет. Выбор файлом
+(S5-02/03) тогда работает как auto: ячейки udp/tcp и rtsp:8/9 дадут FAIL. Сценарий проверяет это заранее
+(`summary.json → contract.agent_spec_transport`) и добавляет к таким FAIL подсказку; GUI-путь (`video-select`, S5-06)
+берёт transport из `rtsp_urls` и до перечитывания файла работает.
 
 ### 1.2. Адаптер — после доставки, на каждый ≤ 15 мин (диагностика ≤ 5 + приёмка 5–10)
 

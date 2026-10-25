@@ -17,17 +17,20 @@ ACCEPT.md, S5-01…S5-07). Тестовые серверы — на pi1 (tools/p
 
 Серверы pi1 (sheregesh-ui, копия в /tmp, PID-файлы /tmp/s5-rtsp-<порт>.pid; S4-сервер 8554 не трогается):
   8601 mjpeg tcp,udp   8602 h264 tcp,udp   8603 mjpeg только tcp   8604 mjpeg только udp
+  8605 mjpeg tcp,udp --udp-drop (SETUP по UDP принят, датаграммы не идут — «фаервол»)
 
   S5-01  службы обеих плат active/running, failed нет, health PASS, пульт CONNECTED
   S5-02  {udp, tcp, auto} × {mjpeg, h264} (rtsp:0…5): блок streaming с нужным адресом ≤ 15 с, пульт live, счётчик
          декодированных кадров растёт; фактический транспорт = заданному (auto — любой, записывается)
-  S5-03  один транспорт недоступен: auto@только-tcp → tcp; auto@только-udp → udp; udp@только-tcp и tcp@только-udp →
-         блок error/connect-error без streaming, пульт «нет видео», затем synthetic ≤ 15 с (без зависания)
+  S5-03  один транспорт недоступен: auto@только-tcp → tcp; auto@только-udp → udp; auto@UDP-молчит (--udp-drop) → tcp;
+         udp@только-tcp и tcp@только-udp → блок error/connect-error без streaming, пульт «нет видео», затем synthetic
+         ≤ 15 с (без зависания)
   S5-04  потеря сервера (kill на --outage с) и возврат: «нет видео» ≤ 3 с, connect-error/no-signal на блоке,
          изображение само ≤ 10 с после запуска сервера
   S5-05  переключения synthetic → rtsp:0 → rtsp:4 → rtsp:8 (отказ) → rtsp:2 → synthetic × --switches: без
          зависаний; ресурсы службы блока и пульта до/после (1 конвейер, fd ±3, потоки ±2, MainPID/NRestarts)
-  S5-06  --gui: gui_capture --by select --select rtsp:0…7,synthetic — кадр меняется в GUI pi1 для каждой ячейки
+  S5-06  --gui: gui_capture --by select --select rtsp:0…7,10,synthetic — кадр меняется в GUI pi1 для каждой
+         положительной ячейки
   S5-07  журналы с начала прогона + check_video_link; slot_guard «до/после» относительно базовой линии платы
 """
 import argparse
@@ -47,14 +50,19 @@ S4, E = A.S4, A.E
 STEPS = ("S5-01", "S5-02", "S5-03", "S5-04", "S5-05", "S5-06", "S5-07")
 SERVER = ROOT / "tools/probe/s4_rtsp_test_server.py"
 SERVERS = {"both-mjpeg": (8601, "mjpeg", "tcp,udp"), "both-h264": (8602, "h264", "tcp,udp"),
-           "tcp-mjpeg": (8603, "mjpeg", "tcp"), "udp-mjpeg": (8604, "mjpeg", "udp")}
+           "tcp-mjpeg": (8603, "mjpeg", "tcp"), "udp-mjpeg": (8604, "mjpeg", "udp"),
+           "drop-mjpeg": (8605, "mjpeg", "tcp,udp")}
+SERVER_FLAGS = {"drop-mjpeg": "--udp-drop"}
 # (сервер, транспорт источника, ожидание): udp | tcp | any (auto при обоих) | fail (транспорт недоступен)
 CELLS = [("both-mjpeg", "udp", "udp"), ("both-mjpeg", "tcp", "tcp"), ("both-mjpeg", "auto", "any"),
          ("both-h264", "udp", "udp"), ("both-h264", "tcp", "tcp"), ("both-h264", "auto", "any"),
          ("tcp-mjpeg", "auto", "tcp"), ("udp-mjpeg", "auto", "udp"),
-         ("tcp-mjpeg", "udp", "fail"), ("udp-mjpeg", "tcp", "fail")]
+         ("tcp-mjpeg", "udp", "fail"), ("udp-mjpeg", "tcp", "fail"),
+         ("drop-mjpeg", "auto", "tcp")]           # auto: UDP молчит → переход на TCP (rtspsrc udp+tcp)
 FAIL_STATES = ("error", "connect-error", "no-signal")
 NEG_WINDOW_S = 15.0
+AGENT_HINT = ("вероятная причина: в agent.SPEC_KEYS блока нет transport — ключ из video-input.json отбрасывается "
+              "(источник работает как auto)")
 SWITCH_SEQ = ("synthetic", 0, 4, 8, 2, "synthetic")
 log = S4.log
 
@@ -69,7 +77,7 @@ def cells(host):
     for n, (srv, tr, expect) in enumerate(CELLS):
         port, codec, transports = SERVERS[srv]
         out.append({"n": n, "id": f"rtsp:{n}", "server": srv, "port": port, "codec": codec, "transport": tr,
-                    "server_transports": transports, "expect": expect,
+                    "server_transports": transports, "server_flags": SERVER_FLAGS.get(srv, ""), "expect": expect,
                     "url": f"rtsp://{host}:{port}/s5-{tr}-{codec}", "name": f"S5 {tr} {codec} @{transports}"})
     return out
 
@@ -89,12 +97,16 @@ def config_text(orig_text, spec, cs):
     return json.dumps(base, ensure_ascii=False)
 
 
-def readiness(server_help, board_hits, status_src=None):
+def readiness(server_help, board_hits, status_src=None, agent_keys=None):
     """Развёрнут ли контракт NETWORK: сервер знает --transports (и mjpeg), блок знает transport (grep кода выпуска
-    или поле статуса)."""
+    или поле статуса). agent_spec_transport — есть ли transport в agent.SPEC_KEYS: без него ключ описания из
+    video-input.json отбрасывается при чтении файла (выбор файлом/SIGHUP тогда работает как auto) — это дефект
+    интеграции, а не «контракт не развёрнут»: ячейки судятся, к FAIL добавляется подсказка."""
     return {"server_transports": "--transports" in (server_help or ""),
             "server_codec": "mjpeg" if re.search(r"\bmjpeg\b", server_help or "") else "jpeg",
-            "board_transport": bool(board_hits) or "transport" in (status_src or {})}
+            "board_transport": bool(board_hits) or "transport" in (status_src or {}),
+            "server_udp_drop": "--udp-drop" in (server_help or ""),
+            "agent_spec_transport": agent_keys}
 
 
 def cell_blocker(c, ready):
@@ -103,6 +115,8 @@ def cell_blocker(c, ready):
         return f"контракт NETWORK не развёрнут: сервер без --transports (нужен только {c['server_transports']})"
     if (c["transport"] != "auto" or c["expect"] == "udp") and not ready["board_transport"]:
         return "контракт NETWORK не развёрнут: блок не знает ключ transport"
+    if c.get("server_flags") == "--udp-drop" and not ready.get("server_udp_drop"):
+        return "контракт NETWORK не развёрнут: сервер без --udp-drop"
     if c["transport"] == "udp" and not ready["server_transports"]:
         return "контракт NETWORK не развёрнут: сервер без UDP (--transports)"
     return None
@@ -188,7 +202,7 @@ def judge_cell(c, m, blocker=None):
 
 
 def judge_gui_matrix(states, cs):
-    """S5-06: для каждой ячейки rtsp:0…7 снимок «selected-rtsp_N»: источник rtsp, кадр меняется (таймкод сервера;
+    """S5-06: для каждой положительной ячейки снимок «selected-rtsp_N»: источник rtsp, кадр меняется (таймкод сервера;
     поле кадра тестового сервера почти чёрное — доля тёмного здесь не критерий)."""
     if not states:
         return "ERROR", ["states.json нет"]
@@ -237,6 +251,8 @@ class Matrix:
         port, codec, transports = SERVERS[key]
         c = self.codec_arg if codec == "mjpeg" else "h264"
         tr = f" --transports {transports}" if self.ready.get("server_transports") else ""
+        if SERVER_FLAGS.get(key) and self.ready.get("server_udp_drop"):
+            tr += f" {SERVER_FLAGS[key]}"
         cmd = (f"nohup python3 /tmp/s4_rtsp_test_server.py --port {port} --codec {c}{tr} --label S5-{port} "
                f"--pidfile /tmp/s5-rtsp-{port}.pid >/tmp/s5-rtsp-{port}.log 2>&1 &")
         A.ssh(self.a.console, cmd)
@@ -327,6 +343,8 @@ def step_cells(mx, idx):
             v, p = "ERROR", [m["error"]]
         else:
             v, p = judge_cell(c, m, blocker)
+        if v == "FAIL" and c["transport"] != "auto" and mx.ready.get("agent_spec_transport") is False:
+            p = p + [AGENT_HINT]
         m["verdict"], m["problems"] = v, p
         rows.append(m)
         vs.append(v)
@@ -401,16 +419,17 @@ def plan(a):
     lines = [f"S5 RTSP-матрица (серверы на pi1 {a.console}, источник на pi2 {a.remote}; ≈ 7 мин, --gui ≈ 10 мин):",
              "  0  предпроверка (серийные номера, OTA в покое), snap «до»; контракт NETWORK: сервер --transports? блок "
              "transport?",
-             "     серверы pi1: " + "; ".join(f"{p} {c} {t}" for p, c, t in SERVERS.values()),
+             "     серверы pi1: " + "; ".join(f"{p} {c} {t}{' ' + SERVER_FLAGS.get(k, '') if k in SERVER_FLAGS else ''}"
+                                        for k, (p, c, t) in SERVERS.items()),
              "  1  S5-01 службы, health, пульт CONNECTED                                               ~0,3 мин"]
     lines += ["  2  S5-02 ячейки rtsp:0…5 (выбор файлом, streaming/live, кадры, транспорт); ячейки:      ~1 мин"]
     lines += [f"       {c['id']}: {c['transport']:4} × {c['codec']:5} @ сервер {c['server_transports']:7} → "
               f"{ {'any': 'live, транспорт любой', 'fail': 'error без зависания'}.get(c['expect'], 'live, ' + c['expect'])}"
               for c in cells(a.console)]
-    lines += ["  3  S5-03 ячейки rtsp:6…9 — один транспорт недоступен                                 ~1 мин",
+    lines += ["  3  S5-03 ячейки rtsp:6…10 — один транспорт недоступен                                ~1,3 мин",
               f"  4  S5-04 kill сервера 8601 на {a.outage:g} с при rtsp:2, возврат                           ~0,5 мин",
               f"  5  S5-05 переключения {' → '.join(map(str, SWITCH_SEQ))} × {a.switches}, ресурсы        ~1,5 мин",
-              f"  6  S5-06 GUI: gui_capture --by select rtsp:0…7,synthetic: {'да' if a.gui else 'нет → ERROR'}  ~3 мин",
+              f"  6  S5-06 GUI: gui_capture --by select rtsp:0…7,10,synthetic: {'да' if a.gui else 'нет → ERROR'}  ~3 мин",
               "  7  S5-07 журналы + check_video_link; snap «после», сравнение с базовой линией         ~2,5 мин",
               "Реально: две платы, сеть, rtspsrc/UDP/TCP, декодирование и GUI пульта. Модель: камера — тестовый сервер "
               "(videotestsrc); GUI — Qt offscreen без cage/HDMI."]
@@ -453,8 +472,10 @@ def main(argv=None):
     rel = "C=$(readlink -f /var/lib/sheregesh-deploy/current 2>/dev/null || echo /usr/lib/sheregesh)"
     hits = E.out(a.remote, f"{rel}; grep -l transport $C/software/sheregesh/videosources.py "
                            "$C/software/sheregesh/videoinput.py 2>/dev/null")
+    agent = E.out(a.remote, f"{rel}; grep -c '^SPEC_KEYS.*transport' $C/software/remote/sheregesh_remote/agent.py")
     status_src = S4.remote_source(E.jload(E.out(a.remote, f"cat {S4.REMOTE_STATUS}")))
-    mx.ready = readiness(help_text, hits.strip(), status_src)
+    mx.ready = readiness(help_text, hits.strip(), status_src,
+                         agent_keys=(agent.strip() != "0") if agent.strip().isdigit() else None)
     mx.codec_arg = mx.ready["server_codec"]
     meta["contract"] = mx.ready
     log(f"контракт NETWORK: {mx.ready}")
@@ -490,7 +511,7 @@ def main(argv=None):
             v, p, rows = step_cells(mx, range(0, 6))
             put("S5-02", v, p, rows)
         if "S5-03" in only:
-            v, p, rows = step_cells(mx, range(6, 10))
+            v, p, rows = step_cells(mx, range(6, len(mx.cs)))
             put("S5-03", v, p, rows)
         if "S5-04" in only:
             v, p, m = step_loss(mx)

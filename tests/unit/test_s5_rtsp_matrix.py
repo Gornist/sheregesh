@@ -11,7 +11,8 @@ sys.path.insert(0, str(ROOT / "tools" / "probe"))
 sys.path.insert(0, str(ROOT / "tools" / "deploy" / "ota-check"))
 import s5_rtsp_matrix as mx  # noqa: E402
 
-READY = {"server_transports": True, "server_codec": "mjpeg", "board_transport": True}
+READY = {"server_transports": True, "server_codec": "mjpeg", "board_transport": True, "server_udp_drop": True,
+         "agent_spec_transport": True}
 CS = mx.cells("192.168.1.92")
 
 
@@ -19,7 +20,8 @@ def test_cells_cover_matrix_with_distinct_urls():
     pos = {(c["transport"], c["codec"]) for c in CS[:6]}
     assert pos == {(t, k) for t in ("udp", "tcp", "auto") for k in ("mjpeg", "h264")}
     assert len({c["url"] for c in CS}) == len(CS)                   # active_id ищет по адресу
-    assert [c["expect"] for c in CS[6:]] == ["tcp", "udp", "fail", "fail"]
+    assert [c["expect"] for c in CS[6:]] == ["tcp", "udp", "fail", "fail", "tcp"]
+    assert CS[10]["server_flags"] == "--udp-drop" and CS[10]["transport"] == "auto"
     assert all(c["id"] == f"rtsp:{n}" for n, c in enumerate(CS))
     assert CS[3]["url"] == "rtsp://192.168.1.92:8602/s5-udp-h264" and CS[3]["server_transports"] == "tcp,udp"
 
@@ -31,16 +33,19 @@ def test_config_keeps_other_keys_and_sets_matrix_urls():
     assert out["note"] == "x" and len(out["rtsp_urls"]) == len(CS)
     assert out["rtsp_urls"][8] == {"url": CS[8]["url"], "codec": "mjpeg", "transport": "udp", "name": CS[8]["name"]}
     syn = json.loads(mx.config_text("__ABSENT__", {"source": "synthetic"}, CS))
-    assert syn["source"] == "synthetic" and "url" not in syn and len(syn["rtsp_urls"]) == 10
+    assert syn["source"] == "synthetic" and "url" not in syn and len(syn["rtsp_urls"]) == 11
 
 
 def test_readiness_and_blockers():
     s4_help = "usage: … [--codec {jpeg,h264}] [--outage PERIOD:DURATION]"
     r = mx.readiness(s4_help, "", {"type": "rtsp", "state": "streaming"})
-    assert r == {"server_transports": False, "server_codec": "jpeg", "board_transport": False}
-    r5 = mx.readiness("--transports TRANSPORTS --codec {mjpeg,h264}", "/x/videosources.py", {})
+    assert r == {"server_transports": False, "server_codec": "jpeg", "board_transport": False,
+                 "server_udp_drop": False, "agent_spec_transport": None}
+    r5 = mx.readiness("--transports TRANSPORTS --codec {mjpeg,h264} --udp-drop", "/x/videosources.py", {},
+                      agent_keys=True)
     assert r5 == READY
     assert mx.readiness("", "", {"transport": "udp"})["board_transport"]
+    assert "--udp-drop" in mx.cell_blocker(CS[10], dict(READY, server_udp_drop=False))
     assert all(mx.cell_blocker(c, READY) is None for c in CS)
     # S4-сервер и блок без transport: доказательна только auto@tcp,udp (транспорт tcp interleaved)
     ok = [c["id"] for c in CS if mx.cell_blocker(c, r) is None]
@@ -126,7 +131,7 @@ def test_gui_matrix_judgement():
     def st(n, changed=True, inp="rtsp"):
         return {"shot": f"{2 * n + 3:02d}-{2 * n + 4:02d}-selected-rtsp_{n}-video-t+1s.png", "frame_changed": changed,
                 "frame_dark": 0.99, "videoSource": {"input": inp}}
-    states = [{"shot": "01-02-stream-video-t+1s.png"}] + [st(n) for n in range(8)]
+    states = [{"shot": "01-02-stream-video-t+1s.png"}] + [st(n) for n in (0, 1, 2, 3, 4, 5, 6, 7, 10)]
     assert mx.judge_gui_matrix(states, CS) == ("PASS", [])
     v, p = mx.judge_gui_matrix(states[:4] + [st(3, changed=False)] + states[5:], CS)
     assert v == "FAIL" and "rtsp:3" in p[0]
@@ -153,3 +158,16 @@ def test_plan_without_ssh(capsys):
     out = capsys.readouterr().out
     for needle in ("S5-02", "S5-03", "S5-07", "8604 mjpeg udp", "rtsp:9", "error без зависания"):
         assert needle in out
+
+
+def test_agent_spec_keys_hint_added_to_forced_transport_fail(monkeypatch):
+    """Ветка NETWORK 2a3137a: videoinput/videosources знают transport, а agent.SPEC_KEYS — нет: выбор файлом даёт auto.
+    Ячейка udp, ушедшая в tcp, — FAIL с подсказкой; auto-ячейки подсказку не получают."""
+    class M:
+        ready = dict(READY, agent_spec_transport=False)
+        cs = CS
+
+        def run_cell(self, c):
+            return good(transport="tcp")
+    v, p, rows = mx.step_cells(M(), [0, 2])
+    assert v == "FAIL" and rows[0]["problems"][-1] == mx.AGENT_HINT and mx.AGENT_HINT not in rows[1]["problems"]
