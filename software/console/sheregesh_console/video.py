@@ -115,6 +115,17 @@ class VideoReceiver(QObject):
         """Номер последнего показанного кадра (VideoView: кадры до потери сигнала не выдаются за новые)."""
         return self._shown_seq
 
+    def frames_since(self, t):
+        """Сколько кадров декодировано позже момента t (time.monotonic) — по меткам последних 300 кадров.
+        Переход источника (videosource.Handover): кадры после перехода — кадры нового источника."""
+        with self._lock:
+            n = 0
+            for ts in reversed(self._decoded):
+                if ts <= t:
+                    break
+                n += 1
+            return n
+
     # ---------- управление ----------
     def configure(self, codec, port):
         """Источник сообщил кодек и порт. Перезапуск только при изменении."""

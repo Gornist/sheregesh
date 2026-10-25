@@ -23,6 +23,7 @@ Item {
         case "unavailable": return qsTr("GStreamer missing")
         case "reconnecting": return qsTr("reconnecting")
         case "switching": return qsTr("switching source…")
+        case "connecting": return qsTr("connecting to source…")
         default: return d
         }
     }
@@ -202,7 +203,7 @@ Item {
                       .arg(page.videoShort(vs.display, rx.fps))
                 color: vs.display === "playing" || vs.display === "off" ? win.p.muted
                      : vs.display === "switching" || vs.display === "waiting" || vs.display === "restarting" || vs.display === "starting"
-                       || vs.display === "reconnecting" ? win.p.info
+                       || vs.display === "connecting" || vs.display === "reconnecting" ? win.p.info
                      : win.p.warning
             }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 1; elide: Text.ElideRight

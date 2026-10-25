@@ -384,6 +384,11 @@
         <source>switching source…</source>
         <translation>переключение источника…</translation>
     </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="26" />
+        <source>connecting to source…</source>
+        <translation>подключение к источнику…</translation>
+    </message>
 </context>
 <context>
     <name>DiagnosticsPage</name>
@@ -1056,6 +1061,11 @@
         <translation>Видеоисточник %1 запускается.</translation>
     </message>
     <message>
+        <location filename="../qml/VideoPage.qml" line="44" />
+        <source>Connecting to the %1 source: waiting for its first frames. Frames of the previous source are not shown.</source>
+        <translation>Подключение к источнику %1: ожидаются его первые кадры. Кадры прежнего источника не показываются.</translation>
+    </message>
+    <message>
         <location filename="../qml/VideoPage.qml" line="38" />
         <source>The selected video mode is not supported by the device.</source>
         <translation>Выбранный режим видео устройство не поддерживает.</translation>
@@ -1069,6 +1079,11 @@
         <location filename="../qml/VideoPage.qml" line="62" />
         <source>Source starting</source>
         <translation>Запуск источника</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="72" />
+        <source>Connecting…</source>
+        <translation>Подключение…</translation>
     </message>
     <message>
         <location filename="../qml/VideoPage.qml" line="63" />

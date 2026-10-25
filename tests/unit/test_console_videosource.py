@@ -92,3 +92,143 @@ def test_off_and_local_synthetic():
     assert vs.describe("off") == vs.empty()
     d = vs.describe("local-synthetic", rx_state="playing")
     assert d["input"] == "synthetic" and d["origin"] == "local"
+
+
+# ---------------- переход источника (S5 GUI-01): «Воспроизведение» — только по кадрам нового источника ----------------
+class Clock:
+    def __init__(self):
+        self.t = 100.0
+
+    def __call__(self):
+        return self.t
+
+
+class Rx:
+    """Приёмник пульта без Qt: метки декодированных кадров в шкале подменных часов (VideoReceiver.frames_since)."""
+
+    def __init__(self, clock):
+        self.clock, self.frames = clock, []
+
+    def run(self, seconds, fps=25):
+        """Кадры идут seconds секунд (fps=0 — кадров нет, время идёт)."""
+        end = self.clock.t + seconds
+        while self.clock.t < end - 1e-9:
+            self.clock.t = round(self.clock.t + (1 / fps if fps else 0.05), 4)
+            if fps:
+                self.frames.append(self.clock.t)
+
+    def since(self, t):
+        return sum(1 for f in self.frames if f > t)
+
+
+def remote(input_, state, device="", restarts=0):
+    return vs.describe("remote", {**TEL_11, "source": {"input": input_, "state": state, "device": device,
+                                                        "restarts": restarts}}, {})
+
+
+def screen(h, rx, src, rx_state):
+    return vs.display(src, rx_state, h.update(src, rx.since))
+
+
+def test_display_not_fresh_is_connecting_not_playing():
+    d = remote("rtsp", "starting")
+    assert vs.display(d, "playing", fresh=False) == {"display": vs.CONNECTING, "live": False}
+    assert vs.display(d, "waiting", fresh=False) == {"display": vs.CONNECTING, "live": False}
+    assert vs.display(d, "no-video", fresh=False) == {"display": vs.CONNECTING, "live": False}
+    s = remote("rtsp", "streaming")
+    assert vs.display(s, "no-video", fresh=False) == {"display": "no-video", "live": False}   # REQ-SW-002
+    assert vs.display(remote("rtsp", "error"), "playing", fresh=False)["display"] == "error"   # причина важнее
+    assert vs.display(d, "playing", fresh=True) == {"display": "playing", "live": True}
+
+
+def test_switch_synthetic_to_rtsp_while_old_frames_continue():
+    """Смена synthetic → rtsp: приёмник ещё «playing» (буфер, NO_VIDEO_AFTER_S), старые кадры идут ещё FLUSH_S —
+    «Подключение», а не «Воспроизведение»; затем пауза (подключение RTSP) и кадры нового — «Воспроизведение»."""
+    clock = Clock()
+    h, rx = vs.Handover(clock), Rx(clock)
+    rx.run(2.0)
+    assert screen(h, rx, remote("synthetic", "streaming", "videotestsrc"), "playing")["live"]
+    assert screen(h, rx, remote("rtsp", "starting", "rtsp://cam/1"), "playing") == \
+        {"display": vs.CONNECTING, "live": False}
+    assert h.reason == "change" and h.guard == pytest.approx(clock.t + vs.FLUSH_S)
+    rx.run(vs.FLUSH_S - 0.05)                      # кадры прежнего источника, бывшие в пути
+    assert screen(h, rx, remote("rtsp", "starting", "rtsp://cam/1"), "playing")["display"] == vs.CONNECTING
+    rx.run(0.6, fps=0)                             # RTSP подключается: кадров нет
+    assert screen(h, rx, remote("rtsp", "starting", "rtsp://cam/1"), "playing")["display"] == vs.CONNECTING
+    rx.run(0.04)                                   # первый кадр нового источника — ещё не подтверждение
+    assert not screen(h, rx, remote("rtsp", "starting", "rtsp://cam/1"), "playing")["live"]
+    rx.run(0.04)                                   # NEW_FRAMES кадров: блок ещё «starting», а кадр уже показывается
+    assert screen(h, rx, remote("rtsp", "starting", "rtsp://cam/1"), "playing") == {"display": "playing", "live": True}
+    assert screen(h, rx, remote("rtsp", "streaming", "rtsp://cam/1"), "playing")["live"]
+
+
+def test_rtsp_wrong_codec_starting_then_error():
+    """Блок starting → error (кодек не поддерживается): «Подключение», затем причина; кадры прежнего не показываются."""
+    clock = Clock()
+    h, rx = vs.Handover(clock), Rx(clock)
+    rx.run(1.0)
+    screen(h, rx, remote("synthetic", "streaming"), "playing")
+    assert screen(h, rx, remote("rtsp", "starting", "rtsp://cam/h265"), "playing")["display"] == vs.CONNECTING
+    rx.run(0.3)
+    assert screen(h, rx, remote("rtsp", "error", "rtsp://cam/h265"), "playing") == {"display": "error", "live": False}
+    rx.run(2.0, fps=0)
+    assert screen(h, rx, remote("rtsp", "error", "rtsp://cam/h265"), "no-video")["display"] == "error"
+    # повторная попытка блока (error → starting) — снова переход; кадров нет — «Подключение», не «нет видео»
+    assert screen(h, rx, remote("rtsp", "starting", "rtsp://cam/h265", 1), "no-video")["display"] == vs.CONNECTING
+
+
+def test_session_start_shows_frames_as_soon_as_they_arrive():
+    """Старт сеанса: блок сообщает starting (idle → starting) и отстаёт от кадров на 0,3–1,7 с. Кадров до перехода
+    нет — guard = момент перехода: «Воспроизведение» с NEW_FRAMES-м кадром, без ожидания streaming и FLUSH_S."""
+    clock = Clock()
+    h, rx = vs.Handover(clock), Rx(clock)
+    assert screen(h, rx, remote("synthetic", "starting"), "waiting")["display"] == vs.CONNECTING
+    assert h.reason == "start" and h.guard == clock.t
+    rx.run(0.4, fps=0)
+    assert screen(h, rx, remote("synthetic", "starting"), "waiting")["display"] == vs.CONNECTING
+    rx.run(2 / 25)
+    assert screen(h, rx, remote("synthetic", "starting"), "playing") == {"display": "playing", "live": True}
+    rx.run(1.0)                                    # блок подтверждает позже — без нового перехода и чёрного кадра
+    assert screen(h, rx, remote("synthetic", "streaming"), "playing")["live"] and not h.pending
+
+
+def test_reconnect_without_change_and_block_restart():
+    clock = Clock()
+    h, rx = vs.Handover(clock), Rx(clock)
+    rx.run(1.0)
+    assert screen(h, rx, remote("synthetic", "streaming"), "playing")["live"]
+    lost = vs.describe("remote", None, None, link="RECONNECTING")
+    assert vs.display(lost, "playing", h.update(lost, rx.since))["live"]       # кадры идут — актуальны
+    assert screen(h, rx, remote("synthetic", "streaming"), "playing")["live"]  # тот же источник — без перехода
+    rx.run(1.0)
+    assert not screen(h, rx, remote("synthetic", "streaming", restarts=1), "playing")["live"]   # перезапуск конвейера
+    rx.run(vs.FLUSH_S + 0.1)
+    assert screen(h, rx, remote("synthetic", "streaming", restarts=1), "playing")["live"]
+
+
+def test_select_from_console_waits_for_block_change():
+    clock = Clock()
+    h, rx = vs.Handover(clock), Rx(clock)
+    rx.run(1.0)
+    screen(h, rx, remote("synthetic", "streaming"), "playing")
+    h.select()
+    rx.run(1.0)                                    # блок ещё не сменил источник: все кадры — прежнего
+    assert not screen(h, rx, remote("synthetic", "streaming"), "playing")["live"]
+    h.confirmed()                                  # sources[].active — новый, сведения источника ещё прежние
+    rx.run(1.0)
+    assert not screen(h, rx, remote("synthetic", "streaming"), "playing")["live"]
+    assert screen(h, rx, remote("rtsp", "starting", "rtsp://cam/1"), "playing")["display"] == vs.CONNECTING
+    rx.run(vs.FLUSH_S + 0.1)
+    assert screen(h, rx, remote("rtsp", "streaming", "rtsp://cam/1"), "playing")["live"]
+    # отказ блока — источник прежний, кадры снова актуальны сразу
+    h.select()
+    assert not screen(h, rx, remote("rtsp", "streaming", "rtsp://cam/1"), "playing")["live"]
+    h.cancel()
+    assert screen(h, rx, remote("rtsp", "streaming", "rtsp://cam/1"), "playing")["live"]
+    # блок принял выбор, но смены источника не сообщил (тот же источник под другим id) — не дольше SELECT_GRACE_S
+    h.select()
+    h.confirmed()
+    rx.run(vs.SELECT_GRACE_S + 0.1)
+    assert not screen(h, rx, remote("rtsp", "streaming", "rtsp://cam/1"), "playing")["live"]
+    rx.run(vs.FLUSH_S + 0.1)
+    assert screen(h, rx, remote("rtsp", "streaming", "rtsp://cam/1"), "playing")["live"]

@@ -25,14 +25,26 @@ reconnecting/retrying.
 СПИСОК ИСТОЧНИКОВ — sources(): телеметрия status.video.sources, ≤ 16 объектов {id, input, name, available, active};
 id — стабильная строка ("synthetic", "v4l2:…", "rtsp:<n>"), выбор — PeerClient.select_video_source(id). Блок без
 sources (1.1 и ранние 1.x) — список пуст: только синтетический источник, выбор с пульта недоступен.
+
+ПЕРЕХОД ИСТОЧНИКА — Handover (S5 GUI-01). Приёмник пульта говорит «playing» ещё NO_VIDEO_AFTER_S после последнего
+кадра, а кадры прежнего источника, уже бывшие в пути, приходят и после его остановки на блоке. Поэтому после смены
+входа/устройства, перезапуска конвейера на блоке (restarts), запуска источника (state → starting) и выбора с пульта
+«Воспроизведение» — только когда приёмник декодировал кадры, пришедшие ПОСЛЕ перехода (VideoReceiver.frames_since);
+до того на экране «Подключение» (display "connecting"). Подтверждение блока (streaming) не ждётся: блок сообщает его
+на 0,3–1,7 с позже фактических кадров.
 """
 import re
+import time
 
 INPUTS = ("synthetic", "hdmi", "cvbs", "usb", "v4l2", "rtsp")
 SOURCE_STATES = ("no-device", "no-signal", "starting", "streaming", "connect-error", "error")
 BLOCKING = ("no-device", "no-signal", "connect-error", "error")      # кадра нет: чёрное поле и причина
 RECONNECTING = "reconnecting"                                        # только для экрана (см. выше)
+CONNECTING = "connecting"                    # только для экрана: переход источника, кадров нового ещё нет (Handover)
 MAX_SOURCES = 16
+FLUSH_S = 0.5            # кадры прежнего источника в пути (сеть, буфер джиттера 50 мс, декодер) приходят не позже
+NEW_FRAMES = 2           # столько кадров после перехода — источник подтверждён кадрами (≈ 0,07 с при 30 кадр/с)
+SELECT_GRACE_S = 2.5     # блок подтвердил выбор (active), а сведения источника ещё прежние — ждать смены не дольше
 
 _INPUT_ALIASES = {"uvc": "usb", "usb-uvc": "usb", "webcam": "usb", "composite": "cvbs", "analog": "cvbs",
                   "pal": "cvbs", "ntsc": "cvbs", "av": "cvbs", "hdmi-csi": "hdmi", "csi-hdmi": "hdmi",
@@ -98,7 +110,8 @@ def _fields(d):
             "state": state,
             "device": scrub(d.get("device") or d.get("name") or d.get("url") or d.get("uri") or d.get("id") or ""),
             "error": scrub(d.get("error") or d.get("reason") or d.get("detail") or d.get("message") or ""),
-            "width": int(_num(w)), "height": int(_num(h)), "fps": round(_num(d.get("fps", d.get("framerate"))), 2)}
+            "width": int(_num(w)), "height": int(_num(h)), "fps": round(_num(d.get("fps", d.get("framerate"))), 2),
+            "restarts": max(0, int(_num(d.get("restarts"))))}
 
 
 def remote_fields(telemetry_video, session_info):
@@ -111,6 +124,7 @@ def remote_fields(telemetry_video, session_info):
         out[k] = tel[k] or inf[k]
     for k in ("width", "height", "fps"):
         out[k] = inf[k] or tel[k]
+    out["restarts"] = tel["restarts"]
     return out
 
 
@@ -141,7 +155,7 @@ def sources(telemetry_video):
 
 def empty(origin="none"):
     return {"origin": origin, "input": "", "reported": False, "legacy": False, "state": "", "device": "",
-            "error": "", "width": 0, "height": 0, "fps": 0.0}
+            "error": "", "width": 0, "height": 0, "fps": 0.0, "restarts": 0}
 
 
 def describe(mode, telemetry_video=None, session_info=None, local_info=None, rx_state="off", rx_error="", link=""):
@@ -171,10 +185,14 @@ def describe(mode, telemetry_video=None, session_info=None, local_info=None, rx_
     return empty()
 
 
-def display(source, rx_state):
+def display(source, rx_state, fresh=True):
     """Что в кадре. state — код для подписи; live — показывать ли кадры. Состояние источника на блоке (нет
     сигнала, нет устройства, ошибка подключения) важнее приёмника: кадры, если они и идут (заставка блока или
     последний кадр), не выдаются за актуальное видео.
+
+    fresh=False — переход источника не подтверждён кадрами (Handover): кадры, если приёмник их и показывает, —
+    прежнего источника или из буфера, в кадре «Подключение». Если же кадров нет, а источник не запускается
+    (приёмник «нет видео» / перезапуск декодера), показывается состояние приёмника (REQ-SW-002: «нет видео»).
 
     «Переподключение» канала управления — только когда кадров нет и по приёмнику (его «нет видео» — через
     NO_VIDEO_AFTER_S после последнего кадра): пока кадры идут (видео без TLS не зависит от канала управления),
@@ -185,8 +203,71 @@ def display(source, rx_state):
         return {"display": st, "live": False}
     if st in BLOCKING and rx_state != "unavailable":
         return {"display": st, "live": False}
+    if not fresh and rx_state != "unavailable":
+        if rx_state in ("no-video", "restarting") and st != "starting":
+            return {"display": rx_state, "live": False}
+        return {"display": CONNECTING, "live": False}
     if rx_state == "playing":
         return {"display": "playing", "live": True}
     if st == "starting" and rx_state in ("waiting", "restarting", "no-video", "off"):
         return {"display": "starting", "live": False}
     return {"display": rx_state or "off", "live": False}
+
+
+class Handover:
+    """Переход источника удалённого блока: подтверждён ли он кадрами (см. «ПЕРЕХОД ИСТОЧНИКА» в начале модуля).
+
+    Переход начинается, когда сведения блока сообщают смену входа/устройства или перезапуск конвейера (restarts),
+    либо источник переходит в starting (запуск видеосеанса, смена источника), а также при выборе источника с пульта
+    (select: до смены на блоке все кадры — прежнего источника). Кончается, когда приёмник декодировал NEW_FRAMES
+    кадров позже guard. guard — момент замеченного перехода; если кадры шли в последние FLUSH_S (смена при идущем
+    видео), — плюс FLUSH_S: кадры, уже бывшие в пути, не выдаются за новый источник. При обычном старте сеанса кадров
+    до перехода нет, guard — сам момент перехода: кадры показываются, как только реально идут.
+
+    Без Qt и без сети: часы подменяются (clock), кадры — функцией frames_since(t) (VideoReceiver.frames_since)."""
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._key = self._state = None
+        self.pending = False             # переход идёт: кадры нового источника ещё не подтверждены
+        self.waiting = False             # выбор с пульта отправлен, блок ещё не сменил источник
+        self.guard = 0.0
+        self.reason = ""                 # start | change | select — для журнала и испытаний
+        self._confirmed_at = None
+
+    def select(self):
+        """Выбор источника с пульта отправлен."""
+        self.pending, self.waiting, self.reason, self._confirmed_at = True, True, "select", None
+
+    def confirmed(self):
+        """Блок отметил выбранный источник активным (status.video.sources); сведения источника могут ещё быть
+        прежними (телеметрия собрана до остановки старого конвейера) — их смены ждать не дольше SELECT_GRACE_S."""
+        if self.waiting and self._confirmed_at is None:
+            self._confirmed_at = self._clock()
+
+    def cancel(self):
+        """Выбор не состоялся (отказ, таймаут, потеря связи): источник прежний, его кадры актуальны."""
+        if self.waiting:
+            self.pending = self.waiting = False
+
+    def _begin(self, reason, now, frames_since):
+        flowing = frames_since(now - FLUSH_S) > 0
+        self.pending, self.waiting, self.reason, self._confirmed_at = True, False, reason, None
+        self.guard = now + FLUSH_S if flowing else now
+
+    def update(self, source, frames_since):
+        """source — describe("remote", …); возвращает fresh для display()."""
+        now = self._clock()
+        if source.get("reported") and source.get("state") != RECONNECTING:
+            key = (source.get("input", ""), source.get("device", ""), source.get("restarts", 0))
+            st = source.get("state", "")
+            if self._key is not None and key != self._key:
+                self._begin("change", now, frames_since)
+            elif st == "starting" and self._state != "starting":
+                self._begin("start", now, frames_since)
+            self._key, self._state = key, st
+        if self.waiting and self._confirmed_at is not None and now - self._confirmed_at > SELECT_GRACE_S:
+            self._begin("select", now, frames_since)       # блок принял выбор, а смены источника так и не сообщил
+        if self.pending and not self.waiting and frames_since(self.guard) >= NEW_FRAMES:
+            self.pending = False
+        return not self.pending

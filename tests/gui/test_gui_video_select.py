@@ -248,7 +248,9 @@ def test_select_requires_confirmation_and_calls_peer_with_id(ui):
     assert not find(ui, "videoSelectStatus").property("visible")
     ui.window.setProperty("currentPage", PAGE_NAMES.index("dashboard"))
     pump(60)
-    assert text(ui, "linkVideo").startswith("Видео (HDMI · HDMI (TC358743, CSI-2)): воспроизводится")
+    # кадры подменного декодера идут без паузы: до FLUSH_S после смены они могли быть прежнего источника (GUI-01)
+    assert wait_until(lambda: text(ui, "linkVideo").startswith(
+        "Видео (HDMI · HDMI (TC358743, CSI-2)): воспроизводится"), 3), text(ui, "linkVideo")
 
 
 @pytest.mark.test_id("TEST-UI-002")
@@ -265,7 +267,9 @@ def test_switching_placeholder_while_new_source_starts(ui):
     pump(300)
     assert lit_fraction(ui, find(ui, "videoView")) < 0.15
     set_report(ui, telemetry_video=tel(SOURCES, "rtsp:1"))
-    assert b.videoSelection["state"] == "idle" and b.videoSource["live"]
+    assert b.videoSelection["state"] == "idle"
+    assert wait_until(lambda: b.videoSource["live"], 3), b.videoSource      # кадры после перехода (GUI-01)
+    pump(80)
     assert text(ui, "videoStateText") == "Воспроизведение"
 
 

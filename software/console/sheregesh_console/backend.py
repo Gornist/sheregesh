@@ -221,10 +221,12 @@ class Backend(QObject):
         self._vsources = []                         # status.video.sources блока (videosource.sources)
         self._vsel = {"state": "idle", "id": "", "name": "", "error": "", "detail": ""}
         self._sel_seq = 0
+        self._handover = vsrc.Handover()            # переход источника блока: подтверждён ли он кадрами (GUI-01)
         self._selectDone.connect(self._on_select_done)
         self.video = VideoReceiver(self, command=video_command)
         self.video.stateChanged.connect(self._journal_video_state)
         self.video.stateChanged.connect(self._update_video_source)
+        self.video.frameChanged.connect(self._on_video_frame)
         self._local_sender = None
         self._local_video = local_video
         self._video_scan = dict(video_scan or {})
@@ -536,21 +538,30 @@ class Backend(QObject):
     def _update_video_source(self):
         report = self._video_report()
         src = vsrc.describe(rx_state=self.video.state, rx_error=self.video.error, **report)
-        src.update(vsrc.display(src, self.video.state))
         self._update_video_sources(vsrc.sources(report.get("telemetry_video"))
                                    if report["mode"] == "remote" and src["state"] != vsrc.RECONNECTING else [])
-        if self._vsel["state"] == "switching" and src["display"] == "playing":
+        # кадры прежнего источника (буфер, NO_VIDEO_AFTER_S приёмника) не выдаются за кадры нового (GUI-01)
+        fresh = self._handover.update(src, self.video.frames_since) if report["mode"] == "remote" else True
+        src.update(vsrc.display(src, self.video.state, fresh))
+        if self._vsel["state"] == "switching" and src["display"] in ("playing", vsrc.CONNECTING):
             # до подтверждения блоком (активный id в телеметрии) кадры — прежнего источника: не выдаются за новый
             src.update(display="switching", live=False)
         if src != self._vsrc:
             # переходы состояния источника (у приёмника — свой журнал «state …» в _link_status)
-            source_level = vsrc.BLOCKING + ("starting",)
+            source_level = vsrc.BLOCKING + ("starting", vsrc.CONNECTING)
             if src["display"] != self._vsrc["display"] and (src["display"] in source_level or
                                                              self._vsrc["display"] in source_level):
                 self.log("warning" if src["display"] in vsrc.BLOCKING else "info", "video",
                          f"source {src['input'] or '-'} {src['display']} {src['error']}".strip())
             self._vsrc = src
             self.videoSourceChanged.emit()
+
+    @Slot()
+    def _on_video_frame(self):
+        """Переход источника ждёт кадров нового (GUI-01): решение — с первым же подходящим кадром, а не с тактом
+        бэкенда или очередным уведомлением приёмника (до 0,5 с). Вне перехода кадры экран не пересчитывают."""
+        if self._handover.pending and not self._handover.waiting:
+            self._update_video_source()
 
     # ---------- выбор источника видео на блоке (S4) ----------
     def _video_peer(self):
@@ -589,9 +600,11 @@ class Backend(QObject):
         if switching and any(x["id"] == self._vsel["id"] and x["active"] for x in sources):
             self.log("info", "video", f"source selected {self._vsel['id']}")
             self._sel_seq += 1                      # ответ/таймаут прежнего запроса больше не нужен
+            self._handover.confirmed()
             self._set_selection(state="idle", error="", detail="")
         elif switching and blocker == "no-link":   # связь потеряна во время переключения: итог неизвестен
             self._sel_seq += 1
+            self._handover.cancel()
             self._set_selection(state="error", error="no-link", detail="")
         elif changed:
             self.videoSourcesChanged.emit()
@@ -633,6 +646,7 @@ class Backend(QObject):
         seq, call = self._sel_seq, self._selector()
         self.log("info", "video", f"source select {source_id} ({src['input'] or '-'})")
         self._set_selection(state="switching", id=source_id, name=name, error="", detail="")
+        self._handover.select()
         self._update_video_source()
 
         def run():                                  # вызов идёт по сети — не в потоке интерфейса
@@ -653,6 +667,7 @@ class Backend(QObject):
         if code:
             self._sel_seq += 1
             self.log("warning", "video", f"source select {self._vsel['id']}: {code} {detail}".strip())
+            self._handover.cancel()
             self._set_selection(state="error", error=code, detail=detail)
         self._update_video_source()                 # блок мог уже отметить источник активным; снять «Переключение»
 

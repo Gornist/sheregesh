@@ -41,6 +41,7 @@ Item {
         case "connect-error": main = qsTr("Cannot connect to the %1 stream; retrying automatically.").arg(page.inputText); break
         case "error": main = qsTr("The %1 video source reports an error.").arg(page.inputText); break
         case "starting": main = qsTr("The %1 video source is starting.").arg(page.inputText); break
+        case "connecting": return qsTr("Connecting to the %1 source: waiting for its first frames. Frames of the previous source are not shown.").arg(page.inputText)
         case "switching": return qsTr("Switching to «%1»…").arg(sel.name)
         case "reconnecting": return qsTr("Reconnecting to the remote unit: the link is being restored. The last frame is not shown; video returns automatically.")
         case "unsupported": main = qsTr("The selected video mode is not supported by the device."); break
@@ -68,6 +69,7 @@ Item {
         case "unsupported": return qsTr("Video mode not supported")
         case "no-signal": return qsTr("No signal")
         case "starting": return qsTr("Source starting")
+        case "connecting": return qsTr("Connecting…")
         case "connect-error": return qsTr("Connection error")
         case "error": return qsTr("Video source error")
         case "reconnecting": return qsTr("No video")      // REQ-SW-002: «нет видео»; переподключение — в причине
@@ -114,7 +116,7 @@ Item {
                 objectName: "videoStateBadge"
                 radius: 6 * win.s
                 color: page.playing ? win.p.ok : page.switching || vs.display === "waiting" || vs.display === "starting"
-                       || vs.display === "reconnecting" ? win.p.info
+                       || vs.display === "connecting" || vs.display === "reconnecting" ? win.p.info
                      : vs.display === "connect-error" || vs.display === "error" ? win.p.fault : win.p.warning
                 implicitWidth: videoState.implicitWidth + 28 * win.s
                 implicitHeight: videoState.implicitHeight + 10 * win.s
