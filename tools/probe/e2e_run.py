@@ -27,7 +27,7 @@ docs/acceptance/e2e/MATRIX.md — сопоставление E2E-01…15 с тр
 
 Ничего не меняет в образах и конфигурации. Сигналы — только процессам sheregesh-ui; systemctl — только действия,
 разрешённые правилом polkit 50-sheregesh-dev.rules. Перед любым внесением отказа проверяются серийные номера плат и
-состояние OTA (только IDLE или COMMITTED; иначе ERROR без действий).
+состояние OTA (только покой: IDLE, COMMITTED или ROLLED_BACK — после отката, слот согласован; иначе ERROR без действий).
 """
 import argparse
 import json
@@ -41,7 +41,7 @@ from pathlib import Path
 UI = "/run/sheregesh-ui/ui-state.json"
 REMOTE_UNIT, CONSOLE_UNIT = "sheregesh-remote-net", "sheregesh-console"
 SERIALS = {"console": "10000000568152de", "remote": "100000009d497e91"}     # pi1, pi2 (tools/deploy/shdeploy.py)
-OTA_OK = ("IDLE", "COMMITTED")
+OTA_OK = ("IDLE", "COMMITTED", "ROLLED_BACK")   # не идёт ни запись, ни пробная загрузка
 FAULTS = ("pause", "stop-start", "restart", "sender-kill", "manual")
 PAUSE_MAX_S = 10.0          # WatchdogSec=15 у sheregesh-remote-net: пауза дольше — уже сценарий watchdog
 VERDICTS = ("PASS", "FAIL", "ERROR")
@@ -443,7 +443,7 @@ def preflight(a):
             problems.append(f"{role}: серийный номер {ids[role]['serial']!r} ≠ {want!r}")
         ota = ids[role]["ota"] or {}
         if ota.get("state") not in OTA_OK or ota.get("consistent") is False:
-            problems.append(f"{role}: состояние OTA {ota or None!r} не IDLE/COMMITTED (или несогласовано) — "
+            problems.append(f"{role}: состояние OTA {ota or None!r} не IDLE/COMMITTED/ROLLED_BACK (или несогласовано) — "
                             "отказы не вносятся")
     return ids, problems
 
@@ -458,7 +458,7 @@ def plan(a):
     lines = [f"Модель отказа: {a.fault} — {EQUIVALENCE[a.fault]}",
              f"Циклов: {a.cycles}; обрыв: {a.outage if a.fault in ('pause', 'stop-start', 'manual') else '—'} с; "
              f"пауза между циклами: {a.gap} с",
-             "Предпроверка (только чтение): серийные номера, OTA ∈ IDLE/COMMITTED, health обеих ролей, связь и видео.",
+             "Предпроверка (только чтение): серийные номера, OTA ∈ IDLE/COMMITTED/ROLLED_BACK, health обеих ролей, связь и видео.",
              "Пороги: " + "; ".join(f"{k} ≤ {LIMITS[k][0]} с ({LIMITS[k][1].split(':')[0]})" for k in APPLICABLE[a.fault]),
              "Инварианты: NRestarts пульта и блока неизменны, failed = 0, по одному конвейеру GStreamer без сирот, "
              "новая запись сеанса в журнале блока на каждый цикл.",

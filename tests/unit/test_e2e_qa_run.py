@@ -193,3 +193,9 @@ def test_ota_state_reads_agent_status_and_refuses_unknown(monkeypatch):
     assert e.ota_state("pi2") == {"state": "COMMITTED", "active": "B", "consistent": True}
     monkeypatch.setattr(e, "ssh", lambda h, c, timeout=60: (127, ""))
     assert e.ota_state("pi2") is None
+
+
+def test_ota_rest_states_only():
+    """Допуск: OTA в покое (в т. ч. ROLLED_BACK после отката, pi2 2026-10-25), но не во время записи или пробной загрузки."""
+    assert set(e.OTA_OK) == {"IDLE", "COMMITTED", "ROLLED_BACK"}
+    assert not {"VERIFIED", "INSTALLING", "INSTALLED", "TRYBOOT", "HEALTH_PENDING", "FAILED"} & set(e.OTA_OK)
