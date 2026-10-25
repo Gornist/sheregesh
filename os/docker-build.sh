@@ -69,7 +69,12 @@ exec docker run --rm --privileged --platform linux/arm64 \
     sudo -u builder git -C /work/rpi-image-gen checkout -q --force "$RIG_REF"
     /work/rpi-image-gen/install_deps.sh >/dev/null
     mkdir -p /out/$CFG && chown builder /out/$CFG
-    AS="sudo -u builder"; [ -n "$SHEREGESH_BUILD_AS_ROOT" ] && AS=""
+    AS="sudo -u builder"
+    if [ -n "$SHEREGESH_BUILD_AS_ROOT" ]; then
+      # overlay-файлы rpi-image-gen и слоёв копируются в образ с владельцем исходников: без userns uid builder
+      # (1000 = sheregesh-ui на плате) остался бы на /etc, /usr и юнитах (OTA CLOSURE, цикл 1; tools/image/owners_check.sh)
+      AS=""; chown -R root:root /work/src /work/rpi-image-gen
+    fi
     $AS env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" SSH_PUBKEY="${SSH_PUBKEY:-}" DEPLOY_PUBKEY="${DEPLOY_PUBKEY:-}" SHEREGESH_POST_ONLY="$SHEREGESH_POST_ONLY" \
       SHEREGESH_WORK=/work OUT=/out/$CFG /work/src/os/build.sh "$CFG"
   '
