@@ -83,14 +83,27 @@ jobs:
         if: always()
         run: |
           python3 -I tools/reqs/reqgen.py gate | tee reports/gate.txt || echo "::notice title=Гейт релиза::NO-GO — ожидаемо до подтверждения всех Must на уровне L4"
+      # Квота хранилища артефактов (2026-10-25): текст отчётов (≈ 0,1 МБ) — всегда; снимки PNG (≈ 5 МБ, 98 % объёма) —
+      # только при падении или ручном запуске. При ~30 прогонах в сутки PNG на 90 дней дали бы ≈ 15 ГБ постоянного хранения.
       - name: Отчёты
         if: always()
         continue-on-error: true   # квота хранилища артефактов не должна скрывать результат тестов (2026-10-25)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: reports-${{ github.sha }}
-          path: reports/
-          retention-days: 90
+          path: |
+            reports/
+            !reports/**/*.png
+          retention-days: 30
+      - name: Снимки экранов (при падении или ручном запуске)
+        if: failure() || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: screenshots-${{ github.sha }}
+          path: reports/**/*.png
+          retention-days: 7
+          if-no-files-found: ignore
 
   security:
     name: Секреты и границы объёма

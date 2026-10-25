@@ -14,6 +14,11 @@ on:
     paths: ["os/**", "tools/image/**", ".github/workflows/image.yml"]
     tags: ["image-*"]
   workflow_dispatch:
+    inputs:
+      upload_image:
+        description: "Выгрузить образ dev-варианта (.img.zst, ≈ 0,8 ГБ, хранится 1 сутки) для OTA-пакета на Mac"
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -92,19 +97,39 @@ jobs:
               print(f"| {c['desc']} | {c['status']} | {c['detail'][:80]} |")
           print("\nNOT TESTED: " + ", ".join(r["not_tested"]))
           EOF
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+          # SHA остаются в журнале прогона и после истечения артефактов (журналы в квоту хранилища не входят)
+          { echo; echo '```'; cat "$d/SHA256SUMS" 2>/dev/null || true
+            python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print("image_sha256", r.get("image_sha256"), "commit", r.get("commit"), "verify_exit", r.get("verify_exit"))' "$d/build-report.json" 2>/dev/null || true
+            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      # Квота хранилища артефактов (2026-10-25, GitHub Free 0,5 ГБ·мес, считается по часам за месяц): отчёт сборки
+      # выгружается всегда и мал (≈ 0,5 МБ, без SBOM), образ — только по запросу (workflow_dispatch upload_image или тег image-*),
+      # только dev-вариант (по нему собирается OTA-пакет), вместе с SBOM и только на сутки. Строгий образ не выгружается: его
+      # проверка — verify.json и сводка выше.
+      - name: Отчёт сборки (без образа)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.gate.outputs.skip != '1'
+        continue-on-error: true   # исчерпанная квота не должна скрывать результат сборки; SHA — в сводке
         with:
-          name: ${{ matrix.variant }}-${{ github.sha }}
+          name: ${{ matrix.variant }}-report-${{ github.sha }}
           path: |
-            build/image/${{ matrix.variant }}/*.img.zst
             build/image/${{ matrix.variant }}/*.deb
             build/image/${{ matrix.variant }}/*.packages.tsv
-            build/image/${{ matrix.variant }}/*.sbom.zst
             build/image/${{ matrix.variant }}/verify.json
             build/image/${{ matrix.variant }}/build-report.json
             build/image/${{ matrix.variant }}/SHA256SUMS
             build/image/${{ matrix.variant }}/build.log
-          retention-days: 3   # образы по ~760 МБ: квота хранилища артефактов (2026-10-25 исчерпана)
-          compression-level: 0
+          retention-days: 7
           if-no-files-found: warn
+      - name: Образ (по запросу, dev, 1 сутки)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: >-
+          success() && steps.gate.outputs.skip != '1' && contains(matrix.variant, '-dev-') &&
+          (inputs.upload_image || startsWith(github.ref, 'refs/tags/image-'))
+        with:
+          name: ${{ matrix.variant }}-${{ github.sha }}
+          path: |
+            build/image/${{ matrix.variant }}/*.img.zst
+            build/image/${{ matrix.variant }}/*.sbom.zst
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
