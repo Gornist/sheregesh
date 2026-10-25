@@ -121,8 +121,8 @@ class Agent:
         """Видеоприём сетевого профиля: источник по описанию, конвейер — тот же stream_sender_args (сквозной или
         с кодером), что и раньше."""
         a = self.args
-        if a.video_command:
-            return Ingest.fixed(a.video_command, log)
+        if a.video_command:                       # испытания: источник — по описанию, конвейер — подставной
+            return Ingest(self.open_video_source, lambda _src: list(a.video_command), log)
         return Ingest(self.open_video_source, lambda src: video.stream_sender_args(
             self.net_video_codec, a.video_width, a.video_height, a.video_fps, src=src), log)
 
@@ -192,8 +192,8 @@ class Agent:
         if self.vserver is not None or self.video_codec or self.video_src_error:
             out["source"] = self.video_source_status()
             out["sources"] = self.catalog.snapshot()     # S4: список источников (необязательное поле)
-            if self.video_select is not None:
-                out["select"] = dict(self.video_select)
+        if self.video_select is not None:                # результат video-select этого сеанса (протокол 1.2)
+            out["select"] = dict(self.video_select)
         return out
 
     def video_source_status(self):
