@@ -201,3 +201,11 @@ def test_set_source_uses_source_cmd_or_main_pid_hup(monkeypatch):
     host, cmd = sent[0]
     assert host == "r" and "kill -HUP $(systemctl show -p MainPID --value sheregesh-remote-net)" in cmd
     assert "systemctl kill" not in cmd and '{"source": "synthetic"}' in cmd
+
+
+def test_gui_step_kill_pattern_does_not_match_own_shell_and_path_has_emulators():
+    """pkill -f '/tmp/gui_capture.py' в той же команде ssh убивал свою оболочку до `systemctl start` (пульт оставался
+    остановлен); backend пульта импортирует sheregesh_emulators — путь как у launcher.py."""
+    src = (ROOT / "tools/probe/s4_accept.py").read_text()
+    assert "-f '/tmp/gui_capture.py'" not in src and "-f '[/]tmp/gui_capture.py'" in src
+    assert "$C/software/emulators" in src

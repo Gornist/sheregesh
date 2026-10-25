@@ -347,7 +347,7 @@ def step_link(a, ctx):
 def step_gui(a, ctx, stand):
     """VID-03/04 и рендеринг потери/возврата синтетического источника: gui_capture --by video на pi1."""
     rel = "C=$(readlink -f /var/lib/sheregesh-deploy/current 2>/dev/null || echo /usr/lib/sheregesh)"
-    pp = "PYTHONPATH=$C/software:$C/software/console:$C/software/remote"
+    pp = "PYTHONPATH=$C/software:$C/software/emulators:$C/software/console:$C/software/remote"   # как launcher.py
     subprocess.run(["scp", "-q", str(ROOT / "tools/probe/gui_capture.py"), f"sheregesh-ui@{a.console}:/tmp/"], check=False)
     ctx["console_restarted"] = True
     try:
@@ -373,11 +373,11 @@ def step_gui(a, ctx, stand):
                 ssh(a.remote, f"kill -CONT -- -{pg}")
                 notes["recovered"] = phase("05-06-recovered-no-signal", 30)
         for _ in range(20):                                     # gui_capture завершается сам после done/timeout
-            if ssh(a.console, "pgrep -u sheregesh-ui -f '/tmp/gui_capture.py' >/dev/null")[0] != 0:
+            if ssh(a.console, "pgrep -u sheregesh-ui -f '[/]tmp/gui_capture.py' >/dev/null")[0] != 0:
                 break
             time.sleep(1)
     finally:
-        ssh(a.console, f"pkill -u sheregesh-ui -f '/tmp/gui_capture.py'; systemctl start {E.CONSOLE_UNIT}")
+        ssh(a.console, f"pkill -u sheregesh-ui -f '[/]tmp/gui_capture.py'; systemctl start {E.CONSOLE_UNIT}")
         time.sleep(8)          # ui-state.json остановленного пульта устарел: ждём, пока новый процесс его перепишет
     subprocess.run(["scp", "-q", "-r", f"sheregesh-ui@{a.console}:{GUI_DIR}", str(a.out / "gui")], check=False)
     sf = a.out / "gui" / "states.json"
