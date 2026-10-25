@@ -1,0 +1,16 @@
+[Unit]
+Description=MediaMTX RTSP server (sheregesh test camera)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/opt/mediamtx/mediamtx /etc/mediamtx/mediamtx.yml
+Restart=always
+RestartSec=2
+TimeoutStopSec=5
+User=cam
+Group=video
+SupplementaryGroups=render
+
+[Install]
+WantedBy=multi-user.target

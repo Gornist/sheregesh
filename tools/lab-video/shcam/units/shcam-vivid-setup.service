@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# shcam: начальная настройка эмулированных входов vivid после загрузки (петли, стандарт, режим HDMI).
+[Unit]
+Description=shcam: vivid emulated capture inputs (CVBS, HDMI)
+After=systemd-modules-load.service systemd-udev-settle.service systemd-udevd.service
+Wants=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/shcam-sig init
+
+[Install]
+WantedBy=multi-user.target

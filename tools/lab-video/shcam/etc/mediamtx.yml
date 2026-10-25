@@ -1,0 +1,24 @@
+# sheregesh test camera: IMX477 -> RTSP rtsp://shcam.local:8554/cam (H.264 baseline 1280x720@30)
+logLevel: info
+api: no
+metrics: no
+pprof: no
+playback: no
+rtsp: yes
+rtspTransports: [udp, tcp]
+rtspAddress: :8554
+rtmp: no
+hls: no
+webrtc: no
+srt: no
+paths:
+  cam:
+    source: rpiCamera
+    rpiCameraCamID: 0
+    rpiCameraWidth: 1280
+    rpiCameraHeight: 720
+    rpiCameraFPS: 30
+    rpiCameraCodec: softwareH264
+    rpiCameraH264Profile: baseline
+    rpiCameraBitrate: 3000000
+    rpiCameraIDRPeriod: 30

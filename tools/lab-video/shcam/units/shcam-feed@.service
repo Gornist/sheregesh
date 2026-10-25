@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# shcam: подача картинки камеры в эмулированный вход vivid (%i = cvbs | hdmi).
+# Ниже по приоритету, чем mediamtx: поток /cam (результаты S5, видео на пульте) важнее.
+[Unit]
+Description=shcam: feed camera into vivid %i input
+After=shcam-vivid-setup.service mediamtx.service network-online.target
+Requires=shcam-vivid-setup.service
+Wants=mediamtx.service
+
+[Service]
+EnvironmentFile=-/etc/default/shcam-video
+ExecStart=/usr/local/bin/shcam-feed %i
+Restart=always
+RestartSec=2
+DynamicUser=yes
+SupplementaryGroups=video
+CacheDirectory=shcam-feed
+Environment=HOME=/var/cache/shcam-feed GST_REGISTRY=/var/cache/shcam-feed/registry.bin
+Nice=10
+CPUWeight=50
+
+[Install]
+WantedBy=multi-user.target

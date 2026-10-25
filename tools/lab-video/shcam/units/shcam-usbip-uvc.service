@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# shcam: эмулятор USB-видеоустройств по USB/IP (HDMI→USB 534d:2109, CVBS→USB 534d:0021, камера 1d6b:0102), порт 3240.
+# Подключение на хосте: usbip_attach.py attach <shcam> 1-1|1-2|1-3 (root, vhci-hcd). Сбои: shcam-sig usb <профиль> …
+# Ниже по приоритету, чем mediamtx: поток /cam важнее.
+[Unit]
+Description=shcam: USB/IP UVC device emulator
+After=mediamtx.service network-online.target
+Wants=mediamtx.service
+
+[Service]
+EnvironmentFile=-/etc/default/shcam-video
+ExecStart=/usr/bin/python3 -u /usr/local/lib/shcam/usbip_uvc.py serve --listen 0.0.0.0:3240 --state-dir /run/shcam-uvc --source ${SHCAM_FEED_SRC}
+Restart=always
+RestartSec=2
+User=cam
+Group=video
+RuntimeDirectory=shcam-uvc
+RuntimeDirectoryMode=0775
+Nice=10
+CPUWeight=50
+
+[Install]
+WantedBy=multi-user.target

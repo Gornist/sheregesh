@@ -1,0 +1,7 @@
+# shcam: начальное состояние эмулированных входов после загрузки (shcam-vivid-setup).
+# Стандарт аналогового входа: pal | ntsc
+SHCAM_CVBS_STD=pal
+# Режим HDMI-входа: ШИРИНАxВЫСОТАpЧАСТОТА из списка vivid (v4l2-ctl -d /dev/shcam/hdmi-out --list-dv-timings)
+SHCAM_HDMI_MODE=1280x720p30
+# Источник картинки для подач: поток камеры (не менять адрес /cam — на нём результаты S5) или videotestsrc
+SHCAM_FEED_SRC=rtsp://127.0.0.1:8554/cam
