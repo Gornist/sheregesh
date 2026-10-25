@@ -78,6 +78,7 @@ def test_link_view_maps_adr0007_states_only():
         ("connected", {}, "CONNECTED"),
         ("connecting", {}, "CONNECTING"),                 # первое подключение после старта
         ("lost", {"lost_s": 3.0}, "CONNECTING"),          # RECONNECTING — идут попытки
+        ("lost", {"phase": "connected"}, "CONNECTING"),   # монитор увидел потерю раньше клиента: не «нет связи»
         ("lost", {"lost_s": 45.0}, "DISCONNECTED"),
         ("lost", {}, "DISCONNECTED"),                     # связи не было, окно старта истекло
         ("auth-failed", {"lost_s": 2}, "ERROR"),
@@ -140,7 +141,8 @@ def test_link_states_autoupdate_and_gui_responsive_during_loss(make_ui, monkeypa
     finally:
         agent.stop()
     views = [t.split()[1] for _, t in jl.records if t.startswith("link: ")]
-    assert views == ["CONNECTING", "DISCONNECTED", "CONNECTED", "CONNECTING", "DISCONNECTED", "CONNECTED"], jl.records
+    assert views == ["CONNECTING", "DISCONNECTED", "CONNECTED", "CONNECTING", "DISCONNECTED", "CONNECTED"], \
+        "\n".join(t for _, t in jl.records)
     print(f"\nE2E-GUI link: absent shown {t_absent:.2f} s after start, connect {t_connect:.2f} s, "
           f"loss detected {t_detect:.2f} s, recovered {t_recover:.2f} s; "
           f"event loop worst gap: no peer {gap_nopeer} ms, loss→recovery {worst} ms ({lat.ticks} ticks)")

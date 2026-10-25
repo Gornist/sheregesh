@@ -88,6 +88,8 @@ def peer_link(peer_state, snap):
     if peer_state == "incompatible":
         return "INCOMPATIBLE"
     lost = snap.get("lost_s")
+    if snap.get("phase") == "connected":
+        return "RECONNECTING"                      # монитор уже видит потерю heartbeat, клиент ещё не разорвал
     if lost is not None and lost <= RECONNECT_WINDOW_S:
         return "RECONNECTING"                      # связь была и только что потеряна — идут попытки
     return "DISCONNECTED"
