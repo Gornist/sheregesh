@@ -28,8 +28,9 @@ SECRET_PATTERNS = [
 CANARY_ALLOWED = ("tests/",)
 
 # Признаки из docs/security/out-of-scope-components.md. Документация может их упоминать, код — нет.
+# Протоколы управления наземными платформами (ELRS, CRSF, SBUS) разрешены решением D6.
 SCOPE_PATTERNS = re.compile(
-    r"(?i)\b(crsf|expresslrs|elrs|sbus|crossfire|rx5808|vrx|srb[-_]head|srb_core|bridge-fw|sheregesh-radio)\b")
+    r"(?i)\b(rx5808|vrx|srb[-_]head|srb_core|bridge-fw|sheregesh-radio)\b")
 SCOPE_DIRS = ("software/", "tools/", "tests/")
 SCOPE_SELF = {"tools/security/scan.py", "tests/tools/test_scan.py"}
 

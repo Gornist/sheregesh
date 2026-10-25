@@ -38,8 +38,8 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(len(scan.scan_secrets([self.write("software/x.log", canary)])), 1)
 
     def test_scope_denylist_in_code_but_not_docs(self):
-        files = [self.write("software/sheregesh/link.py", "import crsf\n"),
-                 self.write("docs/security/out-of-scope-components.md", "CRSF запрещён\n")]
+        files = [self.write("software/sheregesh/link.py", "import srb_core\n"),
+                 self.write("docs/security/out-of-scope-components.md", "srb_core запрещён\n")]
         found = scan.scan_scope(files)
         self.assertEqual(len(found), 1)
         self.assertTrue(found[0].startswith("software/"))

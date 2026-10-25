@@ -7,7 +7,7 @@
 |---|---|---|
 | Платформа RK3399, Armbian, DTS, патч ядра BQ25700 | obsolete | Заменена Pi 4B / Raspberry Pi OS (решение №222) |
 | Дисплей DSI → TC358775 и связанные проблемы мерцания | obsolete | Эталон — HDMI Waveshare 10.1EP-CAPLCD (№220) |
-| Радиотракт: `radio/daemon`, `radio/head` (`srb-head`), `radio/bridge-fw`, протокол SRB1, CRSF/SBUS, VRX | obsolete | Вне объёма 1.0 (REQ-SYS-003, `docs/security/out-of-scope-components.md`) |
+| Радиотракт: `radio/daemon`, `radio/head` (`srb-head`), `radio/bridge-fw`, протокол SRB1, CRSF/SBUS, VRX | obsolete | Код не переносится (D5). Управление наземными платформами по ELRS/CRSF разрешено решением D6 и проектируется заново; настройка VRX — вне объёма (`docs/security/out-of-scope-components.md`) |
 | Питание «головы» от 6S LiPo с понижающими преобразователями | obsolete | Запрещено: только готовые защищённые изделия (REQ-PWR-001) |
 | Второй сетевой порт (USB-Ethernet) и оптика | obsolete | UE300 исключён (TL-003) |
 | Xfce-сессия, Plymouth и графика с логотипом | obsolete | Киоск cage (ADR-0002); права на графику не подтверждены |
