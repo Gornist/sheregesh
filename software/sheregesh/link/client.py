@@ -422,6 +422,32 @@ def _write_cache(cfg, host):
         pass
 
 
+# Те же наборы, что у пульта (sheregesh_console/videosource.py: INPUTS, SOURCE_STATES)
+VIDEO_SOURCE_STATES = ("no-device", "no-signal", "starting", "streaming", "connect-error", "error")
+VIDEO_SOURCE_INPUTS = ("synthetic", "hdmi", "cvbs", "usb", "v4l2", "rtsp")
+
+
+def _sanitize_video_source(v):
+    """status.video.source (sheregesh.videoingest.Ingest.status): только известные поля, типы и длины."""
+    if not isinstance(v, dict) or v.get("state") not in VIDEO_SOURCE_STATES:
+        return None
+
+    def num(key, kind=float, hi=1e6):
+        x = v.get(key)
+        return kind(min(max(x, 0), hi)) if isinstance(x, (int, float)) and not isinstance(x, bool) else kind(0)
+
+    def text(key, n):
+        x = v.get(key)
+        return x[:n] if isinstance(x, str) else ""
+    return {"state": v["state"], "input": v["input"] if v.get("input") in VIDEO_SOURCE_INPUTS else "",
+            "type": text("type", 16), "name": text("name", 64), "id": text("id", 96), "device": text("device", 128),
+            "error": text("error", 200), "format": text("format", 8), "standard": text("standard", 8),
+            "width": num("width", int, 16384), "height": num("height", int, 16384),
+            "stream_width": num("stream_width", int, 16384), "stream_height": num("stream_height", int, 16384),
+            "fps": num("fps", float, 1000), "fps_actual": num("fps_actual", float, 1000),
+            "restarts": num("restarts", int, 10 ** 9), "since_s": num("since_s", float, 10 ** 9)}
+
+
 def _sanitize_status(body):
     """Только ожидаемые поля и типы; остальное отбрасывается (данные второй стороны недоверенные)."""
     out = {}
@@ -439,6 +465,9 @@ def _sanitize_status(body):
                         "codec": v.get("codec") if v.get("codec") in ("h264", "jpeg") else None,
                         "port": int(v["port"]) if isinstance(v.get("port"), int) and 1024 <= v["port"] <= 65535 else None,
                         "transport": "tls" if v.get("transport") == "tls" else None}
+        src = _sanitize_video_source(v.get("source"))
+        if src is not None:                       # видеоприём блока: необязательное поле (протокол 1.1 без изменений)
+            out["video"]["source"] = src
     ev = body.get("active_events")
     out["active_events"] = [str(c)[:32] for c in ev if isinstance(c, str)][:20] if isinstance(ev, list) else []
     if isinstance(body.get("uptime_s"), (int, float)):

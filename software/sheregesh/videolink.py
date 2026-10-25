@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Защищённый видеоканал удалённый блок → пульт (S3.1-VIDEO, ADR-0011).
 
-Блок:  videotestsrc → H.264 → rtph264pay → rtpstreampay → stdout ─┐
+Блок:  источник (videoingest: синтетический | V4L2 | RTSP) → H.264/MJPEG → rtp…pay → rtpstreampay → stdout ─┐
        этот модуль: отдельное соединение TLS 1.3 с взаимной аутентификацией (порт video_port, те же CA, сертификаты
        и ожидаемая идентичность пульта, что у канала управления) ─→ пульт
 Пульт: этот модуль → stdin → rtpstreamdepay → rtpjitterbuffer → декодер → RGBx (sheregesh_console.video).
@@ -20,11 +20,9 @@ RTP не попадает ни в один сокет: только каналы
 import json
 import os
 import select
-import signal
 import socket
 import ssl
 import struct
-import subprocess
 import threading
 import time
 from collections import deque
@@ -204,10 +202,16 @@ class VideoServer:
     """
 
     def __init__(self, cfg, codec, authorize, log, bind="0.0.0.0", port=None, command=None,
-                 width=1280, height=720, fps=30):
+                 width=1280, height=720, fps=30, ingest=None):
+        from .videoingest import Ingest                 # здесь: videoingest сам импортирует разбор RTP этого модуля
         self.cfg, self.codec, self.authorize, self.log = cfg, codec, authorize, log
         self.bind, self.port = bind, port if port is not None else cfg.video_port
-        self.command = command or video.stream_sender_args(codec, width, height, fps)
+        # Источник и его конвейер — sheregesh.videoingest (видеоприём: состояние, переподключение, смена источника).
+        # command — прежний способ: готовая команда генератора (синтетический поток по умолчанию, испытания).
+        if ingest is None:
+            command = command or video.stream_sender_args(codec, width, height, fps)
+            ingest = Ingest.fixed(command, log)
+        self.command, self.ingest = command, ingest
         self.params = {"codec": codec, "width": width, "height": height, "fps": fps}
         self.ctx = tls.make_context(cfg, server=True)
         self.lock = threading.Lock()
@@ -221,6 +225,7 @@ class VideoServer:
     def start(self):
         self.lsock = socket.create_server((self.bind, self.port), reuse_port=False)
         self.port = self.lsock.getsockname()[1]
+        self.ingest.start()
         threading.Thread(target=self._accept_loop, name="video-accept", daemon=True).start()
         return self
 
@@ -238,6 +243,7 @@ class VideoServer:
         except OSError:
             pass
         self.drop("служба останавливается")
+        self.ingest.close()
 
     @property
     def active(self):
@@ -258,8 +264,9 @@ class VideoServer:
         recent = [t for t in self.frame_times if now - t <= 5.0]
         s = self.session
         return {**self.st, "active": s is not None, "peer": s.addr if s else None, "port": self.port,
-                "transport": "tls1.3-mutual", **self.params,
-                "sender_fps_5s": round(len(recent) / 5.0, 1) if recent else 0.0, "last_reject": self.last_reason}
+                "transport": "tls1.3-mutual", **self.params, "sender_restarts": self.ingest.restarts,
+                "sender_fps_5s": round(len(recent) / 5.0, 1) if recent else 0.0, "last_reject": self.last_reason,
+                "source": self.ingest.status()}
 
     def _accept_loop(self):
         while not self.stop_ev.is_set():
@@ -309,10 +316,14 @@ class VideoServer:
 
 
 class _ServerSession:
+    """Один видеосеанс: RTP от видеоприёма (Ingest) → TLS. Генератор запускает, перезапускает и останавливает Ingest:
+    его завершение или отсутствие источника сеанс не рвёт (пульт видит «нет видео», состояние входа — в телеметрии),
+    а при возврате устройства/сигнала поток продолжается в том же сеансе."""
+
     def __init__(self, server, sock, addr):
         self.srv, self.sock, self.addr = server, sock, addr
-        self.proc = None
         self.closed = threading.Event()
+        self.token = None
 
     def close(self):
         self.closed.set()
@@ -324,51 +335,32 @@ class _ServerSession:
             self.sock.close()
         except OSError:
             pass
-        self._kill()
-
-    def _kill(self):
-        p, self.proc = self.proc, None
-        if p is not None:
-            try:
-                os.killpg(p.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-            try:
-                p.wait(timeout=3)
-            except Exception:                            # noqa: BLE001 — процесс уже снят killpg
-                pass
+        if self.token is not None:
+            self.srv.ingest.detach(self.token)
 
     def run(self):
         srv = self.srv
+        ingest = srv.ingest
         try:
             self.sock.settimeout(SEND_TIMEOUT_S)
             self.sock.sendall(frame(T_INFO, json.dumps(srv.params).encode()))
-            self.proc = video.spawn(srv.command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            pipe = self.proc.stdout.fileno()
-            parser = Rfc4571()
+            self.token = ingest.attach()
+            wake = ingest.wake_fd
             while not self.closed.is_set():
                 ready = [self.sock] if self.sock.pending() else []
                 if not ready:
-                    r, _, _ = select.select([self.sock, pipe], [], [], 0.5)
+                    r, _, _ = select.select([self.sock, wake], [], [], 0.5)
                     ready = r
-                if pipe in ready:
-                    data = os.read(pipe, 65536)
-                    if not data:
-                        raise VideoLinkError("генератор видео завершился")
-                    now = time.time()
-                    out = bytearray()
-                    for pkt in parser.feed(data):
-                        info = rtp_info(pkt)
-                        if info is None:
-                            continue
-                        if info[1]:
-                            srv.st["frames"] += 1
-                            srv.frame_times.append(time.monotonic())
-                        srv.st["packets"] += 1
-                        srv.st["bytes"] += len(pkt)
-                        out += frame(T_RTP, TS.pack(now) + pkt)
-                    if out:
-                        self.sock.sendall(out)
+                out = bytearray()
+                for sent, pkt in ingest.take():
+                    if pkt[1] & 0x80:
+                        srv.st["frames"] += 1
+                        srv.frame_times.append(time.monotonic())
+                    srv.st["packets"] += 1
+                    srv.st["bytes"] += len(pkt)
+                    out += frame(T_RTP, TS.pack(sent) + pkt)
+                if out:
+                    self.sock.sendall(out)
                 if self.sock in ready:
                     kind, payload = read_frame(self.sock)
                     if kind == T_PING and len(payload) == TS.size:

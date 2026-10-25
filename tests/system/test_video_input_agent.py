@@ -31,7 +31,10 @@ def test_agent_without_uvc_device_keeps_running_and_reports_reason(tmp_path):
                     if b'"status"' in raw:
                         return json.loads(raw)
             msg = wait_for(status, 5)
-        assert msg and msg["body"]["video"] == {"enabled": False, "active": False, "codec": None, "port": 5600}
+        vid = msg["body"]["video"]
+        inp = vid.pop("source")                                  # видеоприём: состояние входа (необязательное поле)
+        assert vid == {"enabled": False, "active": False, "codec": None, "port": 5600}
+        assert inp["state"] == "no-device" and inp["type"] == "uvc" and inp["input"] == "usb" and "ffff:fffe not found" in inp["error"]
         assert a.proc.poll() is None
     finally:
         a.stop()
