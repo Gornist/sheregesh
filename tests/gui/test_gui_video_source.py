@@ -20,6 +20,7 @@ import pytest
 from PySide6.QtCore import QRectF
 from PySide6.QtQuickControls2 import QQuickStyle
 
+from sheregesh import PROTOCOL_VERSION
 from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations
 from sheregesh_console.backend import Backend
 from sheregesh_console.qtwait import pump, wait_until
@@ -71,7 +72,7 @@ STATES = {
                  "Streaming/Channels/101 (Connection refused)"}}, "session_info": {}},
 }
 CONNECTED = {"peerLink": "CONNECTED", "linkView": "CONNECTED", "peerState": "connected", "peerDetail": "ok",
-             "peerDevice": "remote-emu-01", "peerSoftware": "0.1.0.dev0", "peerRole": "remote", "peerProtocol": "1.1",
+             "peerDevice": "remote-emu-01", "peerSoftware": "0.1.0.dev0", "peerRole": "remote", "peerProtocol": PROTOCOL_VERSION,
              "linkSecure": True, "linkTls": "TLSv1.3", "linkHost": "192.168.1.171", "linkRttMs": 1.8,
              "peerHeartbeatAge": 0.2, "remoteAvailable": True, "remoteTempSoc": 47.3, "remotePowerPercent": 85,
              "remoteUptime": 1234, "peerMode": "network"}
