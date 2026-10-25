@@ -33,6 +33,10 @@ def test_agent_without_uvc_device_keeps_running_and_reports_reason(tmp_path):
             msg = wait_for(status, 5)
         vid = msg["body"]["video"]
         inp = vid.pop("source")                                  # видеоприём: состояние входа (необязательное поле)
+        srcs = vid.pop("sources")                                # S4: список источников; выбранный есть, но недоступен
+        assert {"id": "v4l2:ffff:fffe", "input": "usb", "name": "ffff:fffe", "available": False, "active": True} in srcs
+        assert srcs[0] == {"id": "synthetic", "input": "synthetic", "name": "SHEREGESH synthetic test pattern",
+                           "available": True, "active": False}
         assert vid == {"enabled": False, "active": False, "codec": None, "port": 5600}
         assert inp["state"] == "no-device" and inp["type"] == "uvc" and inp["input"] == "usb" and "ffff:fffe not found" in inp["error"]
         assert a.proc.poll() is None

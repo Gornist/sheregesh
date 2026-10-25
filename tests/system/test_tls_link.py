@@ -60,7 +60,7 @@ def test_mutual_tls_session_telemetry_events_and_acks(lab):
         assert "tls=1.3 mutual peer=urn:sheregesh:console:PI1SERIAL" in a.banner[-1]
         assert wait_for(lambda: c.snapshot()["phase"] == "connected", 10), c.snapshot()
         snap = c.snapshot()
-        assert snap["tls"] == "TLSv1.3" and snap["session"] == "1.1" and snap["secure"]
+        assert snap["tls"] == "TLSv1.3" and snap["session"] == "1.2" and snap["secure"]
         assert snap["peer"]["device_id"] == "remote-emu-01"
         assert wait_for(lambda: (c.snapshot()["telemetry"] or {}).get("link", {}).get("events_acked", 0) >= 3, 10)
         link = c.snapshot()["telemetry"]["link"]

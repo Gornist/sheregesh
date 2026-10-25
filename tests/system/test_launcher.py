@@ -39,7 +39,7 @@ def test_one_command_starts_two_processes_and_stops_cleanly():
         assert wait_for(lambda: not children_of(p.pid), 5), f"остались процессы: {children_of(p.pid)}"
         out = p.stdout.read()
         assert "Traceback" not in out, out
-        assert "hello from console proto=1.1 -> ok" in out
+        assert "hello from console proto=1.2 -> ok" in out
     finally:
         if p.poll() is None:
             os.killpg(p.pid, signal.SIGKILL)

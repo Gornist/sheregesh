@@ -11,8 +11,11 @@
 (--video-source rtsp) — через тот же конвейер и тот же канал. Сетевой профиль: видеоприём (sheregesh.videoinput,
 sheregesh.videoingest) переживает отключение устройства и потерю сигнала, состояние входа — в status.video.source;
 описание источника можно держать в video-input.json рядом с link.json (перечитывается по SIGHUP).
-От пульта принимает только hello, ack и bye; остальные сообщения не исполняются, а учитываются.
-Команд ОС, управления устройствами и радиоинтерфейсов нет.
+Список источников (synthetic, найденные устройства V4L2, адреса rtsp_urls из video-input.json) — в
+status.video.sources; пульт выбирает источник сообщением video-select (протокол 1.2), выбор сохраняется в
+video-input.json, результат — в status.video.select.
+От пульта принимает только hello, ack, bye и (сессия 1.2) video-select; остальные сообщения не исполняются, а
+учитываются. Команд ОС, управления устройствами и радиоинтерфейсов нет.
 
 Неисправности для испытаний задаются расписанием (--fault AT:KIND[:ARG]), время — в секундах от старта:
   silence:DUR   не отправлять heartbeat и status DUR секунд (соединение не рвётся)
@@ -34,7 +37,7 @@ import sys
 import time
 from pathlib import Path
 
-from sheregesh import PROTOCOL_VERSION, __version__, sdnotify, video, videoinput
+from sheregesh import PROTOCOL_VERSION, __version__, sdnotify, video, videoinput, videosources
 from sheregesh.videoingest import Ingest
 from sheregesh.videolink import VideoServer
 from sheregesh.link import tls
@@ -74,6 +77,10 @@ class Agent:
         # (sheregesh.videoingest) — устройство ищется заново после отключения, состояние входа — в телеметрии.
         # Локальный профиль (--video, UDP 127.0.0.1): источник находится один раз при запуске, как в S3.3.
         self.video_spec = video_spec(args)
+        self.video_rtsp = videosources.rtsp_items(read_video_config(args), self.video_spec)
+        self.video_select = None                    # результат последнего video-select (status.video.select)
+        self.scan_kw = {k: v for k, v in (("sys_root", args.video_sys_root), ("dev_root", args.video_dev_root)) if v}
+        self.catalog = videosources.Catalog(lambda: (self.video_spec, self.video_rtsp), self.scan_kw)
         self.video_src, self.video_src_error = None, ""
         if self.video_spec["source"] != "synthetic":
             src = self.open_video_source()
@@ -107,7 +114,8 @@ class Agent:
     def open_video_source(self, spec=None):
         a = self.args
         return videoinput.open_source(spec or self.video_spec,
-                                      synthetic=lambda: video.synthetic(a.video_width, a.video_height, a.video_fps))
+                                      synthetic=lambda: video.synthetic(a.video_width, a.video_height, a.video_fps),
+                                      **self.scan_kw)
 
     def video_ingest(self):
         """Видеоприём сетевого профиля: источник по описанию, конвейер — тот же stream_sender_args (сквозной или
@@ -125,13 +133,54 @@ class Agent:
         except ValueError as e:
             log(f"video config not reloaded: {e}")
             return
+        self.video_rtsp = videosources.rtsp_items(read_video_config(self.args), spec)
         if spec == self.video_spec:
             log("video config unchanged")
             return
         log(f"video source: {describe_spec(self.video_spec)} -> {describe_spec(spec)}")
+        self.apply_video_spec(spec)
+
+    def apply_video_spec(self, spec):
+        """Сменить источник: сетевой профиль — видеоприём (старый конвейер останавливается до запуска нового),
+        локальный (UDP) — источник открывается заново, отправитель перезапускается следующим тиком."""
         self.video_spec = spec
         if self.vserver is not None:
             self.vserver.ingest.switch(lambda: self.open_video_source(spec))
+        elif self.args.video:
+            self.video_stop()
+            src = self.open_video_source(spec) if spec["source"] != "synthetic" else None
+            self.video_src, self.video_src_error = (src, "") if src is None or src.available else (None, src.error)
+            if self.video_codec is None and (src is None or src.available):
+                self.video_codec = video.choose_codec(self.args.video_codec)
+
+    def select_video(self, body):
+        """video-select (протокол 1.2): id из status.video.sources → смена источника и сохранение выбора в
+        video-input.json. Неизвестный id — ошибка в status.video.select, источник не меняется."""
+        sid, req = body.get("id"), body.get("req")
+        req = req if isinstance(req, int) and not isinstance(req, bool) and 0 <= req < 2 ** 31 else 0
+        shown = sid[:96] if isinstance(sid, str) else ""
+        if self.vserver is None and not self.args.video:
+            res = {"result": "error", "error": "video disabled on remote unit"}
+        else:
+            spec = self.catalog.resolve(sid)
+            if spec is None:
+                res = {"result": "unknown-id", "error": f"unknown video source id {shown!r}"}
+            else:
+                res = {"result": "ok", "error": ""}
+                if spec != self.video_spec:
+                    log(f"video source (console): {describe_spec(self.video_spec)} -> {describe_spec(spec)}")
+                    self.apply_video_spec(spec)
+                path = video_config_path(self.args)
+                try:
+                    if path is None:
+                        raise ValueError("no video config file (--video-config / --link-config)")
+                    videosources.save_spec(path, spec, SPEC_KEYS)
+                    if self.args.video_source is not None:
+                        res["error"] = "saved, but --video-source overrides video-input.json at start"
+                except (OSError, ValueError) as e:
+                    res["error"] = f"selection not saved: {e}"
+        self.video_select = {"req": req, "id": shown, **res}
+        log(f"video select {shown!r} (req {req}): {res['result']}{': ' + res['error'] if res['error'] else ''}")
 
     def video_status(self):
         """status.video: прежние поля + необязательный объект source (видеоприём; протокол 1.1 без изменений: старый
@@ -142,6 +191,9 @@ class Agent:
                 "codec": self.video_codec, "port": self.video_port})
         if self.vserver is not None or self.video_codec or self.video_src_error:
             out["source"] = self.video_source_status()
+            out["sources"] = self.catalog.snapshot()     # S4: список источников (необязательное поле)
+            if self.video_select is not None:
+                out["select"] = dict(self.video_select)
         return out
 
     def video_source_status(self):
@@ -276,6 +328,7 @@ class Agent:
             self.vserver.drop("сеанс управления заменён")
         self.writer = writer
         self.hb_wait = None
+        self.video_select = None                    # результат выбора — только для сеанса, который его запросил
         await self.send("hello", self.info())
         dec = Decoder()
         try:
@@ -376,6 +429,8 @@ class Agent:
             if self.writer:
                 self.writer.close()
                 self.writer = None
+        elif mtype == "video-select" and mtype in TYPES.get(self.session or "", ()):
+            self.select_video(body)
         elif mtype == "ack" and mtype in TYPES.get(self.session or self.proto, ()):
             sent = self.sent.pop(body.get("seq"), None) if isinstance(body.get("seq"), int) else None
             if sent:
@@ -420,7 +475,8 @@ class Agent:
             while self.faults and self.faults[0][0] <= t:
                 _, kind, arg = self.faults.pop(0)
                 await self.apply_fault(kind, arg)
-            if self.video_codec and self.video_proc is None and t >= self.video_off_until:
+            if self.video_codec and self.video_proc is None and t >= self.video_off_until and \
+                    (self.video_src is not None or self.video_spec["source"] == "synthetic"):
                 self.video_start()
             if self.video_proc is not None and self.video_proc.poll() is not None:
                 log("video sender exited; restarting")
@@ -468,6 +524,8 @@ class Agent:
             why = "; ".join(video.PROBE_FAILURES[-4:]) or ("no gst-launch-1.0/videotestsrc/udpsrc" if not video.available()
                                                          else "no working codec")
             print(f"VIDEO unavailable: {why}", flush=True)
+        if self.vserver is not None or self.args.video:
+            self.catalog.start()
         sdnotify.ready(f"listening {self.args.host}:{port}" + (" mTLS" if self.ctx else " loopback"))
         async with server:
             await asyncio.gather(server.serve_forever(), self.ticker())
@@ -489,10 +547,20 @@ def video_config_path(args):
     return None
 
 
+def read_video_config(args):
+    """Содержимое video-input.json (словарь) или {} — для списка адресов rtsp_urls (ошибки журналирует video_spec)."""
+    path = video_config_path(args)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8")) if path is not None and path.is_file() else {}
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
 def video_spec(args, reload=False):
     """Описание источника (словарь для videoinput.open_source). Явный --video-source — из аргументов; иначе файл
     --video-config / video-input.json рядом с link.json (если есть); иначе синтетический. reload=True — только файл
-    (SIGHUP), ошибка — ValueError."""
+    (SIGHUP): нет файла — синтетический источник; ошибка — ValueError."""
     path = video_config_path(args)
     if args.video_source is None and path is not None and path.is_file():
         try:
@@ -509,7 +577,9 @@ def video_spec(args, reload=False):
         if reload:
             raise ValueError(f"{path}: expected a JSON object")
     elif reload:
-        raise ValueError("no --video-config file" if path is None else f"{path}: not found or --video-source given")
+        if path is None or args.video_source is not None:
+            raise ValueError("no --video-config file" if path is None else "--video-source given: file not used")
+        return {"source": "synthetic"}               # файл удалён — источник по умолчанию (синтетический)
     source = args.video_source or "synthetic"
     mode = args.video_mode or (f"{args.video_width}x{args.video_height}@{args.video_fps}" if source == "uvc" else "auto")
     spec = {"source": source}
@@ -567,6 +637,8 @@ def main(argv=None):
                          "video-input.json рядом с --link-config, если есть; перечитывается по SIGHUP")
     ap.add_argument("--net-video-port", type=int, default=None, help="порт видеоканала (по умолчанию video_port профиля)")
     ap.add_argument("--video-command", nargs="+", default=None, help=argparse.SUPPRESS)   # испытания: подмена генератора
+    ap.add_argument("--video-sys-root", default=None, help=argparse.SUPPRESS)  # испытания: поддельные sysfs и /dev
+    ap.add_argument("--video-dev-root", default=None, help=argparse.SUPPRESS)
     ap.add_argument("--link-config", help="сетевой лабораторный профиль: TLS 1.3 + взаимная аутентификация (S3.1)")
     ap.add_argument("--event-interval", type=float, default=0, help="синтетическое событие EMU-TEST каждые N с (0 — нет)")
     ap.add_argument("--status-file", help="состояние канала в JSON для sheregesh-health")
@@ -591,6 +663,7 @@ def main(argv=None):
 
     def stop(*_):
         agent.video_stop()
+        agent.catalog.close()
         if agent.vserver is not None:
             agent.vserver.close()
         sys.exit(0)
