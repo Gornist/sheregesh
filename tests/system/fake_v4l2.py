@@ -8,8 +8,10 @@ bcm2835-codec /dev/video10, 11, 12, 18, 31; два экземпляра bcm2835-
 ioctl отвечает настоящими структурами videodev2.h, поэтому разбор в sheregesh.videoinput проверяется полностью.
 Открытие служебного узла (драйверы videoinput.AUX_DRIVERS) — ошибка испытания: такой узел записывается в aux_opened,
 и open() падает. Аналоговые захваты (usbtv, stk1160): inputs — входы VIDIOC_ENUMINPUT (status меняется на ходу:
-потеря сигнала), standards — VIDIOC_ENUMSTD, std/querystd — VIDIOC_G_STD/QUERYSTD; без frame-размеров (как usbtv)
-VIDIOC_ENUM_FRAMESIZES отвечает ENOTTY.
+потеря сигнала; VIDIOC_S_INPUT переключает и записывается в s_input), standards — VIDIOC_ENUMSTD, std/querystd —
+VIDIOC_G_STD/QUERYSTD (querystd_ioctl=False — драйвер без QUERYSTD, как usbtv: ENOTTY); без frame-размеров (как usbtv)
+VIDIOC_ENUM_FRAMESIZES отвечает ENOTTY, без интервалов (как em28xx: sizes_ioctl есть, intervals_ioctl=False) —
+VIDIOC_ENUM_FRAMEINTERVALS отвечает ENOTTY.
 Сбои: open_errors {videoN: errno} — отказ open(); hooks — функции hook(videoN, request), вызываемые перед каждым ioctl
 (отключить устройство посреди опроса, вернуть ошибку).
 """
@@ -60,13 +62,14 @@ class FakeV4L2:
         self.open_errors = {}
         self.aux_opened = []
         self.hooks = []
+        self.s_input = []                      # [(videoN, index)] — вызовы VIDIOC_S_INPUT
         self.dev.mkdir(parents=True, exist_ok=True)
         (self.sys / "class" / "video4linux").mkdir(parents=True, exist_ok=True)
 
     # ---------- дерево ----------
     def add(self, node, driver, name, index=0, usb=None, caps=vi.V4L2_CAP_VIDEO_CAPTURE | vi.V4L2_CAP_STREAMING,
             formats=(), by_id=None, bus="usb-0000:01:00.0-1.2", by_path=None, inputs=None, standards=None, std=0,
-            querystd=None, sizes_ioctl=True):
+            querystd=None, sizes_ioctl=True, querystd_ioctl=True, intervals_ioctl=True):
         if usb:
             port = self._usb.setdefault(usb, f"1-1.{len(self._usb) + 2}")    # узлы одного устройства — один порт
             usbdev = self.sys / "devices" / "platform" / "scb" / "usb1" / "1-1" / port
@@ -97,7 +100,8 @@ class FakeV4L2:
                 (self.dev / "v4l" / kind / link).symlink_to(f"../../{node}")
         self.devices[node] = {"driver": driver, "name": name, "caps": caps, "formats": list(formats), "bus": bus,
                               "real": real, "by_id": by_id, "by_path": by_path, "inputs": inputs, "input": 0,
-                              "standards": standards, "std": std, "querystd": querystd, "sizes_ioctl": sizes_ioctl}
+                              "standards": standards, "std": std, "querystd": querystd, "sizes_ioctl": sizes_ioctl,
+                              "querystd_ioctl": querystd_ioctl, "intervals_ioctl": intervals_ioctl}
 
     def remove(self, node):
         """Отключение USB: узел исчезает из sysfs и /dev."""
@@ -169,6 +173,15 @@ class FakeV4L2:
             if d["inputs"] is None:
                 raise OSError(errno.ENOTTY, "Inappropriate ioctl")
             return vi.INT.pack(d["input"])
+        if req == vi.VIDIOC_S_INPUT:
+            if d["inputs"] is None:
+                raise OSError(errno.ENOTTY, "Inappropriate ioctl")
+            index = vi.INT.unpack(buf)[0]
+            if not 0 <= index < len(d["inputs"]):
+                raise OSError(errno.EINVAL, "Invalid argument")
+            d["input"] = index
+            self.s_input.append((self.fds.get(fd), index))
+            return buf
         if req == vi.VIDIOC_ENUMSTD:
             index = vi.STANDARD.unpack(buf)[0]
             if not d["standards"]:
@@ -177,6 +190,8 @@ class FakeV4L2:
                 raise OSError(errno.EINVAL, "Invalid argument")
             sid, sname, num, den, lines = d["standards"][index]
             return vi.STANDARD.pack(index, sid, sname.encode(), num, den, lines)
+        if req == vi.VIDIOC_QUERYSTD and not d["querystd_ioctl"]:
+            raise OSError(errno.ENOTTY, "Inappropriate ioctl")
         if req in (vi.VIDIOC_G_STD, vi.VIDIOC_QUERYSTD):
             value = d["std"] if req == vi.VIDIOC_G_STD else d["querystd"]
             if not value:
@@ -196,6 +211,8 @@ class FakeV4L2:
                 raise OSError(errno.EINVAL, "Invalid argument")
             (w, h), _ = sizes[index]
             return vi.FRMSIZE.pack(index, pixfmt, vi.V4L2_FRMSIZE_TYPE_DISCRETE, w, h, 0, 0, 0, 0)
+        if req == vi.VIDIOC_ENUM_FRAMEINTERVALS and not d["intervals_ioctl"]:
+            raise OSError(errno.ENOTTY, "Inappropriate ioctl")
         if req == vi.VIDIOC_ENUM_FRAMEINTERVALS:
             index, pixfmt, w, h, *_ = vi.FRMIVAL.unpack(buf)
             code, kind, sizes = self._fmt(d, pixfmt)

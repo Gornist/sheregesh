@@ -66,19 +66,22 @@ def test_usbtv_ntsc_explicit_and_auto(v4l2):
     assert "SECAM" in vi.open_v4l2("1b71:3002", standard="secam", **v4l2.scan_kw()).error.upper()
 
 
-def test_auto_standard_without_signal_falls_back_to_current_std(v4l2):
-    add_usbtv(v4l2, querystd=None)                       # QUERYSTD: ENODATA (нет сигнала) → G_STD (PAL)
-    assert vi.open_v4l2(**v4l2.scan_kw()).standard == "PAL"
+def test_auto_standard_without_signal_falls_back_to_default_not_current_std(v4l2):
+    """QUERYSTD: ENODATA (нет сигнала) → DEFAULT_STANDARD (PAL), а не G_STD: G_STD — умолчание драйвера (NTSC)."""
+    add_usbtv(v4l2, querystd=None)
+    v4l2.devices["video0"]["std"] = vi.V4L2_STD_NTSC
+    src = vi.open_v4l2(**v4l2.scan_kw())
+    assert src.standard == "PAL" and src.standard_source == "default"
 
 
 def test_stk1160_uyvy(v4l2):
     v4l2.add("video0", "stk1160", "stk1160", 0, ("05e1", "0408", ""), formats=[("UYVY", "discrete", [])],
              inputs=[{"name": "Composite0", "capabilities": vi.V4L2_IN_CAP_STD}], standards=[PAL_STD, NTSC_STD],
-             std=vi.V4L2_STD_NTSC, sizes_ioctl=False)
+             std=vi.V4L2_STD_NTSC, querystd=vi.V4L2_STD_NTSC, sizes_ioctl=False)
     src = vi.open_v4l2(**v4l2.scan_kw())
     assert src.input_type == "CVBS" and src.standard == "NTSC"
     assert "video/x-raw,format=UYVY,width=720,height=480,framerate=30000/1001" in src.capture()
-    assert src.decode() == []                                                   # сырой формат: без декодера
+    assert src.decode() == ["deinterlace", "mode=auto", "method=linear", "fields=top", "!"]   # сырой: без декодера
 
 
 def test_open_uvc_still_ignores_non_uvc_capture(v4l2):
