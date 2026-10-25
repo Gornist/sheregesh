@@ -46,3 +46,29 @@ persistent journald пишет только в `/run`, а оно потерян�
 **Что нужно для установления причины:** вывод консоли загрузки B — последовательная консоль `ttyAMA0` 115200
 (GPIO14/15, USB-UART) или HDMI-монитор у pi2 во время следующей пробной загрузки. Новых tryboot без этого не
 выполнять: два цикла исправления, разрешённые спринтом, исчерпаны.
+
+## Причина установлена (E2E-13, 2026-10-25): цикл упорядочения systemd из-за `sheregesh-var-seed.service`
+- Юнит (`tools/image/units/sheregesh-var-seed.service`, есть в образах цикла 1 и 2, нет в 57e8fe4):
+  `After=local-fs.target` + `Before=… systemd-sysusers.service`. В trixie `systemd-sysusers` → Before
+  `systemd-tmpfiles-setup-dev` → Before `local-fs-pre.target` → Before `local-fs.target` → Before var-seed → Before
+  sysusers: **цикл**. systemd разрывает его, удаляя одно задание из цикла; какое — зависит от порядка обхода и от
+  загрузки к загрузке разное.
+- **На плате (цикл 1, B, журнал загрузки `672c5bc6` в журнале A):** `Found ordering cycle … Job
+  systemd-sysusers.service/start deleted` — удалено безвредное задание, B дошёл до HEALTH_PENDING
+  ([`analysis/b-cycle1-journal-order.txt`](analysis/b-cycle1-journal-order.txt)). На A (57e8fe4) циклов нет.
+- **Без платы (образ цикла 2, `systemd-analyze verify`, 8 прогонов):** цикл в каждом прогоне, удаляемое задание
+  меняется: sysusers, sheregesh-var-seed, tmpfiles-setup-dev, local-fs-pre.target и **local-fs.target**
+  ([`analysis/cycle-c2.txt`](analysis/cycle-c2.txt)); образ CI 57e8fe4 — циклов нет
+  ([`analysis/cycle-ci.txt`](analysis/cycle-ci.txt)); образ цикла 2 с исправленным юнитом — циклов нет
+  ([`analysis/cycle-c2-patched.txt`](analysis/cycle-c2-patched.txt)).
+- Это объясняет, почему побайтно одинаковые (кроме владельцев) образы циклов 1 и 2 повели себя по-разному.
+  Удаление `local-fs.target`/`local-fs-pre.target` ломает порядок монтирования `/persistent`, `/var` и привязок
+  (machine-id-sync не выполнился → случайный machine-id → новый адрес DHCP; журнал не попал на persistent; службы,
+  ssh — нет). Какое именно задание удалено в загрузке цикла 2 — не восстановить (журнал был только в `/run`).
+- Атрибуты образов (полный дамп [`analysis/attr_dump.sh`](analysis/attr_dump.sh)): xattr, capabilities (`getcap -r`:
+  одна запись `gst-ptp-helper`), suid/sgid/sticky (19 путей), `lsattr`, initramfs внутри `boot.img`, ядро, cmdline —
+  в циклах 1 и 2 идентичны ([`analysis/attr-summary.txt`](analysis/attr-summary.txt)); `chown -R` атрибутов не сбросил.
+- **Исправление:** `systemd-sysusers.service` убран из `Before=` (sysusers на корне только для чтения всё равно
+  пропускается — `ConditionNeedsUpdate=/etc` — и пишет /etc, не /var). Гейты: `verify_image` `boot.order`
+  (статически, в сборке и CI) и `tools/image/order_check.sh` (systemd-analyze на корне образа, обязательный шаг
+  перед пакетом). L3 (файловое испытание) загрузку не выполняет и цикл видеть не может.

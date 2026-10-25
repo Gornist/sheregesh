@@ -6,12 +6,16 @@
 # При первой загрузке такого слота недостающее дополняется из образца, снятого при сборке этого же образа
 # (/usr/share/sheregesh/var-seed.tar.gz, корень только для чтения). Существующие файлы НЕ перезаписываются:
 # перенесённая конфигурация пульта новее образца. Служба срабатывает только при пустом /var (нет dpkg/status).
+# Порядок: только после local-fs.target и только перед тем, что само идёт после него. Before=systemd-sysusers давал
+# цикл (sysusers → tmpfiles-setup-dev → local-fs-pre → local-fs → var-seed → sysusers); systemd разрывает цикл,
+# удаляя случайное задание — в т. ч. local-fs.target (OTA CLOSURE, цикл 2: слот B без /persistent и служб).
+# Проверка — tools/image/order_check.sh (systemd-analyze verify на корне образа) и verify_image boot.order.
 [Unit]
 Description=Sheregesh: seed per-slot /var after A/B update (fill missing, keep existing)
 DefaultDependencies=no
 RequiresMountsFor=/var
 After=local-fs.target
-Before=sysinit.target systemd-tmpfiles-setup.service systemd-sysusers.service
+Before=sysinit.target systemd-tmpfiles-setup.service
 ConditionPathExists=!/var/lib/dpkg/status
 ConditionPathExists=/usr/share/sheregesh/var-seed.tar.gz
 

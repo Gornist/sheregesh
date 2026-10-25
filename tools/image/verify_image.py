@@ -165,6 +165,24 @@ def ls_names(root, directory):
     return [n for n in names if n not in ("", ".", "..")]
 
 
+# Юниты systemd (trixie), упорядоченные до local-fs-pre.target. Юнит с After=local-fs.target (или RequiresMountsFor
+# на смонтированный в local-fs путь) не может стоять Before= ни одного из них — это цикл упорядочения.
+EARLY_UNITS = ("local-fs-pre.target", "systemd-sysusers.service", "systemd-tmpfiles-setup-dev.service",
+               "systemd-tmpfiles-setup-dev-early.service", "systemd-udevd.service", "systemd-remount-fs.service",
+               "systemd-fsck-root.service")
+
+
+def boot_order_violations(unit_text):
+    """Ранние юниты из Before= юнита, который идёт после local-fs.target (After= или RequiresMountsFor=)."""
+    keys = {}
+    for line in unit_text.splitlines():
+        k, sep, v = line.strip().partition("=")
+        if sep:
+            keys.setdefault(k, []).extend(v.split())
+    late = "local-fs.target" in keys.get("After", []) or bool(keys.get("RequiresMountsFor"))
+    return [u for u in keys.get("Before", []) if late and u in EARLY_UNITS]
+
+
 def deploy_checks(rep, root, data, dev, groups):
     """S3.1-DEPLOY: обновления без перестановки microSD — launcher, установщик, агент OTA, ключ подписи, polkit."""
     wrappers = {w: root.cat(f"/usr/bin/{w}") for w in ("sheregesh-console", "sheregesh-remote-emu")}
@@ -194,6 +212,10 @@ def deploy_checks(rep, root, data, dev, groups):
     rep.add("deploy.varseed", "образец /var на системном разделе и служба sheregesh-var-seed (S3.2-OTA: /var слота "
             "после A/B)", root.exists("/usr/share/sheregesh/var-seed.tar.gz") and "--skip-old-files" in seed_unit
             and "sheregesh-var-seed.service" in sysinit)
+    early = boot_order_violations(seed_unit)
+    rep.add("boot.order", "sheregesh-var-seed не упорядочена раньше юнитов, идущих до local-fs-pre.target "
+            "(цикл упорядочения → systemd удаляет случайное задание, OTA CLOSURE цикл 2)",
+            bool(seed_unit) and not early, ", ".join(early) or "циклов через ранние юниты нет")
     build = root.cat("/usr/share/sheregesh/build.json")
     rep.add("deploy.build", "версия системной части для OTA (/usr/share/sheregesh/build.json)",
             '"ota_version"' in build, build.replace("\n", " ")[:120])

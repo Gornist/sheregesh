@@ -276,6 +276,21 @@ class DeployImageTest(unittest.TestCase):
         root.files[vi.SIGNERS] = "x"
         self.assertEqual(self.run_checks(root, data, False)["deploy.absent"]["status"], "FAIL")
 
+    def test_var_seed_has_no_ordering_cycle(self):
+        """OTA CLOSURE цикл 2: Before=systemd-sysusers при After=local-fs.target — цикл, systemd удалял случайное
+        задание (в т. ч. local-fs.target) — слот B без /persistent. Юнит репозитория и проверка образа."""
+        unit = (ROOT / "tools/image/units/sheregesh-var-seed.service").read_text()
+        self.assertEqual(vi.boot_order_violations(unit), [])
+        root, data = self.image_root(dev=True)
+        path = "/usr/lib/systemd/system/sheregesh-var-seed.service"
+        self.assertEqual(self.run_checks(root, data, True)["boot.order"]["status"], "PASS")
+        root.files[path] = root.files[path].replace("Before=sysinit.target systemd-tmpfiles-setup.service",
+                                                    "Before=sysinit.target systemd-tmpfiles-setup.service "
+                                                    "systemd-sysusers.service")
+        r = self.run_checks(root, data, True)["boot.order"]
+        self.assertEqual(r["status"], "FAIL")
+        self.assertIn("systemd-sysusers.service", r["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()
