@@ -455,7 +455,7 @@ class Ingest:
         sheregesh-health. Основные поля пульта: input (synthetic|hdmi|cvbs|usb|v4l2|rtsp), state (no-device|
         no-signal|starting|streaming|connect-error|error), device, error, width, height, fps (номинальные режима;
         у RTSP — из потока). Дополнительно: fps_actual (фактическая за 3 с), stream_width/height (из SPS/JPEG),
-        type, name, id, format, standard, restarts, since_s. Без учётных данных."""
+        type, name, id, format, standard, restarts, since_s, transport, transport_mode (RTSP). Без учётных данных."""
         src = self._shown
         mode = getattr(src, "mode", None)
         fmt = ""
@@ -472,4 +472,8 @@ class Ingest:
                 "fps": (mode.nominal_fps if mode is not None and hasattr(mode, "nominal_fps") else 0.0) or actual,
                 "fps_actual": actual, "stream_width": self.stream.get("width", 0),
                 "stream_height": self.stream.get("height", 0), "standard": getattr(src, "standard", "") or "",
-                "restarts": self.restarts, "since_s": round(self._clock() - self._since, 1)}
+                "restarts": self.restarts, "since_s": round(self._clock() - self._since, 1),
+                # RTSP (S5): фактический транспорт tcp|udp, пока поток идёт и транспорт однозначен, иначе «»;
+                # transport_mode — заданный auto|tcp|udp (у прочих источников оба «»)
+                "transport": (getattr(src, "transport", "") or "") if self.state == "streaming" else "",
+                "transport_mode": getattr(src, "transport_mode", "") or ""}

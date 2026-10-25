@@ -172,8 +172,9 @@ def test_rtsp_source_redacts_credentials_and_builds_pipeline():
     s = vi.RTSPSource("rtsp://admin:secret@192.168.77.50:8554/stream1", "h264", latency_ms=100, timeout_s=3)
     assert s.id == "rtsp:192.168.77.50:8554/stream1" and s.device == "rtsp://192.168.77.50:8554/stream1"
     assert "secret" not in str(s.info()) and s.info()["input_type"] == "RTSP" and s.info()["resolution"] == ""
-    assert s.capture() == ["rtspsrc", "location=rtsp://admin:secret@192.168.77.50:8554/stream1", "protocols=tcp",
-                           "latency=100", "tcp-timeout=3000000", "timeout=3000000", "!", "rtph264depay", "!"]
+    assert s.capture() == ["rtspsrc", "location=rtsp://admin:secret@192.168.77.50:8554/stream1",
+                           "protocols=udp+tcp", "latency=100", "tcp-timeout=3000000", "timeout=3000000", "!",
+                           "rtph264depay", "!"]                                  # transport auto (S5): UDP, затем TCP
     assert vi.RTSPSource("rtsp://cam/x", "mjpeg").capture()[-2] == "rtpjpegdepay"
     assert vi.RTSPSource("rtsp://cam/x").port == 554
 

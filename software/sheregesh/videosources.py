@@ -31,12 +31,13 @@ MAX_SOURCES = 16
 INTERVAL_S = 2.0
 ID_RE = re.compile(r"[A-Za-z0-9._:@+/-]{1,96}")
 INPUTS = ("synthetic", "hdmi", "cvbs", "usb", "v4l2", "rtsp")
-RTSP_KEYS = ("codec", "latency_ms", "timeout_s")
+RTSP_KEYS = ("codec", "transport", "latency_ms", "timeout_s")
 
 
 def rtsp_items(raw, spec=None):
-    """Адреса RTSP: [(n, {"url", "codec"?, "latency_ms"?, "timeout_s"?, "name"?})]. raw — содержимое video-input.json
-    (rtsp_urls: строки или объекты). Неверные элементы пропускаются, номера остальных не сдвигаются. Адрес текущего
+    """Адреса RTSP: [(n, {"url", "codec"?, "transport"?, "latency_ms"?, "timeout_s"?, "name"?})]. raw — содержимое
+    video-input.json (rtsp_urls: строки или объекты; transport — auto | tcp | udp, проверяется при открытии источника,
+    как и codec). Неверные элементы пропускаются, номера остальных не сдвигаются. Адрес текущего
     описания (source=rtsp), которого нет в списке, добавляется следующим номером."""
     urls = raw.get("rtsp_urls") if isinstance(raw, dict) else None
     out = []
@@ -153,7 +154,7 @@ def resolve(source_id, spec, rtsp, nodes):
         for n, it in rtsp:
             if source_id == f"rtsp:{n}":
                 return {"source": "rtsp", "url": it["url"], "codec": it.get("codec", "h264"),
-                        **{k: it[k] for k in ("latency_ms", "timeout_s") if k in it}}
+                        **{k: it[k] for k in ("transport", "latency_ms", "timeout_s") if k in it}}
         return None
     for sid, _n in v4l2_nodes(nodes):
         if sid == source_id:

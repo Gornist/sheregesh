@@ -589,20 +589,41 @@ def redact(url):
     return re.sub(r"(?<=://)[^/@]*@", "", url or "")
 
 
+RTSP_TRANSPORTS = ("auto", "tcp", "udp")
+# transport описания → rtspsrc protocols. auto: SETUP сначала по UDP; 461 Unsupported Transport — сразу TCP; UDP
+# принят, но датаграмм нет timeout_s (фаервол, NAT) — rtspsrc сам переподключается по TCP (его timeout = «retry TCP
+# after UDP timeout»). udp без данных timeout_s — ошибка конвейера («No other protocols to try»).
+RTSP_PROTOCOLS = {"auto": "udp+tcp", "tcp": "tcp", "udp": "udp"}
+
+
 class RTSPSource(VideoSource):
-    """Поток RTSP (IP-камера, кодер): rtspsrc поверх TCP, депакетизация без декодирования. Формат — из конфигурации
-    (h264 | mjpeg); разрешение и частота — фактические, из потока (SPS / заголовок JPEG и маркеры RTP на блоке).
-    Учётные данные из адреса не попадают ни в id, ни в info, ни в журнал."""
+    """Поток RTSP (IP-камера, кодер): rtspsrc, транспорт RTP/UDP или RTP/TCP (interleaved) — transport auto | tcp |
+    udp, депакетизация без декодирования. Формат — из конфигурации (h264 | mjpeg); разрешение и частота — фактические,
+    из потока (SPS / заголовок JPEG и маркеры RTP на блоке). Учётные данные из адреса не попадают ни в id, ни в info,
+    ни в журнал.
+
+    transport — фактический транспорт, если он однозначен: при tcp/udp — он и есть (другого rtspsrc не пробует), при
+    auto — «» (gst-launch -q не сообщает, на чём rtspsrc договорился; ограничение — S3.3 §13). rtspt:// — только
+    TCP (схема rtspsrc), поэтому auto там означает tcp, а udp — ошибка описания."""
     kind = "rtsp"
     input_type = "RTSP"
     available = True
 
-    def __init__(self, url, codec="h264", latency_ms=200, timeout_s=5.0, connect=socket.create_connection):
+    def __init__(self, url, codec="h264", latency_ms=200, timeout_s=5.0, connect=socket.create_connection,
+                 transport="auto"):
         parts = urlsplit(url)
         if parts.scheme not in ("rtsp", "rtsps", "rtspt") or not parts.hostname:
             raise ValueError(f"RTSP address {redact(url)!r}: expected rtsp://host[:port]/path")
         if codec not in ("h264", "mjpeg"):
             raise ValueError(f"RTSP codec {codec!r}: expected h264 or mjpeg")
+        if transport not in RTSP_TRANSPORTS:
+            raise ValueError(f"RTSP transport {transport!r}: expected auto, tcp or udp")
+        if parts.scheme == "rtspt":
+            if transport == "udp":
+                raise ValueError("RTSP transport 'udp': rtspt:// is TCP only")
+            transport = "tcp"
+        self.transport_mode = transport
+        self.transport = "" if transport == "auto" else transport
         self.url, self.codec = url, codec
         self.host, self.port = parts.hostname, parts.port or (322 if parts.scheme == "rtsps" else 554)
         self.device = redact(url)
@@ -616,8 +637,11 @@ class RTSPSource(VideoSource):
     def capture(self):
         us = int(self.timeout_s * 1_000_000)
         depay = "rtph264depay" if self.codec == "h264" else "rtpjpegdepay"
-        return ["rtspsrc", f"location={self.url}", "protocols=tcp", f"latency={self.latency_ms}",
-                f"tcp-timeout={us}", f"timeout={us}", "!", depay, "!"]
+        return ["rtspsrc", f"location={self.url}", f"protocols={RTSP_PROTOCOLS[self.transport_mode]}",
+                f"latency={self.latency_ms}", f"tcp-timeout={us}", f"timeout={us}", "!", depay, "!"]
+
+    def info(self):
+        return {**super().info(), "transport": self.transport, "transport_mode": self.transport_mode}
 
     def present(self):
         """Сервер принимает TCP-соединения (без RTSP-сеанса: дёшево, не занимает камеру)."""
@@ -722,7 +746,8 @@ def open_source(spec, synthetic=None, **scan_kw):
       {"source": "synthetic"}
       {"source": "v4l2" | "uvc", "device": "...", "mode": "auto" | "WxH@fps", "format": "auto" | "yuyv" | "uyvy" |
        "mjpeg" | "h264", "standard": "auto" | "pal" | "ntsc"}
-      {"source": "rtsp", "url": "rtsp://host:554/path", "codec": "h264" | "mjpeg", "latency_ms": 200, "timeout_s": 5}
+      {"source": "rtsp", "url": "rtsp://host:554/path", "codec": "h264" | "mjpeg", "transport": "auto" | "tcp" | "udp",
+       "latency_ms": 200, "timeout_s": 5}
     synthetic — фабрика синтетического источника (sheregesh.video.synthetic: с надписями). Ошибка описания —
     Unavailable с причиной, а не исключение."""
     kind = str(spec.get("source") or "synthetic").lower()
@@ -736,7 +761,7 @@ def open_source(spec, synthetic=None, **scan_kw):
                              label="UVC" if kind == "uvc" else "V4L2", **scan_kw)
         if kind == "rtsp":
             return RTSPSource(spec["url"], spec.get("codec", "h264"), spec.get("latency_ms", 200),
-                              spec.get("timeout_s", 5.0))
+                              spec.get("timeout_s", 5.0), transport=spec.get("transport", "auto"))
     except (KeyError, ValueError, TypeError) as e:
         return Unavailable(kind, f"bad video input configuration: {e}")
     return Unavailable(kind, f"unknown video source {kind!r}: expected {', '.join(SOURCE_KINDS)}")
