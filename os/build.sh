@@ -43,6 +43,14 @@ if [[ "$CFG" == *-dev-* ]]; then
   mkdir -p "$(dirname "$SIGNERS")"
   printf 'sheregesh-deploy namespaces="sheregesh-deploy,sheregesh-ota,sheregesh-ota-enable" %s %s\n' \
     "$ktype" "$kbody" > "$SIGNERS"
+  # S5 п. 7: лабораторные источники видео pi2 (vivid, USB/IP эмулятора shcam) — только dev-слой. Состав и права —
+  # tools/lab-video/pi2/manifest.tsv (его же проверяет verify_image), файлы копируются рядом с манифестом.
+  LABV="$ROOT/os/layer/sheregesh-dev-access.d/lab-video"
+  rm -rf "$LABV" && mkdir -p "$LABV"
+  grep -v '^#' "$ROOT/tools/lab-video/pi2/manifest.tsv" | while IFS=$'\t' read -r src _dest _mode; do
+    if [[ -n "$src" ]]; then install -D -m 0644 "$ROOT/tools/lab-video/$src" "$LABV/$src"; fi
+  done
+  cp "$ROOT/tools/lab-video/pi2/manifest.tsv" "$LABV/manifest.tsv"
 fi
 
 echo "== rpi-image-gen $RIG_REF"

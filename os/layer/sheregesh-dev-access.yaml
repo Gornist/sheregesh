@@ -32,5 +32,14 @@ mmdebstrap:
       ! grep -q "PRIVATE KEY" "$signers" || { echo "sheregesh-dev-access: в allowed_signers закрытый ключ" >&2; exit 1; }
       install -D -m 0644 "$signers" $1/etc/sheregesh/deploy/allowed_signers
     - |-
+      # S5 п. 7 (tools/lab-video/pi2): эмулированные источники видео блока — юниты при DEV-MODE, не включены; polkit
+      # разрешает sheregesh-ui только start/stop/restart шести юнитов. Файлы готовит os/build.sh по manifest.tsv.
+      lab="$IGconf_sheregesh_assetdir/../sheregesh-dev-access.d/lab-video"
+      test -s "$lab/manifest.tsv" || { echo "sheregesh-dev-access: нет $lab/manifest.tsv (os/build.sh)" >&2; exit 1; }
+      grep -v '^#' "$lab/manifest.tsv" | while IFS="$(printf '\t')" read -r src dest mode; do
+        [ -n "$src" ] || continue
+        install -D -o 0 -g 0 -m "$mode" "$lab/$src" "$1$dest" || exit 1
+      done
+    - |-
       test -s $1/home/${IGconf_device_user1}/.ssh/authorized_keys || \
         { echo "sheregesh-dev-access: не задан IGconf_ssh_pubkey_user1 — вход по SSH невозможен" >&2; exit 1; }

@@ -276,6 +276,38 @@ class DeployImageTest(unittest.TestCase):
         root.files[vi.SIGNERS] = "x"
         self.assertEqual(self.run_checks(root, data, False)["deploy.absent"]["status"], "FAIL")
 
+    def test_labvideo_checks_dev_and_strict(self):
+        """S5 п. 7: эмулированные источники видео pi2 — все файлы manifest.tsv в dev-образе, ни одного в строгом."""
+        lab = ROOT / "tools/lab-video"
+        rows = [ln.split("\t") for ln in (lab / "pi2/manifest.tsv").read_text().splitlines()
+                if ln and not ln.startswith("#")]
+        files = {dest: (lab / src).read_text() for src, dest, _mode in rows}
+
+        def check(root, dev):
+            rep = vi.Report()
+            with contextlib.redirect_stdout(io.StringIO()):
+                vi.labvideo_checks(rep, root, dev)
+            return {c["id"]: c["status"] for c in rep.checks}
+        self.assertEqual(check(FakeRoot(dict(files)), True),
+                         {"labvideo.files": "PASS", "labvideo.polkit": "PASS", "labvideo.units": "PASS"})
+        self.assertEqual(check(FakeRoot({}), False), {"labvideo.absent": "PASS"})
+        rule = "/etc/polkit-1/rules.d/51-sheregesh-lab-video.rules"
+        self.assertEqual(check(FakeRoot({rule: files[rule]}), False), {"labvideo.absent": "FAIL"})
+        broken = dict(files)
+        del broken["/usr/lib/sheregesh/lab-video/sheregesh-lab-video"]
+        broken[rule] = broken[rule].replace('verb == "restart"', 'verb == "enable"')
+        broken["/etc/systemd/system/multi-user.target.wants"] = ""       # каталог (debugfs ls -p даёт и его)
+        broken["/etc/systemd/system/multi-user.target.wants/sheregesh-lab-vivid.service"] = ""
+        r = check(FakeRoot(broken), True)
+        self.assertEqual((r["labvideo.files"], r["labvideo.polkit"], r["labvideo.units"]), ("FAIL", "FAIL", "FAIL"))
+
+    def test_remote_net_saves_video_selection(self):
+        """S5-D1: юнит блока даёт запись каталогу конфигурации (выбор видеоисточника), роль и link.json — чтение."""
+        net = (ROOT / "tools/image/units/sheregesh-remote-net.service").read_text()
+        self.assertIn("ReadWritePaths=-/home/sheregesh-ui/.config/sheregesh", net)
+        self.assertIn("-/home/sheregesh-ui/.config/sheregesh/link.json", net)
+        self.assertIn("ProtectHome=read-only", net)
+
     def test_var_seed_has_no_ordering_cycle(self):
         """OTA CLOSURE цикл 2: Before=systemd-sysusers при After=local-fs.target — цикл, systemd удалял случайное
         задание (в т. ч. local-fs.target) — слот B без /persistent. Юнит репозитория и проверка образа."""

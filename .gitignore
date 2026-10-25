@@ -12,3 +12,4 @@ software/console/sheregesh_console/i18n/*.qm
 
 # S3.1-DEPLOY: открытый ключ подписи выпусков для слоя dev-access (готовит os/build.sh)
 /os/layer/sheregesh-dev-access.d/deploy/
+/os/layer/sheregesh-dev-access.d/lab-video/

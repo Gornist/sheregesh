@@ -205,6 +205,43 @@ def boot_order_violations(unit_text):
     return [u for u in keys.get("Before", []) if late and u in EARLY_UNITS]
 
 
+LAB_MANIFEST = Path(__file__).resolve().parents[2] / "tools/lab-video/pi2/manifest.tsv"
+LAB_UNITS = {"sheregesh-lab-vivid.service", "sheregesh-lab-vivid-feed@cvbs.service",
+             "sheregesh-lab-vivid-feed@hdmi.service", "sheregesh-lab-usbip@hdmi.service",
+             "sheregesh-lab-usbip@cvbs.service", "sheregesh-lab-usbip@camera.service"}
+
+
+def lab_paths(manifest=None):
+    rows = [ln.split("\t") for ln in (manifest or LAB_MANIFEST).read_text().splitlines() if ln and not ln.startswith("#")]
+    return [dest for _src, dest, _mode in rows]
+
+
+def labvideo_checks(rep, root, dev, manifest=None):
+    """S5 п. 7 (tools/lab-video/pi2): эмулированные источники видео блока (vivid, USB/IP shcam) — только в dev-образе;
+    в строгом нет ни файлов, ни правила polkit. Модули ядра vivid/vhci-hcd есть в обоих: загрузить их некому."""
+    paths = lab_paths(manifest)
+    present = [p for p in paths if root.exists(p)]
+    polkit = " ".join(root.cat(f"/etc/polkit-1/rules.d/{n}") for n in ls_names(root, "/etc/polkit-1/rules.d"))
+    if not dev:
+        rep.add("labvideo.absent", "строгий вариант: лабораторных источников видео (п. 7) нет — файлы и polkit",
+                not present and "sheregesh-lab-" not in polkit, ", ".join(present) or f"0 из {len(paths)}")
+        return
+    rep.add("labvideo.files", "dev: файлы п. 7 на месте (manifest.tsv)", len(present) == len(paths),
+            ", ".join(sorted(set(paths) - set(present))) or f"{len(paths)} файлов")
+    rules = root.cat("/etc/polkit-1/rules.d/51-sheregesh-lab-video.rules")
+    units = set(re.findall(r'"(sheregesh-lab-[a-z-]+(?:@[a-z]+)?\.service)"', rules))
+    rep.add("labvideo.polkit", "dev: polkit п. 7 — только start/stop/restart шести юнитов у sheregesh-ui",
+            units == LAB_UNITS and 'subject.user != "sheregesh-ui"' in rules
+            and set(re.findall(r'verb == "([a-z-]+)"', rules)) == {"start", "stop", "restart"},
+            ", ".join(sorted(units)))
+    texts = {p: root.cat(p) for p in paths if p.startswith("/usr/lib/systemd/system/")}
+    wants = " ".join(n for d in ls_names(root, "/etc/systemd/system") if d.endswith(".wants")
+                     for n in ls_names(root, f"/etc/systemd/system/{d}"))
+    rep.add("labvideo.units", "dev: юниты п. 7 только при DEV-MODE и не включены (запуск по polkit)",
+            bool(texts) and all("ConditionPathExists=/etc/sheregesh/DEV-MODE" in t for t in texts.values())
+            and "sheregesh-lab-" not in wants, ", ".join(p for p, t in texts.items() if "DEV-MODE" not in t) or "ok")
+
+
 def deploy_checks(rep, root, data, dev, groups):
     """S3.1-DEPLOY: обновления без перестановки microSD — launcher, установщик, агент OTA, ключ подписи, polkit."""
     wrappers = {w: root.cat(f"/usr/bin/{w}") for w in ("sheregesh-console", "sheregesh-remote-emu")}
@@ -374,6 +411,7 @@ def verify(img, variant, out):
                         "Address=192.168.77.1/24" in (n := root.cat("/etc/systemd/network/20-sheregesh-lab.network"))
                         and "Gateway" not in n)
             deploy_checks(rep, root, data, dev, groups)
+            labvideo_checks(rep, root, dev)
             packages_tsv = root.cat("/usr/share/sheregesh/image-packages.tsv")
             status = data.cat("/slots/system_a/var/lib/dpkg/status")
             # Установлен — если последнее слово Status «installed» (в т. ч. «purge ok installed» после неудачного purge).
