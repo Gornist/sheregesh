@@ -43,8 +43,10 @@ class EventLog:
         del self.events[:-LOG_LIMIT]
         return ev
 
-    def raise_(self, t, code, **params):
-        """Активирует состояние (если ещё не активно) или пишет разовое событие. Возвращает новое событие или None."""
+    def raise_(self, t, code, /, **params):
+        """Активирует состояние (если ещё не активно) или пишет разовое событие. Возвращает новое событие или None.
+        code — только позиционно: у REMOTE-EVENT свой параметр «code» (код события блока), иначе TypeError в такте
+        монитора (pi1, 2026-10-25: исключение каждые 5 с, события блока не попадали в журнал)."""
         if not CATALOG[code].latched:
             return self._add(t, code, params, False)
         if code in self._active:
