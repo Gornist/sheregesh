@@ -118,23 +118,34 @@ Root-входа нет: root и пароли заблокированы (S2-1 `v
 - [ ] Отключать питание запрещено только на время записи (шаг 1). На пробной загрузке сбой питания штатно возвращает A.
 - [ ] Решение владельца по пути pi2 (R2a / R4) и утверждённый SHA пакета записаны.
 
-## 6. Шаблон аудита кандидата (QA заполняет по журналам PACKAGE)
+## 6. Аудит кандидата abd9d68 (QA, 2026-10-25, только файлы и локальные проверки, без плат)
+
+Кандидат `abd9d68e4697c2d951898e6011d256e98bf38417`, образ `build/image/devbox-abd9d68-dev/`, пакет `ota-1/sheregesh-ota_sheregesh-lab-dev-pi4_0.1.1792880268.shota`. «Пересчитано» — мной; «по журналу» — прочитано в `docs/acceptance/ota-closure/build/` (PACKAGE) без повторного запуска.
 
 | # | Проверка | Ожидается | Факт | Итог |
 |---|---|---|---|---|
-| 1 | SHA коммита; предки 6353c70 и d1258f3; `git diff 68bed74 SHA -- software tools os` | abd9d68; предки — да; diff пуст или разобран | | |
-| 2 | Дерево сборки = `git archive SHA` | совпадает побайтно | | |
-| 3 | `build-report.json`: `commit`, `source_date_epoch`, `config` | SHA; epoch → V; `sheregesh-lab-dev-pi4` | | |
-| 4 | `verify.json` | 0 FAIL | | |
-| 5 | SHA-256 образа | = `image_sha256` отчёта | | |
-| 6 | SHA-256 `.shota` (devbox и Mac) | совпадают; утверждён владельцем | | |
-| 7 | Манифест: `commit`, `version`, `compatible`, `layout`, `images`, `units`, `image_verify.failed` | SHA; V > 0.1.1792865618; dev-1; `image-rota-gpt-ab-1`; boot+system; = .deb; [] | | |
-| 8 | `verify_payload.py` с `allowed_signers` плат | Good `sheregesh-ota`, ключ `SHA256:5wJfw7Qw…`; сжатые SHA = манифест; лишних байт нет | | |
-| 9 | Пакет не из запрещённых | ≠ `f6e19234…6edb` (a7f1b74) | | |
-| 10 | L3 `--agent-rev 57e8fe4` | все PASS (ожидается 39/39) | | |
-| 11 | L3, агент кандидата | все PASS | | |
-| 12 | Новый слот: `build.json` = SHA и V; confirm с `--link-config`; `model.py` не пишет пустой `expect` | да | | |
-| 13 | Локальные тесты на SHA (§5 A) | 0 FAIL | | |
-| 14 | Предусловия pi2 (§5 E), в т. ч. закрытие FAIL `tree.boot` | закрыты | | |
+| 1 | SHA коммита; предки 6353c70 и d1258f3; `git diff 68bed74 SHA -- software tools os` | abd9d68; предки — да; diff пуст или разобран | `merge-base --is-ancestor` → 0 для обоих; diff 68bed74..abd9d68 по `software tools os` пуст; `software/` = c4e2d33 (пересчитано) | PASS |
+| 2 | Дерево сборки = `git archive SHA` | побайтно | `.deb` из образа (`deb.txt`: SHA `2a9d707a…8143` = тот, что в слое) против `git archive abd9d68`: 59 файлов совпадают, 0 различий; лишний только `sheregesh_ru.qm` — продукт `lrelease`. `build-report`: `dirty: false`. Дерево devbox — по журналу главного агента | PASS |
+| 3 | `build-report.json`: `commit`, `source_date_epoch`, `config` | SHA; epoch → V; `sheregesh-lab-dev-pi4` | `commit` = abd9d68; `source_date_epoch` 1792880268 = время коммита (`git log %ct`); `config` dev; `post_only: false`; `verify_exit` 0 | PASS |
+| 4 | `verify.json` | 0 FAIL | 71 PASS / 0 FAIL / 0 SKIP; `deploy.build` = abd9d68 / 0.1.1792880268; `deploy.signers` — отдельный ключ; `users.locked`, `boot.tryboot` PASS (прочитано) | PASS |
+| 5 | SHA-256 образа | = `image_sha256` | `img.zst` `e5809410…bbac` = SHA256SUMS; распакованный образ `b2522bc0…33e7` = `image_sha256` (пересчитано, 7 021 285 376 байт) | PASS |
+| 6 | SHA-256 `.shota` | совпадает; утверждён владельцем | `a09082fb13565ab2040c0cdf18532635aebcf93244ace61e5cabb6850ad5c86a` (пересчитано). Две сборки байт в байт — по журналу `payload-sha256.txt`. **Утверждение владельцем — до шага 1** | PASS (утверждение — открыто) |
+| 7 | Манифест | SHA; V > 0.1.1792865618; dev-1; layout; boot+system; units = .deb; `failed` [] | `commit` = SHA; V 0.1.1792880268; `created` = epoch; `sheregesh-lab-pi4-dev-1`; `image-rota-gpt-ab-1`; `image_sha256` = отчёту; `image_verify` 71/[]. **SHA-256 образов манифеста = разделам `boot_a`/`system_a` образа** (`c82b8e1d…7713`, `0ff4e5a8…76f5`; boot_a = boot_b, system_a = system_b). Юниты: 10 = юнитам `.deb` (пересчитано) | PASS |
+| 8 | `verify_payload.py` с `allowed_signers` плат | Good `sheregesh-ota`, `SHA256:5wJfw7Qw…`; сжатые SHA = манифест; без лишних байт | Свой запуск: `allowed_signers` `74c95610…00c0` (= файлу на платах), `Good "sheregesh-ota" signature … SHA256:5wJfw7QwUm7iVV+NCXlvgxqxgvXx5qLPjpDwoRlOZUw` (= `~/.ssh/sheregesh-deploy.pub`), `compressed_sha256_ok` ×2, `trailing_bytes` 0, `version_gt_active`, verdict PASS | PASS |
+| 9 | Пакет не из запрещённых | ≠ `f6e19234…6edb` | ≠ (a09082fb…) | PASS |
+| 10 | L3 `--agent-rev 57e8fe4` | все PASS (39/39) | По журналу: 39/39, payload = a09082fb. Обязательные PASS: чужая подпись, обрыв, A не тронут, `/var` B без образца, `expect` нет, `build.json` = манифест, health с профилем стенда, var-seed, «TRYBOOT: REJECTED», abort → A, общие данные. Замечание P2: база в `result.json` указана именем файла, а не SHA (по PACKAGE §0 — `ci-57e8fe4-dev`, SHA256SUMS там `bab6d352…`) | PASS |
+| 11 | L3, агент кандидата | все PASS | По журналу: 39/39, те же обязательные | PASS |
+| 12 | Новый слот: `build.json` = SHA и V; confirm с `--link-config`; `model.py` без пустого `expect` | да | L3 «build.json = коммит и версия манифеста» PASS; в `.deb`: `confirm.py` передаёт `--link-config`, `model.py` не пишет пустой `expect` и пропускает неизвестные поля (проверено по файлам) | PASS |
+| 13 | Локальные тесты на SHA | 0 FAIL | Дерево `software tests tools` = abd9d68 (отличие только `os/docker-build.sh`): `tests/unit` + `test_slot_guard` + `test_repair_ota_state` — 524 passed, 2 skipped, 0 failed. CI 68bed74 (весь код кандидата) — success | PASS |
+| 14 | Предусловия pi2 (§5 E), в т. ч. FAIL `tree.boot` | закрыты | По `REPAIR.md`/`ota-status-after-repair.json`: A, IDLE, `consistent`, ota-boot success, health 14/14, разрешение есть. FAIL `tree.boot`: в `boot_a` образа 57e8fe4 ровно `boot.img` `4e6da3f9…5067` и `config.txt` `c4318a93…4f45` — пересчитано мной (mtools); совпадение этих файлов на pi2 — по журналу главного агента; остальное — `.Spotlight-V100` | PASS |
 
-Вердикт: GO — только если все 14 строк PASS. Иначе NO-GO с номерами строк.
+**Вердикт: GO** к аппаратному OTA pi2 по [`HW-PLAN.md`](HW-PLAN.md). Условия:
+- владелец утверждает SHA `a09082fb…c86a`;
+- `ota-install` только с `--sha256 a09082fb13565ab2040c0cdf18532635aebcf93244ace61e5cabb6850ad5c86a`;
+- на шаге 0 — `ota-disable` и свежий снимок «до».
+
+**Замечания, гейт не блокируют:**
+- CI на v2 HEAD красный: `tests/gui/test_e2e_gui_link.py:331`, журнал видео. Это код E2E, влитый после abd9d68 (`video.py`, `journal.py`, `agent.py`); в образ он не вошёл. Для кандидата не блокирует. Для следующего кандидата, собранного с HEAD, — блокирует.
+- `tools/probe/check_video_link.py` изменён после abd9d68. Это инструмент Mac, не образ. В протоколе HW-PLAN записать ревизию инструментов, с которой выполнялись проверки.
+- `os/docker-build.sh` изменён после abd9d68 (сборка с `SHEREGESH_BUILD_AS_ROOT=1` в эмуляции). Содержимое образа подтверждено строками 2, 4, 5, 7.
+- P2: `ota-check/run.py` записывает базу только именем файла; привязка к 57e8fe4 — по процедуре PACKAGE §0.
