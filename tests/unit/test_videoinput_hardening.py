@@ -175,7 +175,7 @@ def test_only_unusable_formats(v4l2):
     v4l2.add("video0", "uvcvideo", "Cam", 0, ("1234", "0001", ""),
              formats=[("NV12", "discrete", [((1280, 720), [30])]), ("GREY", "discrete", [((640, 480), [30])])])
     src = vi.open_uvc(**v4l2.scan_kw())
-    assert not src.available and src.error.endswith("offered: no YUYV/MJPEG/H.264")
+    assert not src.available and src.error.endswith("offered: no YUYV/UYVY/MJPEG/H.264")
 
 
 def test_stepwise_sizes_respect_step(v4l2):

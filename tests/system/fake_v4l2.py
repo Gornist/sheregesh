@@ -6,7 +6,10 @@
 bcm2835-codec /dev/video10, 11, 12, 18, 31; два экземпляра bcm2835-isp /dev/video13–16 и /dev/video20–23; rpi-hevc-dec
 /dev/video19 — и, по желанию, HDMI→USB-адаптер класса UVC: узел захвата uvcvideo (index 0) и узел метаданных (index 1).
 ioctl отвечает настоящими структурами videodev2.h, поэтому разбор в sheregesh.videoinput проверяется полностью.
-Открытие служебного (не uvcvideo) узла — ошибка испытания: такой узел записывается в aux_opened, и open() падает.
+Открытие служебного узла (драйверы videoinput.AUX_DRIVERS) — ошибка испытания: такой узел записывается в aux_opened,
+и open() падает. Аналоговые захваты (usbtv, stk1160): inputs — входы VIDIOC_ENUMINPUT (status меняется на ходу:
+потеря сигнала), standards — VIDIOC_ENUMSTD, std/querystd — VIDIOC_G_STD/QUERYSTD; без frame-размеров (как usbtv)
+VIDIOC_ENUM_FRAMESIZES отвечает ENOTTY.
 Сбои: open_errors {videoN: errno} — отказ open(); hooks — функции hook(videoN, request), вызываемые перед каждым ioctl
 (отключить устройство посреди опроса, вернуть ошибку).
 """
@@ -62,7 +65,8 @@ class FakeV4L2:
 
     # ---------- дерево ----------
     def add(self, node, driver, name, index=0, usb=None, caps=vi.V4L2_CAP_VIDEO_CAPTURE | vi.V4L2_CAP_STREAMING,
-            formats=(), by_id=None, bus="usb-0000:01:00.0-1.2"):
+            formats=(), by_id=None, bus="usb-0000:01:00.0-1.2", by_path=None, inputs=None, standards=None, std=0,
+            querystd=None, sizes_ioctl=True):
         if usb:
             port = self._usb.setdefault(usb, f"1-1.{len(self._usb) + 2}")    # узлы одного устройства — один порт
             usbdev = self.sys / "devices" / "platform" / "scb" / "usb1" / "1-1" / port
@@ -87,11 +91,13 @@ class FakeV4L2:
         (real / "device").symlink_to(parent)
         (self.sys / "class" / "video4linux" / node).symlink_to(real)
         (self.dev / node).write_bytes(b"")
-        if by_id:
-            (self.dev / "v4l" / "by-id").mkdir(parents=True, exist_ok=True)
-            (self.dev / "v4l" / "by-id" / by_id).symlink_to(f"../../{node}")
+        for kind, link in (("by-id", by_id), ("by-path", by_path)):
+            if link:
+                (self.dev / "v4l" / kind).mkdir(parents=True, exist_ok=True)
+                (self.dev / "v4l" / kind / link).symlink_to(f"../../{node}")
         self.devices[node] = {"driver": driver, "name": name, "caps": caps, "formats": list(formats), "bus": bus,
-                              "real": real, "by_id": by_id}
+                              "real": real, "by_id": by_id, "by_path": by_path, "inputs": inputs, "input": 0,
+                              "standards": standards, "std": std, "querystd": querystd, "sizes_ioctl": sizes_ioctl}
 
     def remove(self, node):
         """Отключение USB: узел исчезает из sysfs и /dev."""
@@ -99,8 +105,9 @@ class FakeV4L2:
         (self.sys / "class" / "video4linux" / node).unlink()
         (self.dev / node).unlink()
         shutil.rmtree(d["real"])
-        if d["by_id"]:
-            (self.dev / "v4l" / "by-id" / d["by_id"]).unlink()
+        for kind in ("by-id", "by-path"):
+            if d[kind.replace("-", "_")]:
+                (self.dev / "v4l" / kind / d[kind.replace("-", "_")]).unlink()
 
     def pi4(self, with_uvc=True, formats=MJPEG_HDMI, usb=("534d", "2109", "")):
         """Ровно 14 системных узлов Pi 4 (как на pi1/pi2) и, по желанию, HDMI→USB-адаптер. Возможности служебных
@@ -119,9 +126,9 @@ class FakeV4L2:
 
     # ---------- ioctl ----------
     def open(self, path, flags):
-        name = os.path.basename(path)
+        name = os.path.basename(os.path.realpath(path)) if os.path.exists(path) else os.path.basename(path)
         d = self.devices.get(name)
-        if d is not None and d["driver"] != "uvcvideo":
+        if d is not None and d["driver"] in vi.AUX_DRIVERS:
             self.aux_opened.append(name)
             raise AssertionError(f"auxiliary V4L2 node {name} ({d['driver']}) must not be opened")
         if name in self.deny:
@@ -149,6 +156,34 @@ class FakeV4L2:
                 raise OSError(errno.EINVAL, "Invalid argument")
             code = d["formats"][index][0]
             return vi.FMTDESC.pack(index, typ, 0, code.encode(), vi.fourcc(code), 0)
+        if req == vi.VIDIOC_ENUMINPUT:
+            index = vi.INPUT.unpack(buf)[0]
+            if d["inputs"] is None:
+                raise OSError(errno.ENOTTY, "Inappropriate ioctl")
+            if index >= len(d["inputs"]):
+                raise OSError(errno.EINVAL, "Invalid argument")
+            i = d["inputs"][index]                  # {name, status, capabilities, std}
+            return vi.INPUT.pack(index, i["name"].encode(), 2, 0, 0, i.get("std", 0), i.get("status", 0),
+                                 i.get("capabilities", 0))
+        if req == vi.VIDIOC_G_INPUT:
+            if d["inputs"] is None:
+                raise OSError(errno.ENOTTY, "Inappropriate ioctl")
+            return vi.INT.pack(d["input"])
+        if req == vi.VIDIOC_ENUMSTD:
+            index = vi.STANDARD.unpack(buf)[0]
+            if not d["standards"]:
+                raise OSError(errno.ENODATA if d["standards"] == [] else errno.ENOTTY, "no standards")
+            if index >= len(d["standards"]):
+                raise OSError(errno.EINVAL, "Invalid argument")
+            sid, sname, num, den, lines = d["standards"][index]
+            return vi.STANDARD.pack(index, sid, sname.encode(), num, den, lines)
+        if req in (vi.VIDIOC_G_STD, vi.VIDIOC_QUERYSTD):
+            value = d["std"] if req == vi.VIDIOC_G_STD else d["querystd"]
+            if not value:
+                raise OSError(errno.ENODATA if req == vi.VIDIOC_QUERYSTD else errno.ENOTTY, "no standard")
+            return vi.STD_ID.pack(value)
+        if req == vi.VIDIOC_ENUM_FRAMESIZES and not d["sizes_ioctl"]:
+            raise OSError(errno.ENOTTY, "Inappropriate ioctl")
         if req == vi.VIDIOC_ENUM_FRAMESIZES:
             index, pixfmt, *_ = vi.FRMSIZE.unpack(buf)
             fmt = self._fmt(d, pixfmt)
@@ -183,3 +218,19 @@ class FakeV4L2:
             if vi.fourcc(f[0]) == pixfmt:
                 return f
         raise OSError(errno.EINVAL, "Invalid argument")
+
+
+# Стандарты, как их перечисляет usbtv/stk1160 (id, имя, кадровый период n/d, строк)
+PAL_STD = (vi.V4L2_STD_PAL, "PAL", 1, 25, 625)
+NTSC_STD = (vi.V4L2_STD_NTSC, "NTSC", 1001, 30000, 525)
+CVBS_INPUTS = [{"name": "Composite", "capabilities": vi.V4L2_IN_CAP_STD, "std": vi.V4L2_STD_PAL | vi.V4L2_STD_NTSC},
+               {"name": "S-Video", "capabilities": vi.V4L2_IN_CAP_STD, "std": vi.V4L2_STD_PAL | vi.V4L2_STD_NTSC}]
+
+
+def add_usbtv(v4l2, node="video0", querystd=vi.V4L2_STD_PAL, by_id="usb-Fushicai_USBTV007_0001-video-index0"):
+    """Аналоговый захват usbtv (Fushicai USBTV007, 1b71:3002): YUYV, без ENUM_FRAMESIZES, PAL/NTSC, два входа."""
+    v4l2.add(node, "usbtv", "usbtv", 0, ("1b71", "3002", ""), formats=[("YUYV", "discrete", [])], by_id=by_id,
+             by_path="platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.3:1.0-video-index0",
+             inputs=[dict(i) for i in CVBS_INPUTS], standards=[PAL_STD, NTSC_STD], std=vi.V4L2_STD_PAL,
+             querystd=querystd, sizes_ioctl=False)
+    return v4l2

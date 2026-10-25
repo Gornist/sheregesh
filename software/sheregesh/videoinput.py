@@ -1,30 +1,37 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Универсальный видеовход (S3.3): один интерфейс VideoSource для синтетического генератора и стандартного
-устройства захвата V4L2/UVC (USB-камера, HDMI→USB-адаптер класса UVC).
+"""Универсальный видеовход (S3.3, видеоприём): один интерфейс VideoSource для синтетического генератора, любого
+устройства захвата V4L2 (UVC-камера, HDMI→USB-адаптер, аналоговый захват usbtv/stk1160/em28xx) и потока RTSP.
 
 Только системные интерфейсы Linux, уже имеющиеся в образе: sysfs /sys/class/video4linux и ioctl V4L2 из стандартной
-библиотеки Python (VIDIOC_QUERYCAP, VIDIOC_ENUM_FMT, VIDIOC_ENUM_FRAMESIZES, VIDIOC_ENUM_FRAMEINTERVALS). Без udev-правил,
-v4l2-ctl и сторонних модулей. Конвейеры GStreamer строит sheregesh.video; здесь — только описание источника.
+библиотеки Python (VIDIOC_QUERYCAP, VIDIOC_ENUM_FMT, VIDIOC_ENUM_FRAMESIZES, VIDIOC_ENUM_FRAMEINTERVALS, VIDIOC_ENUMINPUT,
+VIDIOC_G_INPUT, VIDIOC_ENUMSTD, VIDIOC_G_STD, VIDIOC_QUERYSTD). Без udev-правил, v4l2-ctl и сторонних модулей. Конвейеры
+GStreamer строит sheregesh.video; выполнение, состояние (нет устройства / нет сигнала / …) и переподключение на блоке —
+sheregesh.videoingest; здесь — только описание источника, обнаружение и проверки присутствия/сигнала.
 
 Устройство не открывается само по себе: обнаружение с ioctl выполняется, только когда конфигурация явно выбрала
-источник «uvc» (или оператор запустил диагностику `python3 -m sheregesh.videoinput`). Служебные узлы V4L2 (метаданные
-UVC, кодек и ISP bcm2835, unicam и т. п.) источником не считаются.
+источник V4L2 (или оператор запустил диагностику `python3 -m sheregesh.videoinput`). Служебные узлы Pi (кодек и ISP
+bcm2835, декодер HEVC) не открываются вовсе; узлы без V4L2_CAP_VIDEO_CAPTURE (метаданные UVC, VBI, M2M) источником
+не считаются.
 
-Классов под изготовителей нет: любое устройство, которое ядро обслуживает драйвером uvcvideo и которое отдаёт
-YUYV, MJPEG или H.264, — обычный UVCSource. Устройства с собственным протоколом вывода (не UVC) не поддерживаются.
+Классов под изготовителей нет: устройство выбирается по постоянному идентификатору (/dev/v4l/by-id, by-path,
+VID:PID[:serial], имя карты или bus_info из VIDIOC_QUERYCAP), форматы и режимы — те, что сообщает драйвер.
 """
 import errno
 import fcntl
 import os
 import re
+import socket
 import struct
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # ---------- V4L2 (linux/videodev2.h) ----------
 V4L2_CAP_VIDEO_CAPTURE = 0x00000001
+V4L2_CAP_VIDEO_M2M_MPLANE = 0x00004000
+V4L2_CAP_VIDEO_M2M = 0x00008000
 V4L2_CAP_META_CAPTURE = 0x00800000
 V4L2_CAP_STREAMING = 0x04000000
 V4L2_CAP_DEVICE_CAPS = 0x80000000
@@ -32,20 +39,54 @@ V4L2_BUF_TYPE_VIDEO_CAPTURE = 1
 V4L2_FRMSIZE_TYPE_DISCRETE = 1
 V4L2_FRMSIZE_TYPE_STEPWISE = 3
 V4L2_FRMIVAL_TYPE_DISCRETE = 1
+# struct v4l2_input: status и capabilities
+V4L2_IN_ST_NO_POWER = 0x00000001
+V4L2_IN_ST_NO_SIGNAL = 0x00000002
+V4L2_IN_ST_NO_SYNC = 0x00010000           # цифровые входы (HDMI): нет синхронизации
+NO_SIGNAL_FLAGS = V4L2_IN_ST_NO_POWER | V4L2_IN_ST_NO_SIGNAL | V4L2_IN_ST_NO_SYNC
+V4L2_IN_CAP_DV_TIMINGS = 0x00000002       # вход с DV timings — HDMI/DVI (tc358743, adv7604 …)
+V4L2_IN_CAP_STD = 0x00000004              # аналоговый вход со стандартом PAL/NTSC/SECAM
+# v4l2_std_id
+V4L2_STD_PAL = 0x000000FF                 # PAL B/B1/G/H/I/D/D1/K
+V4L2_STD_NTSC = 0x0000B000                # NTSC M/M-JP/M-KR
+V4L2_STD_525_60 = 0x0000F900              # PAL-M | PAL-60 | NTSC | NTSC-443 — 480 строк, 29,97 к/с
+V4L2_STD_625_50 = 0x00FF06FF              # PAL | PAL-N | PAL-Nc | SECAM — 576 строк, 25 к/с
+
+
+def _ioc(direction, nr, size):
+    return (direction << 30) | (size << 16) | (ord("V") << 8) | nr
 
 
 def _iowr(nr, size, read_only=False):
-    return ((2 if read_only else 3) << 30) | (size << 16) | (ord("V") << 8) | nr
+    return _ioc(2 if read_only else 3, nr, size)
 
 
 CAPABILITY = struct.Struct("16s32s32sIII12x")            # struct v4l2_capability, 104 байта
 FMTDESC = struct.Struct("III32sII12x")                    # struct v4l2_fmtdesc, 64 байта
 FRMSIZE = struct.Struct("III6I8x")                        # struct v4l2_frmsizeenum, 44 байта
 FRMIVAL = struct.Struct("IIIII6I8x")                      # struct v4l2_frmivalenum, 52 байта
+# В v4l2_input и v4l2_standard есть __u64 (v4l2_std_id): выравнивание 8 на arm64 и x86_64 → 80 и 72 байта
+INPUT = struct.Struct("<I32sIIIQII12x4x")                 # struct v4l2_input, 80 байт
+STANDARD = struct.Struct("<I4xQ24sIII16x4x")              # struct v4l2_standard, 72 байта
+STD_ID = struct.Struct("<Q")
+INT = struct.Struct("<i")
 VIDIOC_QUERYCAP = _iowr(0, CAPABILITY.size, read_only=True)        # 0x80685600
 VIDIOC_ENUM_FMT = _iowr(2, FMTDESC.size)                            # 0xc0405602
+VIDIOC_G_STD = _ioc(2, 23, STD_ID.size)                             # 0x80085617
+VIDIOC_ENUMSTD = _iowr(25, STANDARD.size)                           # 0xc0485619
+VIDIOC_ENUMINPUT = _iowr(26, INPUT.size)                            # 0xc050561a
+VIDIOC_G_INPUT = _ioc(2, 38, INT.size)                              # 0x80045626
+VIDIOC_QUERYSTD = _ioc(2, 63, STD_ID.size)                          # 0x8008563f
 VIDIOC_ENUM_FRAMESIZES = _iowr(74, FRMSIZE.size)                    # 0xc02c564a
 VIDIOC_ENUM_FRAMEINTERVALS = _iowr(75, FRMIVAL.size)                # 0xc034564b
+
+# Служебные узлы платформы: не открываются никогда (кодеки, ISP, декодер HEVC Pi 4/5 — M2M или узлы конвейера ISP).
+AUX_DRIVERS = frozenset({"bcm2835-codec", "bcm2835-isp", "rpi-hevc-dec", "rpivid", "hevc-dec", "pispbe"})
+# Драйверы аналогового захвата (CVBS/S-Video) — для эвристики типа входа, если драйвер не сообщает V4L2_IN_CAP_STD.
+ANALOG_DRIVERS = frozenset({"usbtv", "stk1160", "em28xx", "em28xx_v4l", "cx231xx", "saa7134", "bttv", "cx88",
+                            "cx23885", "tw686x", "tw5864", "go7007", "hdpvr"})
+# HDMI→USB-адаптеры класса UVC, которые представляются безликим «USB Video» (MacroSilicon MS2109/MS2130).
+HDMI_USB_IDS = frozenset({"534d:2109", "534d:2130", "345f:2130", "345f:2131"})
 
 
 def fourcc(code: str) -> int:
@@ -57,12 +98,16 @@ def fourcc_str(value: int) -> str:
 
 
 # Форматы, которые подсистема принимает без программного перекодирования в источнике. Остальные показываются
-# в списке форматов устройства, но не выбираются.
-FORMATS = {"YUYV": "yuyv", "MJPG": "mjpeg", "H264": "h264"}
-FORMAT_ORDER = ("YUYV", "MJPG", "H264")    # «auto»: без декодирования → дешёвое декодирование → H.264
+# в списке форматов устройства, но не выбираются. UYVY — аналоговые захваты (stk1160).
+FORMATS = {"YUYV": "yuyv", "UYVY": "uyvy", "MJPG": "mjpeg", "H264": "h264"}
+FORMAT_ORDER = ("YUYV", "UYVY", "MJPG", "H264")    # «auto»: без декодирования → дешёвое декодирование → H.264
 MODES = ("640x480@30", "640x480@60", "1280x720@30", "1280x720@60", "1920x1080@30", "1920x1080@60")
 _SIZES = ((640, 480), (1280, 720), (1920, 1080))     # проверяются в устройствах с непрерывным диапазоном размеров
 _RATES = (30, 60)
+# Аналоговые стандарты: режим захвата определяется стандартом, а не перечнем размеров.
+STANDARDS = {"PAL": (V4L2_STD_625_50, 720, 576, 25, ""), "NTSC": (V4L2_STD_525_60, 720, 480, 30, "30000/1001")}
+_AUTO_PREFERENCE = ((1280, 720, 30), (1920, 1080, 30), (1280, 720, 60), (1920, 1080, 60), (1280, 720, 25),
+                    (1920, 1080, 25), (720, 576, 25), (720, 480, 30), (640, 480, 30))
 
 
 @dataclass(frozen=True, order=True)
@@ -77,48 +122,68 @@ class Mode:
     def framerate(self):
         return self.rate or f"{self.fps}/1"
 
+    @property
+    def nominal_fps(self):
+        if not self.rate:
+            return float(self.fps)
+        num, den = self.rate.split("/")
+        return round(int(num) / int(den), 3)
+
     def __str__(self):
-        return f"{FORMATS.get(self.pixfmt, self.pixfmt).upper()} {self.width}×{self.height}@{self.fps}"
+        size = f"{self.width}×{self.height}@{self.fps}" if self.width else "(size from stream)"
+        return f"{FORMATS.get(self.pixfmt, self.pixfmt).upper()} {size}"
 
 
 def parse_mode(text: str):
-    m = re.fullmatch(r"(\d+)x(\d+)@(\d+)", text or "")
+    """«WxH@fps» → (w, h, fps); дробная частота (29.97) округляется, как Mode.fps режима NTSC 30000/1001."""
+    m = re.fullmatch(r"(\d+)x(\d+)@(\d+(?:\.\d+)?)", text or "")
     if not m:
         raise ValueError(f"mode {text!r}: expected WxH@fps")
-    return int(m[1]), int(m[2]), int(m[3])
+    return int(m[1]), int(m[2]), round(float(m[3]))
 
 
 # ---------- ioctl ----------
+def _dec(b):
+    return b.split(b"\0", 1)[0].decode("utf-8", errors="replace")
+
+
 def querycap(fd, ioctl=fcntl.ioctl):
     """(driver, card, bus_info, device_caps) — возможности именно этого узла (V4L2_CAP_DEVICE_CAPS)."""
     raw = ioctl(fd, VIDIOC_QUERYCAP, bytes(CAPABILITY.size))
     driver, card, bus, _version, caps, device_caps = CAPABILITY.unpack(raw)
-    dec = lambda b: b.split(b"\0", 1)[0].decode("utf-8", errors="replace")     # noqa: E731
-    return dec(driver), dec(card), dec(bus), device_caps if caps & V4L2_CAP_DEVICE_CAPS else caps
+    return _dec(driver), _dec(card), _dec(bus), device_caps if caps & V4L2_CAP_DEVICE_CAPS else caps
 
 
-def _enum(ioctl, fd, request, st, *head):
-    """Перебор index = 0, 1, … до EINVAL (так перечисляют все VIDIOC_ENUM_*). head — входные поля после index."""
+def _enum(ioctl, fd, request, st, *head, optional=False):
+    """Перебор index = 0, 1, … до EINVAL (так перечисляют все VIDIOC_ENUM_*). head — входные поля после index.
+    optional — драйвер может не реализовывать запрос (ENOTTY): пустой перечень, а не ошибка узла."""
     blank = st.unpack(bytes(st.size))[1 + len(head):]          # остальные поля — нули нужного типа
     out = []
     for index in range(256):
         try:
             raw = ioctl(fd, request, st.pack(index, *head, *blank))
         except OSError as e:
-            if e.errno == errno.EINVAL:
+            if e.errno == errno.EINVAL or (optional and e.errno == errno.ENOTTY):
                 break
             raise
         out.append(st.unpack(raw))
     return out
 
 
+def enum_formats(fd, ioctl=fcntl.ioctl):
+    return [fourcc_str(pf) for _i, _t, _f, _d, pf, *_ in _enum(ioctl, fd, VIDIOC_ENUM_FMT, FMTDESC,
+                                                               V4L2_BUF_TYPE_VIDEO_CAPTURE)]
+
+
 def enum_modes(fd, ioctl=fcntl.ioctl):
-    """Все режимы захвата: (FourCC, ширина, высота, к/с). Непрерывные и ступенчатые диапазоны — только стандартные
-    размеры и частоты из задания (640×480, 1280×720, 1920×1080; 30 и 60 к/с)."""
+    """Все режимы захвата: (FourCC, ширина, высота, к/с). Дискретные размеры и интервалы — ровно как у драйвера
+    (HDMI-захваты: фактические режимы адаптера). Непрерывные и ступенчатые диапазоны — только стандартные размеры
+    и частоты (640×480, 1280×720, 1920×1080; 30 и 60 к/с). Драйверы без VIDIOC_ENUM_FRAMESIZES (аналоговые usbtv,
+    stk1160) режимов не дают: их режим задаёт стандарт (std_modes)."""
     modes = set()
     for _i, _t, _flags, _desc, pixfmt, *_ in _enum(ioctl, fd, VIDIOC_ENUM_FMT, FMTDESC, V4L2_BUF_TYPE_VIDEO_CAPTURE):
         code = fourcc_str(pixfmt)
-        for _i, _pf, kind, *u in _enum(ioctl, fd, VIDIOC_ENUM_FRAMESIZES, FRMSIZE, pixfmt):
+        for _i, _pf, kind, *u in _enum(ioctl, fd, VIDIOC_ENUM_FRAMESIZES, FRMSIZE, pixfmt, optional=True):
             if kind == V4L2_FRMSIZE_TYPE_DISCRETE:
                 sizes = [(u[0], u[1])]
             else:                                    # min_w, max_w, step_w, min_h, max_h, step_h
@@ -126,7 +191,8 @@ def enum_modes(fd, ioctl=fcntl.ioctl):
                 sizes = [(w, h) for w, h in _SIZES if u[0] <= w <= u[1] and u[3] <= h <= u[4] and
                          not (step and ((u[2] > 1 and (w - u[0]) % u[2]) or (u[5] > 1 and (h - u[3]) % u[5])))]
             for w, h in sizes:
-                for _i, _pf, _w, _h, ikind, *iv in _enum(ioctl, fd, VIDIOC_ENUM_FRAMEINTERVALS, FRMIVAL, pixfmt, w, h):
+                for _i, _pf, _w, _h, ikind, *iv in _enum(ioctl, fd, VIDIOC_ENUM_FRAMEINTERVALS, FRMIVAL, pixfmt, w, h,
+                                                         optional=True):
                     if ikind == V4L2_FRMIVAL_TYPE_DISCRETE:
                         if iv[0]:
                             r = Fraction(iv[1], iv[0])     # 1001/30000 с → 30000/1001 к/с: caps — ровно как у устройства
@@ -142,18 +208,103 @@ def enum_modes(fd, ioctl=fcntl.ioctl):
     return sorted(modes, key=lambda m: (m.pixfmt, m.width, m.height, m.fps))
 
 
+def enum_inputs(fd, ioctl=fcntl.ioctl):
+    """Входы узла (VIDIOC_ENUMINPUT): [{index, name, type, std, status, capabilities}]; без поддержки — []."""
+    return [{"index": i, "name": _dec(name), "type": typ, "std": std, "status": status, "capabilities": cap}
+            for i, name, typ, _audio, _tuner, std, status, cap in _enum(ioctl, fd, VIDIOC_ENUMINPUT, INPUT, optional=True)]
+
+
+def current_input(fd, ioctl=fcntl.ioctl):
+    try:
+        return INT.unpack(ioctl(fd, VIDIOC_G_INPUT, bytes(INT.size)))[0]
+    except OSError as e:
+        if e.errno in (errno.ENOTTY, errno.EINVAL):
+            return 0
+        raise
+
+
+def enum_standards(fd, ioctl=fcntl.ioctl):
+    """Поддерживаемые стандарты (VIDIOC_ENUMSTD): [(id, имя, кадр/с)]; цифровые входы — [] (ENODATA/ENOTTY)."""
+    try:
+        rows = _enum(ioctl, fd, VIDIOC_ENUMSTD, STANDARD, optional=True)
+    except OSError as e:
+        if e.errno == errno.ENODATA:
+            return []
+        raise
+    return [(sid, _dec(name), round(den / num, 2) if num else 0) for _i, sid, name, num, den, _lines in rows]
+
+
+def _std_ioctl(fd, request, ioctl):
+    try:
+        return STD_ID.unpack(ioctl(fd, request, bytes(STD_ID.size)))[0]
+    except OSError:
+        return None
+
+
+def std_family(std_id):
+    """v4l2_std_id → «PAL» (625 строк/50 Гц, вкл. SECAM) или «NTSC» (525/60); 0/None → «»."""
+    if not std_id:
+        return ""
+    if std_id & V4L2_STD_525_60 and not std_id & V4L2_STD_625_50:
+        return "NTSC"
+    if std_id & V4L2_STD_625_50:
+        return "PAL"
+    return ""
+
+
 # ---------- обнаружение (sysfs) ----------
 @dataclass
 class Node:
     """Узел /dev/videoN по данным sysfs (и ioctl, если узел — кандидат в устройства захвата)."""
     name: str                 # video0
-    dev: str                  # /dev/video0 или постоянная ссылка /dev/v4l/by-id/…
+    dev: str                  # постоянная ссылка /dev/v4l/by-id/… (или by-path/…), иначе /dev/videoN
     card: str                 # имя устройства (sysfs name / VIDIOC_QUERYCAP card)
     driver: str
     usb_id: str = ""          # vvvv:pppp[:serial] — постоянный идентификатор для конфигурации
-    capture: bool = False     # устройство захвата V4L2/UVC (а не служебный узел)
+    capture: bool = False     # устройство захвата V4L2 (а не служебный узел)
     reason: str = ""          # почему не устройство захвата / ошибка опроса
     modes: list = field(default_factory=list)
+    bus_info: str = ""        # VIDIOC_QUERYCAP bus_info: usb-0000:01:00.0-1.2 и т. п.
+    by_id: str = ""           # /dev/v4l/by-id/… (udev), если есть
+    by_path: str = ""         # /dev/v4l/by-path/… (udev, по порту), если есть
+    formats: list = field(default_factory=list)      # все FourCC узла, включая неиспользуемые
+    inputs: list = field(default_factory=list)       # enum_inputs
+    input: int = 0                                   # текущий вход (VIDIOC_G_INPUT)
+    standards: list = field(default_factory=list)    # enum_standards: [(id, имя, к/с)]
+    std: int = 0                                     # текущий стандарт (VIDIOC_G_STD), 0 — нет
+
+    def _current(self):
+        return next((i for i in self.inputs if i["index"] == self.input), None)
+
+    @property
+    def analog(self):
+        """Аналоговый вход: драйвер перечисляет стандарты или вход объявляет V4L2_IN_CAP_STD."""
+        cur = self._current()
+        return bool(self.standards) or bool(cur and cur["capabilities"] & V4L2_IN_CAP_STD)
+
+    @property
+    def input_type(self):
+        """Тип входа для оператора — честная эвристика: HDMI | CVBS | USB | V4L2 (неизвестно)."""
+        cur = self._current()
+        caps = cur["capabilities"] if cur else 0
+        text = f"{self.card} {cur['name'] if cur else ''}".lower()
+        if caps & V4L2_IN_CAP_DV_TIMINGS or "hdmi" in text or self.usb_id[:9] in HDMI_USB_IDS:
+            return "HDMI"
+        if self.analog or self.driver in ANALOG_DRIVERS or any(k in text for k in ("composite", "cvbs", "s-video")):
+            return "CVBS"
+        if self.driver == "uvcvideo":
+            return "USB"              # UVC-камера или неопознанный UVC-адаптер
+        return "V4L2"
+
+    def selectors(self):
+        """Все значения, по которым устройство можно выбрать в конфигурации."""
+        out = {self.name, f"/dev/{self.name}", self.card, self.bus_info}
+        for link in (self.by_id, self.by_path):
+            if link:
+                out |= {link, os.path.basename(link)}
+        if self.usb_id:
+            out |= {self.usb_id, self.usb_id[:9]}         # vvvv:pppp[:serial] и vvvv:pppp
+        return {x for x in out if x}
 
 
 def _read(path: Path) -> str:
@@ -163,20 +314,40 @@ def _read(path: Path) -> str:
         return ""
 
 
-def _by_id(dev_root: Path, node: str) -> str:
-    """Постоянная ссылка udev /dev/v4l/by-id/…, если есть (переживает переподключение); иначе /dev/videoN."""
-    d = dev_root / "v4l" / "by-id"
+def _link_to(dev_root: Path, kind: str, node: str) -> str:
+    """Постоянная ссылка udev /dev/v4l/<kind>/…, указывающая на node, или «»."""
+    d = dev_root / "v4l" / kind
     try:
         for link in sorted(d.iterdir()):
             if os.path.basename(os.readlink(link)) == node:
                 return str(link)
     except OSError:
         pass
-    return str(dev_root / node)
+    return ""
 
 
-def scan(sys_root="/sys", dev_root="/dev", ioctl=fcntl.ioctl, opener=os.open, probe=True):
-    """Все узлы video4linux с классификацией. probe=False — только sysfs, устройства не открываются."""
+def _by_id(dev_root: Path, node: str) -> str:
+    """Постоянная ссылка udev /dev/v4l/by-id/…, если есть (переживает переподключение); иначе /dev/videoN."""
+    return _link_to(dev_root, "by-id", node) or str(dev_root / node)
+
+
+def _usb_id(dev_dir: Path) -> str:
+    """vvvv:pppp[:serial] USB-устройства, к которому относится узел (интерфейс → устройство); не USB — «»."""
+    try:
+        d = dev_dir.resolve()
+    except OSError:
+        return ""
+    for cand in (d, d.parent, d.parent.parent):
+        vid, pid = _read(cand / "idVendor"), _read(cand / "idProduct")
+        if vid and pid:
+            serial = re.sub(r"[^A-Za-z0-9._-]", "", _read(cand / "serial"))
+            return ":".join(x for x in (vid, pid, serial) if x)
+    return ""
+
+
+def scan(sys_root="/sys", dev_root="/dev", ioctl=fcntl.ioctl, opener=os.open, probe=True, drivers=None):
+    """Все узлы video4linux с классификацией. probe=False — только sysfs, устройства не открываются.
+    drivers — открывать только узлы этих драйверов (пульт S3.3: {"uvcvideo"}); None — любые, кроме служебных."""
     sys_root, dev_root = Path(sys_root), Path(dev_root)
     base = sys_root / "class" / "video4linux"
     try:
@@ -192,19 +363,22 @@ def scan(sys_root="/sys", dev_root="/dev", ioctl=fcntl.ioctl, opener=os.open, pr
         except OSError:
             driver = ""
         node = Node(name, str(dev_root / name), _read(d / "name"), driver)
-        if driver != "uvcvideo":
+        if not driver or driver in AUX_DRIVERS:
             node.reason = f"auxiliary node (driver {driver or 'unknown'})"
             nodes.append(node)
             continue
-        usb = (d / "device").resolve().parent          # интерфейс USB → устройство USB
-        vid, pid, serial = _read(usb / "idVendor"), _read(usb / "idProduct"), _read(usb / "serial")
-        node.usb_id = ":".join(x for x in (vid, pid, re.sub(r"[^A-Za-z0-9._-]", "", serial)) if x)
-        if _read(d / "index") not in ("", "0"):
+        if drivers is not None and driver not in drivers:
+            node.reason = f"driver {driver} not selected"
+            nodes.append(node)
+            continue
+        node.usb_id = _usb_id(d / "device")
+        node.by_id, node.by_path = _link_to(dev_root, "by-id", name), _link_to(dev_root, "by-path", name)
+        if driver == "uvcvideo" and _read(d / "index") not in ("", "0"):
             node.reason = "UVC metadata node"
         if probe:
             _probe(node, dev_root, ioctl, opener)
         else:
-            node.capture = not node.reason
+            node.capture = not node.reason and _read(d / "index") in ("", "0")
         nodes.append(node)
     return nodes
 
@@ -216,16 +390,22 @@ def _probe(node, dev_root, ioctl, opener):
         node.reason = node.reason or f"cannot open {dev_root / node.name}: {e.strerror or e}"
         return
     try:
-        _driver, card, _bus, caps = querycap(fd, ioctl)
-        node.card = card or node.card
-        if not caps & V4L2_CAP_VIDEO_CAPTURE:
+        _driver, card, bus, caps = querycap(fd, ioctl)
+        node.card, node.bus_info = card or node.card, bus
+        m2m = caps & (V4L2_CAP_VIDEO_M2M | V4L2_CAP_VIDEO_M2M_MPLANE)
+        if not caps & V4L2_CAP_VIDEO_CAPTURE or m2m:
             node.reason = "UVC metadata node" if caps & V4L2_CAP_META_CAPTURE else \
-                "no V4L2_CAP_VIDEO_CAPTURE"
+                "memory-to-memory node" if m2m else "no V4L2_CAP_VIDEO_CAPTURE"
             return
         node.reason = ""
         node.modes = enum_modes(fd, ioctl)
+        node.formats = enum_formats(fd, ioctl)
+        node.inputs = enum_inputs(fd, ioctl)
+        node.input = current_input(fd, ioctl) if node.inputs else 0
+        node.standards = enum_standards(fd, ioctl)
+        node.std = (_std_ioctl(fd, VIDIOC_G_STD, ioctl) or 0) if node.standards else 0
         node.capture = True
-        node.dev = _by_id(dev_root, node.name)
+        node.dev = node.by_id or node.by_path or str(dev_root / node.name)
     except OSError as e:
         node.reason = f"V4L2 query failed: {e.strerror or e}"
     finally:
@@ -236,34 +416,94 @@ def capture_devices(**kw):
     return [n for n in scan(**kw) if n.capture]
 
 
+def std_modes(node, standard):
+    """Режимы аналогового стандарта: 720×576@25 (PAL) или 720×480@29,97 (NTSC) в каждом используемом формате узла
+    (если драйвер сам не перечислил такой размер)."""
+    _mask, w, h, fps, rate = STANDARDS[standard]
+    listed = [m for m in node.modes if (m.width, m.height) == (w, h)]
+    if listed:
+        return listed
+    return [Mode(w, h, fps, f, rate) for f in node.formats if f in FORMATS and f != "H264"]
+
+
+def _open_dev(opener, dev):
+    return opener(dev, os.O_RDWR | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+
+
+def probe_signal(dev, input_index=0, ioctl=fcntl.ioctl, opener=os.open):
+    """Состояние входа без захвата: «no-device» (узла нет / ENODEV), «no-signal» (драйвер сообщает
+    V4L2_IN_ST_NO_SIGNAL / NO_POWER / NO_SYNC через VIDIOC_ENUMINPUT) или None (сигнал есть или драйвер не сообщает —
+    тогда решает поток кадров). Второй дескриптор допустим и во время захвата: ENUMINPUT владения не требует."""
+    try:
+        fd = _open_dev(opener, dev)
+    except OSError as e:
+        return "no-device" if e.errno in (errno.ENOENT, errno.ENODEV, errno.ENXIO) else None
+    try:
+        raw = ioctl(fd, VIDIOC_ENUMINPUT, INPUT.pack(input_index, b"", 0, 0, 0, 0, 0, 0))
+        return "no-signal" if INPUT.unpack(raw)[6] & NO_SIGNAL_FLAGS else None
+    except OSError as e:
+        return "no-device" if e.errno in (errno.ENODEV, errno.ENXIO) else None
+    finally:
+        os.close(fd)
+
+
+def query_std(dev, ioctl=fcntl.ioctl, opener=os.open):
+    """Стандарт сигнала на входе (VIDIOC_QUERYSTD) — для «standard: auto». «» — нет сигнала или не поддерживается."""
+    try:
+        fd = _open_dev(opener, dev)
+    except OSError:
+        return ""
+    try:
+        return std_family(_std_ioctl(fd, VIDIOC_QUERYSTD, ioctl))
+    finally:
+        os.close(fd)
+
+
 # ---------- VideoSource ----------
 class VideoSource:
-    """Общий интерфейс видеовхода. Конвейер GStreamer собирает sheregesh.video из двух частей источника:
-    capture() — элементы до первого «!» включительно (кадры режима mode), decode() — до сырых кадров.
-    Состояние выполнения, ошибки и статистику кадров ведёт один общий приёмник (VideoReceiver.metrics)."""
+    """Общий интерфейс видеовхода.
+
+    Описание (здесь): kind, id (постоянный), name, input_type, formats (режимы), mode (текущий), available/error.
+    Конвейер GStreamer собирает sheregesh.video из двух частей источника: capture() — элементы до первого «!»
+    включительно (кадры режима mode), decode() — до сырых кадров. Проверки без захвата: present() — источник есть
+    (узел устройства, достижимый сервер RTSP), signal() — «no-device» | «no-signal» | None (не известно).
+    Выполнение, состояние (no-device / no-signal / starting / streaming / error), фактическая частота и переподключение
+    ведёт один исполнитель на сторону: пульт — VideoReceiver (локальный вход), блок — sheregesh.videoingest.Ingest."""
     kind = ""
     id = ""
     name = ""
+    input_type = "V4L2"
     available = False
+    missing = False
     error = ""
     mode = None              # Mode — текущий режим
     formats = ()             # поддерживаемые режимы (Mode)
+    standard = ""            # аналоговый стандарт PAL | NTSC, если выбран
+    device = ""              # постоянный путь устройства / адрес потока без учётных данных
 
     def capture(self):
         raise NotImplementedError
 
     def decode(self, decoder=None):
-        """Декодирование формата режима до сырых кадров: YUYV — ничего, MJPEG — jpegdec, H.264 — h264parse и
+        """Декодирование формата режима до сырых кадров: YUYV/UYVY — ничего, MJPEG — jpegdec, H.264 — h264parse и
         декодер decoder (выбранный пробой кодеков; аппаратный v4l2h264dec на Pi 4)."""
         code = self.mode.pixfmt if self.mode else ""
         return {"MJPG": ["jpegdec", "!"], "H264": ["h264parse", "!", decoder or "avdec_h264", "!"]}.get(code, [])
 
+    def present(self):
+        """(True, «») или (False, причина) — без захвата и без длительной блокировки."""
+        return (self.available, self.error)
+
+    def signal(self):
+        return None
+
     def info(self):
         m = self.mode
         return {"id": self.id, "kind": self.kind, "name": self.name, "available": self.available,
-                "error": self.error, "format": FORMATS.get(m.pixfmt, m.pixfmt) if m else "",
-                "resolution": f"{m.width}x{m.height}" if m else "", "fps": m.fps if m else 0,
-                "formats": [str(f) for f in self.formats]}
+                "error": self.error, "format": FORMATS.get(m.pixfmt, m.pixfmt.lower()) if m else "",
+                "resolution": f"{m.width}x{m.height}" if m and m.width else "", "fps": m.fps if m else 0,
+                "formats": [str(f) for f in self.formats], "input_type": self.input_type,
+                "standard": self.standard, "device": self.device}
 
 
 class SyntheticSource(VideoSource):
@@ -271,6 +511,7 @@ class SyntheticSource(VideoSource):
     kind = "synthetic"
     id = "synthetic"
     name = "SHEREGESH synthetic test pattern"
+    input_type = "Synthetic"
     available = True
 
     def __init__(self, width=1280, height=720, fps=30, pattern="smpte", overlays=()):
@@ -285,25 +526,97 @@ class SyntheticSource(VideoSource):
                 f"video/x-raw,width={m.width},height={m.height},framerate={m.fps}/1", "!", *self.overlays]
 
 
-class UVCSource(VideoSource):
-    """Стандартное устройство V4L2/UVC. Формат устройства не перекодируется в источнике (декодирование —
-    VideoSource.decode)."""
-    kind = "uvc"
+class V4L2Source(VideoSource):
+    """Любое устройство захвата V4L2 (uvcvideo, usbtv, stk1160, em28xx, …). Формат устройства не перекодируется
+    в источнике (декодирование — VideoSource.decode). Аналоговый стандарт задаёт v4l2src norm=… (VIDIOC_S_STD)."""
+    kind = "v4l2"
 
-    def __init__(self, node: Node, mode: Mode):
+    def __init__(self, node: Node, mode: Mode, standard="", ioctl=fcntl.ioctl, opener=os.open):
         self.node = node
-        self.id = f"uvc:{node.usb_id}" if node.usb_id else f"uvc:{node.name}"
+        stable = node.usb_id or (os.path.basename(node.by_path) if node.by_path else "") or node.bus_info or node.name
+        self.id = f"{self.kind}:{stable}"
         self.name = node.card
         self.mode = mode
-        self.formats = tuple(node.modes)
+        modes = list(node.modes)
+        if node.analog:
+            modes += [m for s in STANDARDS for m in std_modes(node, s) if m not in modes]
+        self.formats = tuple(modes)
         self.available = True
+        self.standard = standard
+        self.device = node.dev
+        self.input_type = node.input_type
+        self._ioctl, self._opener = ioctl, opener
 
     def capture(self):
         m = self.mode
         size = f"width={m.width},height={m.height},framerate={m.framerate}"
-        caps = {"YUYV": f"video/x-raw,format=YUY2,{size}", "MJPG": f"image/jpeg,{size}",
-                "H264": f"video/x-h264,stream-format=byte-stream,{size}"}[m.pixfmt]
-        return ["v4l2src", f"device={self.node.dev}", "do-timestamp=true", "!", caps, "!"]
+        caps = {"YUYV": f"video/x-raw,format=YUY2,{size}", "UYVY": f"video/x-raw,format=UYVY,{size}",
+                "MJPG": f"image/jpeg,{size}", "H264": f"video/x-h264,stream-format=byte-stream,{size}"}[m.pixfmt]
+        norm = [f"norm={self.standard}"] if self.standard else []
+        return ["v4l2src", f"device={self.node.dev}", *norm, "do-timestamp=true", "!", caps, "!"]
+
+    def present(self):
+        if os.path.exists(self.node.dev):
+            return True, ""
+        return False, f"device {self.node.dev} disappeared"
+
+    def signal(self):
+        if not os.path.exists(self.node.dev):
+            return "no-device"
+        return probe_signal(self.node.dev, self.node.input, self._ioctl, self._opener)
+
+    def info(self):
+        return {**super().info(), "bus_info": self.node.bus_info, "driver": self.node.driver,
+                "usb_id": self.node.usb_id}
+
+
+class UVCSource(V4L2Source):
+    """Устройство драйвера uvcvideo (S3.3): прежние kind/id «uvc» — их видит пульт (локальный вход, настройки)."""
+    kind = "uvc"
+
+
+def redact(url):
+    """rtsp://user:pass@host/… → rtsp://host/…"""
+    return re.sub(r"(?<=://)[^/@]*@", "", url or "")
+
+
+class RTSPSource(VideoSource):
+    """Поток RTSP (IP-камера, кодер): rtspsrc поверх TCP, депакетизация без декодирования. Формат — из конфигурации
+    (h264 | mjpeg); разрешение и частота — фактические, из потока (SPS / заголовок JPEG и маркеры RTP на блоке).
+    Учётные данные из адреса не попадают ни в id, ни в info, ни в журнал."""
+    kind = "rtsp"
+    input_type = "RTSP"
+    available = True
+
+    def __init__(self, url, codec="h264", latency_ms=200, timeout_s=5.0, connect=socket.create_connection):
+        parts = urlsplit(url)
+        if parts.scheme not in ("rtsp", "rtsps", "rtspt") or not parts.hostname:
+            raise ValueError(f"RTSP address {redact(url)!r}: expected rtsp://host[:port]/path")
+        if codec not in ("h264", "mjpeg"):
+            raise ValueError(f"RTSP codec {codec!r}: expected h264 or mjpeg")
+        self.url, self.codec = url, codec
+        self.host, self.port = parts.hostname, parts.port or (322 if parts.scheme == "rtsps" else 554)
+        self.device = redact(url)
+        self.id = f"rtsp:{self.device.split('://', 1)[1]}"
+        self.name = f"RTSP {self.host}:{self.port}"
+        self.mode = Mode(0, 0, 0, "H264" if codec == "h264" else "MJPG")
+        self.formats = (self.mode,)
+        self.latency_ms, self.timeout_s = int(latency_ms), float(timeout_s)
+        self._connect = connect
+
+    def capture(self):
+        us = int(self.timeout_s * 1_000_000)
+        depay = "rtph264depay" if self.codec == "h264" else "rtpjpegdepay"
+        return ["rtspsrc", f"location={self.url}", "protocols=tcp", f"latency={self.latency_ms}",
+                f"tcp-timeout={us}", f"timeout={us}", "!", depay, "!"]
+
+    def present(self):
+        """Сервер принимает TCP-соединения (без RTSP-сеанса: дёшево, не занимает камеру)."""
+        try:
+            self._connect((self.host, self.port), timeout=min(self.timeout_s, 2.0)).close()
+            return True, ""
+        except OSError as e:
+            return False, f"RTSP server {self.host}:{self.port} unreachable: {e.strerror or e}"
 
 
 class Unavailable(VideoSource):
@@ -325,34 +638,103 @@ def select_mode(modes, width, height, fps, fmt="auto"):
     return None
 
 
-def open_uvc(device="", mode="1280x720@30", fmt="auto", **scan_kw):
-    """Источник UVC по конфигурации. device — vvvv:pppp[:serial], имя videoN или «» (единственное устройство)."""
-    width, height, fps = parse_mode(mode)
-    scanned = scan(**scan_kw)
-    match = lambda n: not device or device in (n.usb_id, n.name) or n.usb_id.startswith(device + ":")  # noqa: E731
+def auto_mode(modes, fmt="auto"):
+    """«mode: auto»: первый из типичных режимов (_AUTO_PREFERENCE), иначе наибольший размер при ≥ 25 к/с, иначе
+    любой. Только используемые форматы."""
+    usable = [m for m in modes if m.pixfmt in FORMATS and (fmt == "auto" or FORMATS[m.pixfmt] == fmt)]
+    for w, h, fps in _AUTO_PREFERENCE:
+        m = select_mode(usable, w, h, fps, fmt)
+        if m is not None:
+            return m
+    good = [m for m in usable if m.fps >= 25] or usable
+    if not good:
+        return None
+    rank = {c: i for i, c in enumerate(FORMAT_ORDER)}
+    return sorted(good, key=lambda m: (-m.width * m.height, -m.fps, rank.get(m.pixfmt, 9)))[0]
+
+
+def open_v4l2(device="", mode="auto", fmt="auto", standard="auto", drivers=None, label="V4L2", **scan_kw):
+    """Источник V4L2 по конфигурации.
+
+    device — постоянный идентификатор: /dev/v4l/by-id/… или by-path/… (полный путь или имя ссылки), vvvv:pppp[:serial],
+    имя карты или bus_info (VIDIOC_QUERYCAP), в крайнем случае videoN; «» — единственное устройство захвата.
+    mode — «WxH@fps» (точное совпадение) или «auto». standard — для аналоговых входов: pal | ntsc | auto
+    (VIDIOC_QUERYSTD, затем текущий VIDIOC_G_STD, иначе PAL). drivers — ограничить драйверами (open_uvc: uvcvideo)."""
+    scanned = scan(drivers=drivers, **scan_kw)
+
+    def match(n):
+        return not device or device in n.selectors() or bool(n.usb_id and n.usb_id.startswith(device + ":"))
     nodes = [n for n in scanned if n.capture and match(n)]
+    kind = label.lower()
     if not nodes:
-        # Узел UVC есть, но не опрошен (нет прав, занят, исчез во время опроса) — причина видна оператору.
-        why = "; ".join(f"{n.name}: {n.reason}" for n in scanned if n.driver == "uvcvideo" and match(n) and
-                        n.reason and "metadata" not in n.reason)
-        return Unavailable("uvc", f"UVC device {device + ' ' if device else ''}not found" + (f" ({why})" if why else ""),
-                           missing=True)
+        # Узел есть, но не опрошен (нет прав, занят, исчез во время опроса) — причина видна оператору.
+        why = "; ".join(f"{n.name}: {n.reason}" for n in scanned if match(n) and n.reason.startswith(("cannot", "V4L2")))
+        return Unavailable(kind, f"{label} device {device + ' ' if device else ''}not found" +
+                           (f" ({why})" if why else ""), missing=True)
     if len(nodes) > 1:
-        return Unavailable("uvc", "several UVC devices found (" +
-                           ", ".join(f"{n.usb_id or n.name} {n.card}" for n in nodes) + "); set video_device")
+        return Unavailable(kind, f"several {label} devices found (" +
+                           ", ".join(f"{n.usb_id or n.by_path or n.name} {n.card}" for n in nodes) + "); set video_device")
     node = nodes[0]
-    chosen = select_mode(node.modes, width, height, fps, fmt)
-    if chosen is None:
-        offered = ", ".join(str(m) for m in node.modes if m.pixfmt in FORMATS) or "no YUYV/MJPEG/H.264"
+    ioctl, opener = scan_kw.get("ioctl", fcntl.ioctl), scan_kw.get("opener", os.open)
+    std, modes = "", node.modes
+    if node.analog:
+        std = (standard or "auto").upper()
+        if std == "AUTO":
+            std = query_std(node.dev, ioctl, opener) or std_family(node.std) or "PAL"
+        if std not in STANDARDS:
+            return Unavailable(kind, f"standard {standard!r} not supported: expected pal, ntsc or auto",
+                               formats=modes, name=node.card)
+        modes = std_modes(node, std)
+    if (mode or "auto") == "auto":
+        chosen, want = auto_mode(modes, fmt), "auto"
+    else:
+        width, height, fps = parse_mode(mode)
+        chosen = select_mode(modes, width, height, fps, fmt)
         want = f"{'' if fmt == 'auto' else fmt.upper() + ' '}{width}×{height}@{fps}"
-        return Unavailable("uvc", f"mode {want} not supported by {node.card}; offered: {offered}",
-                           formats=node.modes, name=node.card)
-    return UVCSource(node, chosen)
+    if chosen is None:
+        offered = ", ".join(str(m) for m in modes if m.pixfmt in FORMATS) or "no YUYV/UYVY/MJPEG/H.264"
+        return Unavailable(kind, f"mode {want}{' (' + std + ')' if std else ''} not supported by {node.card}; "
+                           f"offered: {offered}", formats=modes, name=node.card)
+    cls = UVCSource if node.driver == "uvcvideo" else V4L2Source
+    return cls(node, chosen, std, ioctl, opener)
+
+
+def open_uvc(device="", mode="1280x720@30", fmt="auto", **scan_kw):
+    """Источник UVC по конфигурации (S3.3, пульт). device — vvvv:pppp[:serial], имя videoN или «» (единственное)."""
+    return open_v4l2(device, mode, fmt, drivers={"uvcvideo"}, label="UVC", **scan_kw)
+
+
+SOURCE_KINDS = ("synthetic", "v4l2", "uvc", "rtsp")
+
+
+def open_source(spec, synthetic=None, **scan_kw):
+    """Источник по описанию конфигурации блока (словарь):
+      {"source": "synthetic"}
+      {"source": "v4l2" | "uvc", "device": "...", "mode": "auto" | "WxH@fps", "format": "auto" | "yuyv" | "uyvy" |
+       "mjpeg" | "h264", "standard": "auto" | "pal" | "ntsc"}
+      {"source": "rtsp", "url": "rtsp://host:554/path", "codec": "h264" | "mjpeg", "latency_ms": 200, "timeout_s": 5}
+    synthetic — фабрика синтетического источника (sheregesh.video.synthetic: с надписями). Ошибка описания —
+    Unavailable с причиной, а не исключение."""
+    kind = str(spec.get("source") or "synthetic").lower()
+    try:
+        if kind == "synthetic":
+            return (synthetic or SyntheticSource)()
+        if kind in ("v4l2", "uvc"):
+            return open_v4l2(str(spec.get("device") or ""), str(spec.get("mode") or "auto"),
+                             str(spec.get("format") or "auto"), str(spec.get("standard") or "auto"),
+                             drivers={"uvcvideo"} if kind == "uvc" else None,
+                             label="UVC" if kind == "uvc" else "V4L2", **scan_kw)
+        if kind == "rtsp":
+            return RTSPSource(spec["url"], spec.get("codec", "h264"), spec.get("latency_ms", 200),
+                              spec.get("timeout_s", 5.0))
+    except (KeyError, ValueError, TypeError) as e:
+        return Unavailable(kind, f"bad video input configuration: {e}")
+    return Unavailable(kind, f"unknown video source {kind!r}: expected {', '.join(SOURCE_KINDS)}")
 
 
 def main(argv=None):
-    """Диагностика стенда: узлы video4linux, классификация и режимы. Устройства только опрашиваются (ioctl),
-    захват не запускается."""
+    """Диагностика стенда: узлы video4linux, классификация, режимы, входы и стандарты. Устройства только
+    опрашиваются (ioctl), захват не запускается."""
     import argparse
     import json
     ap = argparse.ArgumentParser(prog="python3 -m sheregesh.videoinput", description=main.__doc__)
@@ -361,13 +743,20 @@ def main(argv=None):
     args = ap.parse_args(argv)
     nodes = scan(probe=not args.no_probe)
     if args.json:
-        print(json.dumps([{**n.__dict__, "modes": [str(m) for m in n.modes]} for n in nodes], ensure_ascii=False,
-                         indent=1))
+        print(json.dumps([{**n.__dict__, "modes": [str(m) for m in n.modes], "input_type": n.input_type}
+                          for n in nodes], ensure_ascii=False, indent=1))
         return 0
     for n in nodes:
         kind = "CAPTURE" if n.capture else "other  "
         print(f"{kind} {n.name:8} {n.driver:16} {n.usb_id or '-':24} {n.card} {n.dev if n.capture else ''}"
               f"{' — ' + n.reason if n.reason else ''}")
+        if n.capture:
+            print(f"         type {n.input_type}; bus {n.bus_info or '-'}; by-path {n.by_path or '-'}")
+            for i in n.inputs:
+                st = "no signal" if i["status"] & NO_SIGNAL_FLAGS else "ok/unknown"
+                print(f"         input {i['index']}{'*' if i['index'] == n.input else ' '} {i['name']}: {st}")
+            if n.standards:
+                print(f"         standards: {', '.join(s[1] for s in n.standards)}; current {std_family(n.std) or '-'}")
         for m in n.modes:
             print(f"         {m}{'' if m.pixfmt in FORMATS else ' (not used)'}")
     if not nodes:
