@@ -318,6 +318,15 @@ class Ingest:
             return
         last = self._last_frame
         if last is not None and now - last <= self.no_signal_s:
+            # Кадры идут, но драйвер может сообщать «нет сигнала» (V4L2_IN_ST_NO_SIGNAL/NO_H_LOCK/NO_SYNC): тогда это
+            # шум или заставка захвата, а не видео (vivid, мосты HDMI). Драйверы без статуса входа (usbtv, stk1160,
+            # UVC) дают 0 — для них по-прежнему решает только поток кадров.
+            if now >= self._next_signal:
+                self._next_signal = now + self.signal_s
+                self._sig = self.src.signal() if self.src is not None else None
+            if self._sig == "no-signal":
+                self._set("no-signal", "driver reports no signal on input (frames continue)")
+                return
             self._sig = None
             self._set("streaming")
             self._backoff = 0

@@ -235,6 +235,23 @@ def test_hot_unplug_is_no_device_and_replug_recovers(tmp_path):
         ing.close()
 
 
+def test_driver_reported_no_signal_while_frames_continue(tmp_path):
+    """vivid «nosignal», мост HDMI без синхронизации: кадры (шум/заставка) идут, а драйвер сообщает
+    V4L2_IN_ST_NO_SIGNAL — это «нет сигнала», а не видео; флаг снят — снова streaming, без перезапуска."""
+    b = Bench(tmp_path)
+    ing, _ = make(b, stall_restart_s=0.8)
+    c = Consumer(ing)
+    try:
+        assert wait_for(state_is(ing, "streaming"), 5)
+        b.sig = "no-signal"
+        assert wait_for(lambda: ing.state == "no-signal" and "frames continue" in ing.error, 3), ing.error
+        b.sig = None
+        assert wait_for(state_is(ing, "streaming"), 3) and ing.restarts == 0 and len(b.all_pids()) == 1
+    finally:
+        c.close()
+        ing.close()
+
+
 def test_unplug_detected_by_signal_probe_while_pipeline_hangs(tmp_path):
     """v4l2src иногда не завершается при отключении (зависает без кадров): узел исчез → no-device, процесс убит."""
     b = Bench(tmp_path)
