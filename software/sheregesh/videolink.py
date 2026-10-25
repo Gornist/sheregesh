@@ -226,6 +226,13 @@ class VideoServer:
 
     def close(self):
         self.stop_ev.set()
+        # Linux: close() слушающего сокета не прерывает accept() в другом потоке — сокет остаётся в LISTEN, пока
+        # accept не вернёт следующее соединение, и остановленный сервер успел бы принять ещё один видеосеанс.
+        # shutdown() будит accept (EINVAL); на macOS для слушающего сокета он не нужен и даёт ENOTCONN.
+        try:
+            self.lsock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         try:
             self.lsock.close()
         except OSError:
@@ -259,6 +266,9 @@ class VideoServer:
             try:
                 raw, (addr, *_) = self.lsock.accept()
             except OSError:
+                return
+            if self.stop_ev.is_set():                    # принято в момент остановки — не обслуживать
+                raw.close()
                 return
             threading.Thread(target=self._admit, args=(raw, addr), daemon=True).start()
 
