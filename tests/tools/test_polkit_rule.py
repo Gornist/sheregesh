@@ -33,6 +33,11 @@ CASES = [  # (пользователь, действие, unit, verb, ожида
     ("sheregesh-ui", UNITS, "ssh.service", "stop", "NOT_HANDLED"),
     ("sheregesh-ui", UNITS, "sheregesh-console.service", "restart", "YES"),      # права S2/S3.1 сохранены
     ("sheregesh-ui", UNITS, "sheregesh-remote-net.service", "start", "YES"),
+    ("sheregesh-ui", UNITS, "sheregesh-remote-net.service", "kill", "YES"),          # SIGHUP: перечитать video-input.json
+    ("sheregesh-ui", UNITS, "sheregesh-remote-net.service", "reset-failed", "YES"),
+    ("sheregesh-ui", UNITS, "sheregesh-remote-net.service", "set-property", "NOT_HANDLED"),   # S5 LS-6
+    ("sheregesh-ui", UNITS, "sheregesh-console.service", "set-property", "NOT_HANDLED"),
+    ("sheregesh-ui", UNITS, "sheregesh-remote-net.service", "clean", "NOT_HANDLED"),
     ("someone", UNITS, "sheregesh-deploy@install.service", "start", "NOT_HANDLED"),
     ("sheregesh-ui", "org.freedesktop.login1.reboot", None, None, "YES"),
     ("sheregesh-ui", "org.freedesktop.login1.set-reboot-parameter", None, None, "YES"),
