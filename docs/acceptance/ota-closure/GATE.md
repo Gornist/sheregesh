@@ -25,7 +25,7 @@ REQ-UPD-003, -005…-009 (корень X.509, dev-режим с физическ
 | OTA-04 | health корректен от root | `test_confirm_probe.py` (5); L3 проверка «health с профилем стенда»; L5 шаг 5 — **FAIL** (a7f1b74, исправлено в 6353c70) | U PASS, L5 FAIL→исправлено, не перепроверено (HEALTH) |
 | OTA-05 | Исправная система без ложного FAILED | `test_ota_s32.py::test_confirm_commits_console_when_all_gates_pass`, `test_ota.py::test_full_cycle_tryboot_health_commit` (Probe подменён); pi1 dry-run `confirm-gates-dry.json` 17 PASS + 2 N/A | U PASS; на плате с исполняемым health от root — MISSING (HEALTH) |
 | OTA-06 | Успешный OTA подтверждается | `test_ota.py::test_full_cycle_tryboot_health_commit`; L3 до confirm не доходит; у `slot_guard` нет режима «после подтверждения» | U PASS; **L5 MISSING** |
-| OTA-07 | Сбой → предусмотренный откат | `test_ota.py::test_health_fail_never_commits_and_returns_to_previous_slot`, `::test_power_loss_returns_to_committed_slot`, `::test_abort_on_trial_reboots_normally`; `test_ota_s32.py::test_rollback_keeps_previous_system_and_shared_data`; L3 abort → A; `slot_guard --mode rollback` (28 тестов) | U/L3 PASS; **L5 MISSING** |
+| OTA-07 | Сбой → предусмотренный откат | `test_ota.py::test_health_fail_never_commits_and_returns_to_previous_slot`, `::test_power_loss_returns_to_committed_slot`, `::test_abort_on_trial_reboots_normally`; `test_ota_s32.py::test_rollback_keeps_previous_system_and_shared_data`; L3 abort → A; `slot_guard --mode rollback` (28 тестов) | U/L3 PASS; L5 PASS частично: цикл 1, `ota-abort` с пробной загрузки → A, `rollback` 38/0/0, health 14/14 (`hardware/cycle/STOP-1.md`). Откат по FAIL confirm на плате не проверен |
 | OTA-08 | После отката доступно следующее обновление | `test_ota.py::test_install_refused_when_state_disagrees_with_slots` (abort → install OK); `test_ota_gate.py` (57e8fe4 после ROLLED_BACK принимает новый пакет) | PARTIAL: установка агентом после ROLLED_BACK на уровне агента явно не проверена (STATE) |
 | OTA-09 | Пользовательская конфигурация сохраняется | `test_ota.py::test_install_writes_only_inactive_slot_and_keeps_persistent`, `::test_full_cycle…` (хеши persistent); `test_ota_s32.py::test_config_carried_fresh_at_tryboot_and_not_copied_back`, `::test_rollback_keeps…`, `::test_var_seed_fills_missing_and_keeps_existing` (только GNU tar: CI, на Mac SKIP); L3 (persistent, `/var` B из образа, перенос конфигурации, var-seed) — PASS на a7f1b74 | PASS (U, L3 a7f1b74). L3 на кандидате — MISSING |
 | OTA-10 | Повторные запуски не портят состояние | `test_ota_s32.py::test_reinstall_replaces_only_inactive_slot`, `::test_state_survives_agent_restart_between_steps`, `::test_interrupted_install_never_becomes_bootable`; `test_ota.py::test_serve_protocol_and_bad_requests` | PASS (U) (STATE) |
@@ -82,7 +82,8 @@ Root-входа нет: root и пароли заблокированы (S2-1 `v
   - `image_verify.failed` = [];
   - `units` = юниты .deb.
 - [ ] Подпись: `pi1-preflight/tools/verify_payload.py` с `allowed_signers` плат (SHA `74c95610…00c0`, ключ `SHA256:5wJfw7Qw…`) → `Good "sheregesh-ota" signature`, SHA-256 сжатых образов = манифест, лишних байт нет.
-- [ ] Не a7f1b74 (`f6e19234…6edb`) и не пакет из образа < d1258f3.
+- [ ] Не a7f1b74 (`f6e19234…6edb`), не a09082fb (`a09082fb…c86a`, цикл 1, uid 1000 в образе; та же версия 0.1.1792880268) и не пакет из образа < d1258f3.
+- [ ] Владельцы `system_a` образа = эталону CI 57e8fe4 (`tools/image/owners_check.sh`, diff пуст). `verify_image` владельцев не проверяет.
 
 **C. Файловые испытания L3** (`ota-check/run.py`, база — образ 57e8fe4, тот же, что на A pi2; пакет кандидата. Нет базы — STOP, другим образом не подменять)
 - [ ] `--agent-rev 57e8fe4` (реальный путь pi1 и pi2) — все PASS (ожидается 39/39).
@@ -139,7 +140,9 @@ Root-входа нет: root и пароли заблокированы (S2-1 `v
 | 13 | Локальные тесты на SHA | 0 FAIL | Дерево `software tests tools` = abd9d68 (отличие только `os/docker-build.sh`): `tests/unit` + `test_slot_guard` + `test_repair_ota_state` — 524 passed, 2 skipped, 0 failed. CI 68bed74 (весь код кандидата) — success | PASS |
 | 14 | Предусловия pi2 (§5 E), в т. ч. FAIL `tree.boot` | закрыты | По `REPAIR.md`/`ota-status-after-repair.json`: A, IDLE, `consistent`, ota-boot success, health 14/14, разрешение есть. FAIL `tree.boot`: в `boot_a` образа 57e8fe4 ровно `boot.img` `4e6da3f9…5067` и `config.txt` `c4318a93…4f45` — пересчитано мной (mtools); совпадение этих файлов на pi2 — по журналу главного агента; остальное — `.Spotlight-V100` | PASS |
 
-**Вердикт: GO** к аппаратному OTA pi2 по [`HW-PLAN.md`](HW-PLAN.md). Условия:
+> **Отменено (цикл 1, STOP на шаге 4).** Образ имел uid 1000 на 41 пути корневой ФС. Аудит этого не поймал: строка 4 опиралась на `verify_image`, а он владельцев не проверяет. Пакет `a09082fb…` отозван; действующий аудит — §7.
+
+**Вердикт (исторический): GO** к аппаратному OTA pi2 по [`HW-PLAN.md`](HW-PLAN.md). Условия:
 - владелец утверждает SHA `a09082fb…c86a`;
 - `ota-install` только с `--sha256 a09082fb13565ab2040c0cdf18532635aebcf93244ace61e5cabb6850ad5c86a`;
 - на шаге 0 — `ota-disable` и свежий снимок «до».
@@ -149,3 +152,28 @@ Root-входа нет: root и пароли заблокированы (S2-1 `v
 - `tools/probe/check_video_link.py` изменён после abd9d68. Это инструмент Mac, не образ. В протоколе HW-PLAN записать ревизию инструментов, с которой выполнялись проверки.
 - `os/docker-build.sh` изменён после abd9d68 (сборка с `SHEREGESH_BUILD_AS_ROOT=1` в эмуляции). Содержимое образа подтверждено строками 2, 4, 5, 7.
 - P2: `ota-check/run.py` записывает базу только именем файла; привязка к 57e8fe4 — по процедуре PACKAGE §0.
+
+## 7. Аудит разницы — цикл 2 (пересборка abd9d68 с владельцем root; QA, 2026-10-25, без плат)
+
+Что изменилось относительно §6: образ пересобран из того же коммита после e80d268. Пакет `c30de791…5a82`, `image_sha256` `856d5b90…8cd0`. Остальные строки §6 (1–3, 9, 12, 13) от образа не зависят и остаются в силе.
+
+| # | Проверка | Факт | Итог |
+|---|---|---|---|
+| 5 | SHA-256 образа | `img.zst` = SHA256SUMS (`5056b899…d69b`, `shasum -c` — все OK); распакованный — `856d5b90552186999aef8616ee62603ed5a76f204b70fc37eecfaf3d2deb8cd0` = `build-report` = манифест (пересчитано) | PASS |
+| 4 | `verify.json`, `build-report` | 71/0/0; `commit` abd9d68, `dirty` false, epoch 1792880268 | PASS |
+| 2 | `.deb` в образе = `git archive abd9d68` | `deb.txt`: тот же `.deb` `2a9d707a…8143`, что в §6 (там сверен с `git archive`: 59/0/0) | PASS |
+| В | **Владельцы** `system_a` | `owners-cycle2.txt` = `owners-ci-57e8fe4.txt` (diff пуст, 10 штатных путей). Независимо (debugfs, без mount): все 41 путь, бывшие uid 1000 в цикле 1, — `0:0`; 10 эталонных путей — те же uid:gid, что в CI. `/etc/console-setup` (отказавший юнит цикла 1): root:root, те же cached-файлы, что в образе CI 57e8fe4 (на pi1 работает) | PASS |
+| 6 | SHA-256 `.shota` | `c30de791067b852aeea4df1d2ef9b016d0a4c80830551d2e97f3b98290e65a82` (пересчитано); две сборки байт в байт — по журналу. Утверждение владельцем — до шага 1 | PASS (утверждение — открыто) |
+| 7 | Манифест = образ | SHA-256 boot/system манифеста = разделам `boot_a`/`system_a` (пересчитано; A = B); `image_sha256` и `image_verify` 71/[] = отчёту; V 0.1.1792880268; `package` gabd9d68 | PASS |
+| 8 | Подпись | Свой `verify_payload.py`, `allowed_signers` `74c95610…00c0`: Good `sheregesh-ota`, `SHA256:5wJfw7Qw…`, сжатые SHA ×2, лишних байт 0, verdict PASS | PASS |
+| 10–11 | L3 ×2 | По журналу `build-c2`: 39/39 агентом 57e8fe4 и кандидатом, `payload_sha256` = c30de791 | PASS |
+| 14 | Состояние pi2 и HW-PLAN | A, `ROLLED_BACK`, consistent, разрешение снято, health 14/14 (STOP-1.md). HW-PLAN применим без изменений: install из `ROLLED_BACK` принимается, `ota-disable` безвреден, «до» — свежий. Обновлены только шапка и SHA | PASS |
+
+**Вердикт: GO** для цикла 2. Условия:
+- владелец утверждает `c30de791…5a82`;
+- `ota-install --sha256 c30de791067b852aeea4df1d2ef9b016d0a4c80830551d2e97f3b98290e65a82`;
+- шаги и STOP — по HW-PLAN.
+
+**Замечания:**
+- Отозванный `a09082fb…` с той же версией и действующей подписью агент примет. Единственная защита — `--sha256`. Файл цикла 1 лучше удалить или переименовать на Mac.
+- Сверка ограничена владельцами (uid/gid). Режимы доступа и прочие метаданные против CI полностью не сравнивались. Косвенно их покрывают `verify_image` 71/0/0 и L3. Остаточный риск — низкий: режимы берутся из источников, от uid сборки они не зависят.
