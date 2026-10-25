@@ -39,6 +39,7 @@ REMOTE_STATUS = "/run/sheregesh-remote/link-status.json"
 VCONF = "~/.config/sheregesh/video-input.json"
 GUI_DIR = "/tmp/s4-gui"
 STEPS = ("VID-01", "VID-02", "VID-03", "VID-04", "VID-05", "VID-06", "VID-07", "VID-08", "VID-09")
+DARK_MIN = 0.8                 # доля почти чёрных пикселей поля кадра при отказе источника (gui_capture frame_dark)
 LIMITS = {"video_off_s": 3.0, "video_back_s": 10.0, "switch_s": 15.0}
 # Ожидаемые FAIL slot_guard --mode unchanged для pi1 на B COMMITTED (проверено на pi1-final.json цикла 2):
 # режим unchanged писался для платы на A с autoboot [all]=2/[tryboot]=3. Детали сверяются точно.
@@ -153,8 +154,9 @@ def judge_resources(before, after, fd_tol=3, thr_tol=2):
 
 def judge_gui(states, want_fault=None):
     """VID-03/04 (и рендеринг VID-05/06) по states.json gui_capture. Доказательство — PNG; states — привязка
-    снимков к состоянию. stream: frame_changed=true при источнике synthetic; отказ: frame_changed=false (поле не
-    обновляется); восстановление: frame_changed=true."""
+    снимков к состоянию. stream: frame_changed=true при источнике synthetic; отказ: поле кадра чёрное
+    (frame_dark ≥ DARK_MIN — подпись «no frames for N s» в поле меняется, frame_changed тут не критерий; для старых
+    states без frame_dark — frame_changed=false); восстановление: frame_changed=true."""
     by = {s["shot"]: s for s in states}
     res = {}
 
@@ -169,8 +171,11 @@ def judge_gui(states, want_fault=None):
                      f"смена области кадра за 1 с: {ch!r}")
     if want_fault:
         s, ch = pair(f"03-04-{want_fault}")
-        res["VID-05"] = ("PASS" if s and ch is False else "ERROR" if s is None else "FAIL",
-                         f"снимок {want_fault}: кадр не обновляется {ch is False}")
+        dark = (s or {}).get("frame_dark")
+        ok = (dark >= DARK_MIN) if dark is not None else ch is False
+        res["VID-05"] = ("PASS" if s and ok else "ERROR" if s is None else "FAIL",
+                         f"снимок {want_fault}: поле кадра чёрное (доля {dark!r}, порог {DARK_MIN}), прежний кадр "
+                         f"не показан: {ok}")
         s, ch = pair(f"05-06-recovered-{want_fault}")
         res["VID-06"] = ("PASS" if ch is True else "ERROR" if s is None else "FAIL",
                          f"после восстановления кадр сменяется: {ch!r}")
@@ -190,8 +195,8 @@ def journal_problems(lines):
     return bad
 
 
-def spec_json(source, rtsp_url=None):
-    return json.dumps({"source": "rtsp", "url": rtsp_url, "codec": "h264"} if source == "rtsp" else {"source": source})
+def spec_json(source, rtsp_url=None, codec="h264"):
+    return json.dumps({"source": "rtsp", "url": rtsp_url, "codec": codec} if source == "rtsp" else {"source": source})
 
 
 # ---------------------------------------------------------------- работа со стендом
@@ -253,7 +258,7 @@ class Stand:
         if self.a.source_cmd:
             cmd = self.a.source_cmd.format(source=source, url=shlex.quote(self.a.rtsp_url or ""))
             return subprocess.run(cmd, shell=True, timeout=30).returncode == 0
-        body = shlex.quote(spec_json(source, self.a.rtsp_url))
+        body = shlex.quote(spec_json(source, self.a.rtsp_url, self.a.rtsp_codec))
         code, _ = ssh(self.a.remote, f"umask 077; printf '%s' {body} > {VCONF}.tmp && mv {VCONF}.tmp {VCONF} && "
                                      f"kill -HUP $(systemctl show -p MainPID --value {E.REMOTE_UNIT})")
         return code == 0
@@ -501,6 +506,8 @@ def main(argv=None):
     ap.add_argument("--only", default=",".join(STEPS))
     ap.add_argument("--gui", action="store_true", help="VID-03/04: остановить пульт и снять реальный рендеринг")
     ap.add_argument("--rtsp-url")
+    ap.add_argument("--rtsp-codec", default="h264", choices=("h264", "mjpeg"),
+                    help="кодек RTSP-источника (тестовый сервер s4_rtsp_test_server.py — mjpeg)")
     ap.add_argument("--rtsp-stop", help="команда (на Mac), останавливающая тестовый RTSP-сервер")
     ap.add_argument("--rtsp-start", help="команда (на Mac), запускающая его снова")
     ap.add_argument("--source-cmd", help="команда выбора источника на Mac ({source} = synthetic|rtsp, {url}); "

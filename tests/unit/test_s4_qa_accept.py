@@ -189,7 +189,7 @@ def test_set_source_uses_source_cmd_or_main_pid_hup(monkeypatch):
     calls = []
     monkeypatch.setattr(s.subprocess, "run", lambda cmd, shell, timeout: calls.append(cmd) or
                         argparse.Namespace(returncode=0))
-    a = argparse.Namespace(console="c", remote="r", rtsp_url="rtsp://h:8554/s4",
+    a = argparse.Namespace(console="c", remote="r", rtsp_url="rtsp://h:8554/s4", rtsp_codec="mjpeg",
                            source_cmd="select-video {source} {url}")
     st = s.Stand.__new__(s.Stand)
     st.a = a
@@ -209,3 +209,15 @@ def test_gui_step_kill_pattern_does_not_match_own_shell_and_path_has_emulators()
     src = (ROOT / "tools/probe/s4_accept.py").read_text()
     assert "-f '/tmp/gui_capture.py'" not in src and "-f '[/]tmp/gui_capture.py'" in src
     assert "$C/software/emulators" in src
+
+
+def test_gui_fault_judged_by_dark_field_not_by_unchanged_hash():
+    """Подпись «no frames for N s» меняет хеш поля кадра при отказе — критерий VID-05 по доле чёрного."""
+    def shots(prefix, dark, changed, src="synthetic"):
+        return [{"shot": f"{prefix}-video-t+1s.png", "frame_changed": changed, "frame_dark": dark,
+                 "videoSource": {"input": src}}]
+    base = shots("01-02-stream", 0.05, True) + shots("05-06-recovered-no-signal", 0.05, True)
+    ok = s.judge_gui(base + shots("03-04-no-signal", 0.93, True), want_fault="no-signal")
+    assert ok["VID-05"][0] == "PASS" and ok["VID-06"][0] == "PASS"
+    bad = s.judge_gui(base + shots("03-04-no-signal", 0.10, True), want_fault="no-signal")
+    assert bad["VID-05"][0] == "FAIL"

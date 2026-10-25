@@ -21,8 +21,9 @@
 
 Доказательство смены кадров: пара снимков страницы видео с интервалом 1 с; frame_changed — сравнение только области
 кадра (videoView), а не всего окна (подписи частоты/счётчиков меняются и без видео): при потоке должно быть true,
-при «нет сигнала» / «нет устройства» — false (чёрное поле, прежний кадр не показывается). video_changed — прежнее
-сравнение всего окна (режим link).
+при «нет сигнала» / «нет устройства» поле чёрное (прежний кадр не показывается): frame_dark — доля почти чёрных
+пикселей области кадра (подпись «no frames for N s» меняет хеш области, поэтому frame_changed здесь не критерий).
+video_changed — прежнее сравнение всего окна (режим link).
 
   PYTHONPATH=<выпуск>/software:… python3 gui_capture.py --out DIR [--by video] [--timeout 240]
 
@@ -60,12 +61,27 @@ def parse_args(argv=None):
     return a
 
 
+def region(img, item):
+    from PySide6.QtCore import QRectF
+    return img.copy(item.mapRectToScene(QRectF(0, 0, item.width(), item.height())).toRect())
+
+
 def region_hash(img, item):
     """Хеш пикселей области элемента (кадр видео) на снимке окна."""
-    from PySide6.QtCore import QRectF
-    r = item.mapRectToScene(QRectF(0, 0, item.width(), item.height())).toRect()
-    sub = img.copy(r)
-    return hashlib.sha256(bytes(sub.constBits())).hexdigest()
+    return hashlib.sha256(bytes(region(img, item).constBits())).hexdigest()
+
+
+def dark_fraction(img, item, step=4, level=24):
+    """Доля почти чёрных пикселей области кадра (выборка через step). При отказе источника поле чёрное, а подпись
+    «no frames for N s» в нём меняется — сравнение хешей тогда ложно говорит «кадр обновляется»."""
+    sub = region(img, item)
+    n = dark = 0
+    for y in range(0, sub.height(), step):
+        for x in range(0, sub.width(), step):
+            c = sub.pixelColor(x, y)
+            n += 1
+            dark += max(c.red(), c.green(), c.blue()) <= level
+    return round(dark / n, 3) if n else None
 
 
 class Capture:
@@ -112,6 +128,7 @@ class Capture:
             p2, img2 = self.grab(f"{prefix}-video-t+1s")
             self.states[-1]["video_changed"] = hashlib.sha256(p2.read_bytes()).hexdigest() != h1
             self.states[-1]["frame_changed"] = region_hash(img2, view) != f1
+            self.states[-1]["frame_dark"] = dark_fraction(img2, view)
             self.page("dashboard")
             done()
         QTimer.singleShot(1000, second)
