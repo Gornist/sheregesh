@@ -675,7 +675,7 @@ def open_v4l2(device="", mode="auto", fmt="auto", standard="auto", drivers=None,
         # Узел есть, но не опрошен (нет прав, занят, исчез во время опроса) — причина видна оператору.
         why = "; ".join(f"{n.name}: {n.reason}" for n in scanned if match(n) and n.reason.startswith(("cannot", "V4L2")))
         return Unavailable(kind, f"{label} device {device + ' ' if device else ''}not found" +
-                           (f" ({why})" if why else ""), missing=True)
+                           (f" ({why})" if why else ""), missing=True, name=device)
     if len(nodes) > 1:
         return Unavailable(kind, f"several {label} devices found (" +
                            ", ".join(f"{n.usb_id or n.by_path or n.name} {n.card}" for n in nodes) + "); set video_device")

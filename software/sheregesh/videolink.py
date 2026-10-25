@@ -259,6 +259,14 @@ class VideoServer:
             # не блокировать вызывающего (цикл asyncio блока: heartbeat не должен ждать остановки GStreamer)
             threading.Thread(target=s.close, name="video-close", daemon=True).start()
 
+    def info(self):
+        """INFO видеосеанса: прежние codec/width/height/fps (параметры генератора) и, если источник известен,
+        "source" — тип входа и режим источника (пульт берёт режим из INFO, состояние — из телеметрии)."""
+        st = self.ingest.status()
+        if st["type"] in ("", "command"):
+            return dict(self.params)
+        return {**self.params, "source": {k: st[k] for k in ("input", "type", "device", "width", "height", "fps")}}
+
     def stats(self):
         now = time.monotonic()
         recent = [t for t in self.frame_times if now - t <= 5.0]
@@ -343,7 +351,7 @@ class _ServerSession:
         ingest = srv.ingest
         try:
             self.sock.settimeout(SEND_TIMEOUT_S)
-            self.sock.sendall(frame(T_INFO, json.dumps(srv.params).encode()))
+            self.sock.sendall(frame(T_INFO, json.dumps(srv.info()).encode()))
             self.token = ingest.attach()
             wake = ingest.wake_fd
             while not self.closed.is_set():

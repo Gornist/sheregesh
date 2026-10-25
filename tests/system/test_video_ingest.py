@@ -422,6 +422,9 @@ def test_video_server_survives_unplug_and_signal_loss(lab, tmp_path):
     d.start()
     try:
         assert wait_for(lambda: cl.stats()["frames"] > 30, 8), cl.stats()
+        assert cl.stats()["source"] == {"codec": "h264", "width": 1280, "height": 720, "fps": 30, "source": {
+            "input": "hdmi", "type": "v4l2", "device": f"/dev/v4l/by-id/{b.ident}", "width": 1280, "height": 720,
+            "fps": 30.0}}                                                       # INFO: режим источника для пульта
         b.unplug()
         assert wait_for(lambda: srv.stats()["source"]["state"] == "no-device", 3)
         f0 = cl.stats()["frames"]
