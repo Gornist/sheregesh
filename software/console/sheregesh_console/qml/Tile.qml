@@ -9,6 +9,24 @@ Rectangle {
     property string title
     property color accent: win.p.border
     default property alias content: body.data
+    // Второстепенная строка: показывается, только если с ней содержимое помещается в плитку (1280×800 — высота
+    // ограничена; строка не выталкивает остальные за рамку). Высота без неё считается по остальным строкам, а не по
+    // implicitHeight тела, — иначе видимость зависела бы сама от себя (binding loop).
+    property Item optional: null
+    readonly property bool optionalFits: {
+        if (!optional)
+            return true
+        var h = 0, n = 0
+        for (var i = 0; i < body.children.length; i++) {
+            var c = body.children[i]
+            if (c === optional || !c.visible)
+                continue
+            h += c.implicitHeight
+            n++
+        }
+        // место под тело: поля 16+16 и промежутки заголовок–тело–заполнитель 8+8
+        return h + n * body.spacing + optional.implicitHeight <= height - head.implicitHeight - 48 * win.s + 1
+    }
 
     color: win.p.panel
     radius: 8 * win.s
