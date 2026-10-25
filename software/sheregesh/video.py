@@ -39,12 +39,20 @@ def die_with_parent():
         pass
 
 
+# SIGHUP — сигнал перечитывания конфигурации блока (sheregesh_remote: video-input.json). `systemctl kill -s HUP`
+# по умолчанию шлёт его всей cgroup службы, а gst-launch-1.0 по SIGHUP завершается — видео рвалось бы при каждом
+# перечитывании. Игнорирование (SIG_IGN) наследуется через exec, поэтому конвейер запускается через
+# `sh -c 'trap "" HUP; exec …'`: PID тот же (exec), остановка — по-прежнему killpg SIGTERM/SIGKILL.
+NO_HUP = ("sh", "-c", 'trap "" HUP; exec "$@"', "sh")
+
+
 def spawn(args, stdin=subprocess.DEVNULL, **kw):
-    """Дочерний процесс GStreamer, который завершается вместе с родителем.
+    """Дочерний процесс GStreamer, который завершается вместе с родителем и не реагирует на SIGHUP (NO_HUP).
 
     Предпочтительно через setpriv --pdeathsig (util-linux): preexec_fn небезопасен в многопоточном процессе.
     Вне Linux pdeathsig нет — через сторож pdeath.py. Во всех случаях процесс — лидер своей группы (killpg).
     """
+    args = [*NO_HUP, *args]
     if shutil.which("setpriv"):
         return subprocess.Popen(["setpriv", "--pdeathsig", "KILL", "--", *args], stdin=stdin,
                                 process_group=0, **kw)
