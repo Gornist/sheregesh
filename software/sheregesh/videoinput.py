@@ -823,6 +823,10 @@ def open_v4l2(device="", mode="auto", fmt="auto", standard="auto", drivers=None,
             return Unavailable(kind, f"standard {standard!r} not supported: expected pal, ntsc or auto",
                                formats=modes, name=node.card)
         modes = std_modes(node, std)
+    elif node.usb_id[:9] in CVBS_USB_IDS and (standard or "auto").upper() in STANDARDS:
+        # UVC-захват CVBS (MS210x): стандарта в V4L2 нет (S_STD/QUERYSTD → ENOTTY), PAL/NTSC — это режим кадра
+        _mask, w, h, _fps, _rate = STANDARDS[standard.upper()]
+        modes = [m for m in node.modes if (m.width, m.height) == (w, h)]
     if (mode or "auto") == "auto":
         chosen, want, request = auto_mode(modes, fmt), "auto", "auto"
     else:

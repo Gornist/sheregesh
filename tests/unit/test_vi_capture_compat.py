@@ -250,3 +250,31 @@ def test_deinterlace_negotiates_progressive_at_standard_rate(fmt, size, rate):
                         f"video/x-raw,interlace-mode=progressive,framerate={rate}", "!", "fakesink"],
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+# UVC-захват CVBS MacroSilicon MS210x «AV TO USB2.0» (534d:0021, EasierCAP): профиль — tools/lab-video/CONTRACT.md §1
+# (эмулятор USB/IP стенда shcam); стандартов в V4L2 нет — PAL/NTSC выбираются размером кадра.
+MS210X_CVBS = [("MJPG", "discrete", [((720, 480), [30]), ((720, 576), [25])]),
+               ("YUYV", "discrete", [((720, 480), [30]), ((720, 576), [25])])]
+
+
+def ms210x_cvbs(v4l2):
+    v4l2.add("video0", "uvcvideo", "AV TO USB2.0: AV TO USB2.0", 0, ("534d", "0021", ""), formats=MS210X_CVBS)
+    return v4l2
+
+
+@pytest.mark.parametrize("standard, size, fps", [("pal", (720, 576), 25), ("ntsc", (720, 480), 30),
+                                                 ("PAL", (720, 576), 25)])
+def test_uvc_cvbs_standard_selects_frame_mode(v4l2, standard, size, fps):
+    src = vi.open_v4l2(standard=standard, **ms210x_cvbs(v4l2).scan_kw())
+    assert isinstance(src, vi.UVCSource) and (src.mode.width, src.mode.height, src.mode.fps) == (*size, fps)
+    assert "norm=" not in " ".join(src.capture())       # S_STD у UVC нет — v4l2src без norm
+    assert src.node.input_type == "CVBS"
+
+
+def test_uvc_cvbs_auto_and_explicit_mode_unchanged(v4l2):
+    kw = ms210x_cvbs(v4l2).scan_kw()
+    src = vi.open_v4l2(**kw)
+    assert (src.mode.width, src.mode.height) in ((720, 576), (720, 480))
+    src = vi.open_v4l2(mode="720x480@30", standard="pal", **kw)
+    assert isinstance(src, vi.Unavailable) and "not supported" in src.error   # режим противоречит стандарту
