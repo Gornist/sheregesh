@@ -243,10 +243,22 @@ def console_journal(host, since):
 # ---------------------------------------------------------------- внесение и снятие отказа
 
 
+def fresh_input(text):
+    """input() без нажатий, набранных заранее: лишний Enter прошлого цикла иначе отвечает на следующую подсказку и
+    сдвигает метки времени (pi1/pi2, 2026-10-25, цикл 3 manual — ложный ERROR)."""
+    try:
+        import termios
+        if sys.stdin.isatty():
+            termios.tcflush(sys.stdin, termios.TCIFLUSH)
+    except (ImportError, OSError):
+        pass
+    return input(text)
+
+
 class Fault:
     """inject() и restore() возвращают (ok, детали). restore() вызывается всегда (finally)."""
 
-    def __init__(self, kind, remote, outage, prompt=input):
+    def __init__(self, kind, remote, outage, prompt=fresh_input):
         self.kind, self.rh, self.outage, self.prompt, self.pid = kind, remote, outage, prompt, None
 
     def inject(self):
