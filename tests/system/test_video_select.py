@@ -233,7 +233,9 @@ def test_old_remote_session_11_console_does_not_send(lab, tmp_path):
     u = Unit(lab, tmp_path, "--protocol", "1.1", video=False)
     try:
         assert u.pc.snapshot()["session"] == "1.1"
-        assert wait_for(lambda: u.source().get("state"), 10)
+        # Видеоприём определяет источник в своём потоке (video.synthetic опрашивает gst-inspect): до этого в status
+        # type == "" — ждём, иначе под нагрузкой проверка ниже сравнивала бы ещё не определённый тип.
+        assert wait_for(lambda: u.source().get("type") == "synthetic", 15), u.source()
         u.pc.select_video_source("rtsp:0")
         assert u.pc.snapshot()["video_select"] == {"req": 1, "id": "rtsp:0", "state": "unsupported"}
         time.sleep(0.8)
@@ -249,9 +251,13 @@ def _raw_session(port, proto, sid):
         s.sendall(encode(proto, "hello", 1, 0.0, {"role": "console", "proto": proto, "software": "t",
                                                   "device_id": "t"}))
         s.sendall(encode(proto, "video-select", 2, 0.0, {"id": sid, "req": 5}))
-        dec, last, deadline = Decoder(), None, time.monotonic() + 3
+        # Первый status может задержаться: локальный профиль при первом запуске отправителя опрашивает gst-inspect
+        # в основном цикле (под нагрузкой — секунды). После первого status читаем ещё 1 с (несколько status).
+        dec, last, deadline = Decoder(), None, time.monotonic() + 20
         s.settimeout(0.3)
         while time.monotonic() < deadline:
+            if last is not None and deadline - time.monotonic() > 1.0:
+                deadline = time.monotonic() + 1.0
             try:
                 data = s.recv(65536)
             except socket.timeout:
