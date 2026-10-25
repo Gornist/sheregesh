@@ -475,7 +475,8 @@ def test_agent_video_config_reload_and_telemetry_contract(lab, tmp_path):
         got = inp()
         assert got["input"] == "rtsp" and "unreachable" in got["error"] and "secret" not in json.dumps(got)
         assert set(got) == {"state", "input", "type", "name", "id", "device", "error", "format", "standard", "width",
-                            "height", "stream_width", "stream_height", "fps", "fps_actual", "restarts", "since_s"}
+                            "height", "stream_width", "stream_height", "fps", "fps_actual", "restarts", "since_s",
+                            "transport_mode", "transport"}
         assert a.proc.poll() is None
     finally:
         pc.stop()
