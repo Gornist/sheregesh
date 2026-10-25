@@ -158,6 +158,38 @@ class HelperUsbipCycle(unittest.TestCase):
         self.assertFalse((self.ctl / "detach").exists())
 
 
+class Manifest(unittest.TestCase):
+    """manifest.tsv — единый список для dev-слоя и verify_image: все источники есть, все файлы проекта учтены."""
+
+    def rows(self):
+        return [ln.split("\t") for ln in (PI2 / "manifest.tsv").read_text().splitlines()
+                if ln and not ln.startswith("#")]
+
+    def test_sources_exist_and_dests_sane(self):
+        rows = self.rows()
+        for src, dest, mode in rows:
+            with self.subTest(src):
+                self.assertTrue((LAB / src).is_file())
+                self.assertTrue(dest.startswith(("/usr/lib/", "/etc/")))
+                self.assertIn(mode, ("0644", "0755"))
+                self.assertEqual(mode == "0755", src.startswith("pi2/bin/"))
+        self.assertEqual(len({d for _s, d, _m in rows}), len(rows))
+
+    def test_every_project_file_is_listed(self):
+        listed = {src for src, _d, _m in self.rows()}
+        files = {str(p.relative_to(LAB)) for d in ("bin", "etc", "units") for p in (PI2 / d).iterdir()}
+        self.assertEqual(files - listed, set())
+
+    def test_units_dev_only_and_rule_matches_units(self):
+        for unit in (PI2 / "units").iterdir():
+            self.assertIn("ConditionPathExists=/etc/sheregesh/DEV-MODE", unit.read_text(), unit.name)
+        rule = (PI2 / "etc/51-sheregesh-lab-video.rules").read_text()
+        templates = {u.name for u in (PI2 / "units").iterdir()}
+        for name in __import__("re").findall(r'"(sheregesh-lab-[a-z-]+(?:@[a-z]+)?\.service)"', rule):
+            base = name.split("@")[0] + "@.service" if "@" in name else name
+            self.assertIn(base, templates, name)
+
+
 class LabVivid(unittest.TestCase):
     @staticmethod
     def bt(w, h, pclk, hfp, hs, hbp, vfp, vs, vbp, il=0, ivfp=0, ivs=0, ivbp=0):

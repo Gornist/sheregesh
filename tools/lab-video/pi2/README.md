@@ -19,6 +19,9 @@ Root нужен для трёх вещей: `modprobe vivid`, `modprobe vhci-hcd
 
 ## Состав и куда ставить в образе
 
+Машиночитаемо — [`manifest.tsv`](manifest.tsv): по нему dev-слой раскладывает файлы, а `verify_image` проверяет
+лабораторную границу (готовый фрагмент — [`../proposals/verify_image-lab-video.md`](../proposals/verify_image-lab-video.md)).
+
 | Файл | Путь в образе | Права |
 |---|---|---|
 | `bin/sheregesh-lab-video` | `/usr/lib/sheregesh/lab-video/sheregesh-lab-video` | 0755 root |
@@ -52,6 +55,16 @@ systemctl stop sheregesh-lab-vivid                # выгрузить vivid (п
 
 Узлы vivid: `/dev/sheregesh-lab/{cvbs,hdmi}-{cap,out}` (номера `/dev/videoN` плавают, `by-path` у двух экземпляров
 vivid совпадает). Устройства USB/IP получают обычные `by-id`/`by-path` на `vhci_hcd.0`.
+
+## Лабораторная граница
+
+В рабочий (строгий) образ п. 7 не попадает. Файлы ставит только hook слоя `sheregesh-dev-access`, а юниты не
+запускаются без `/etc/sheregesh/DEV-MODE`. Как это проверять — `verify_image`
+([`../proposals/verify_image-lab-video.md`](../proposals/verify_image-lab-video.md)):
+- **строгий** вариант: ни одного пути из `manifest.tsv` и ни одного правила polkit с `sheregesh-lab-`
+  (`labvideo.absent`);
+- **dev** вариант: все пути на месте (`labvideo.files`), правило — ровно шесть юнитов и `start`/`stop`/`restart`
+  (`labvideo.polkit`), юниты при `DEV-MODE` и не включены ни в один `*.wants` (`labvideo.units`).
 
 ## Безопасность
 
