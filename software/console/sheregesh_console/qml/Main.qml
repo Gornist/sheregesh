@@ -32,6 +32,17 @@ ApplicationWindow {
         return v === "CONNECTED" ? qsTr("Remote unit: connected") : v === "ERROR" ? qsTr("Remote unit: link error")
              : v === "CONNECTING" ? qsTr("Remote unit: connecting…") : qsTr("Remote unit: no link")
     }
+    // Источник видео (backend.videoSource, sheregesh_console.videosource): тип входа и состояние источника
+    function videoInputText(input) {
+        return input === "synthetic" ? qsTr("Synthetic") : input === "hdmi" ? "HDMI" : input === "cvbs" ? "CVBS"
+             : input === "usb" ? qsTr("USB (UVC)") : input === "v4l2" ? "V4L2" : input === "rtsp" ? "RTSP"
+             : input !== "" ? input.toUpperCase() : qsTr("unknown")
+    }
+    function videoSourceStateText(state) {
+        return state === "streaming" ? qsTr("streaming") : state === "no-signal" ? qsTr("no signal")
+             : state === "no-device" ? qsTr("no device") : state === "starting" ? qsTr("starting")
+             : state === "connect-error" ? qsTr("connection error") : state === "error" ? qsTr("error") : qsTr("not reported")
+    }
     function stateText(state) {
         return state === "fault" ? qsTr("Fault") : state === "warning" ? qsTr("Warning")
              : state === "boot" ? qsTr("Starting") : qsTr("Normal")

@@ -111,6 +111,10 @@ class VideoReceiver(QObject):
         """Локальный видеовход: имя устройства, формат, разрешение и частота режима (VideoSource.info); иначе {}."""
         return self._source.info() if self._local is not None and self._source is not None else {}
 
+    def shown_seq(self):
+        """Номер последнего показанного кадра (VideoView: кадры до потери сигнала не выдаются за новые)."""
+        return self._shown_seq
+
     # ---------- управление ----------
     def configure(self, codec, port):
         """Источник сообщил кодек и порт. Перезапуск только при изменении."""
@@ -159,6 +163,12 @@ class VideoReceiver(QObject):
             self._set_state("unavailable")
             return
         self._start()
+
+    def session_info(self):
+        """INFO текущего видеосеанса удалённого блока (кодек, режим и — с блоков после 1.1 — источник); иначе {}."""
+        client = self._client
+        info = client.info if client is not None else None
+        return dict(info) if isinstance(info, dict) else {}
 
     def metrics(self):
         """Для диагностики без дисплея: фактически декодированные кадры и состояние видеоканала."""
@@ -368,13 +378,41 @@ class VideoReceiver(QObject):
 
 
 class VideoView(QQuickPaintedItem):
-    """Отображение последнего кадра с сохранением пропорций."""
+    """Отображение последнего кадра с сохранением пропорций.
+
+    live=false (источник на блоке без сигнала / без устройства / с ошибкой подключения, sheregesh_console.videosource)
+    — чёрное поле вместо кадров; кадры, полученные до возврата live=true, тоже не показываются: прежний кадр не
+    выдаётся за актуальный."""
     receiverChanged = Signal()
+    liveChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._receiver = None
+        self._live = True
+        self._stale_seq = -1             # кадры с номером не больше этого не показываются (сняты при live=false)
         self.setAntialiasing(False)
+
+    def _get_live(self):
+        return self._live
+
+    def _set_live(self, live):
+        live = bool(live)
+        if live == self._live:
+            return
+        self._live = live
+        if not live and self._receiver is not None:
+            self._stale_seq = self._receiver.shown_seq()
+        self.liveChanged.emit()
+        self.update()
+
+    live = Property(bool, _get_live, _set_live, notify=liveChanged)
+
+    def showing_frame(self):
+        """Для испытаний: рисуется ли сейчас кадр (а не чёрное поле)."""
+        r = self._receiver
+        return bool(self._live and r is not None and r.state == "playing" and r.image is not None
+                    and not r.image.isNull() and r.shown_seq() > self._stale_seq)
 
     def _get_receiver(self):
         return self._receiver
@@ -396,10 +434,9 @@ class VideoView(QQuickPaintedItem):
 
     def paint(self, painter: QPainter):
         painter.fillRect(QRectF(0, 0, self.width(), self.height()), QColor("#000000"))
-        r = self._receiver
-        img = r.image if (r is not None and r.state == "playing") else None
-        if img is None or img.isNull():
+        if not self.showing_frame():
             return
+        img = self._receiver.image
         sw, sh = self.width() / img.width(), self.height() / img.height()
         k = min(sw, sh)
         w, h = img.width() * k, img.height() * k

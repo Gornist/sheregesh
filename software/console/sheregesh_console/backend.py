@@ -29,6 +29,7 @@ from sheregesh_emulators.demo import DEMO
 from sheregesh_emulators.scenario import TICK_S
 
 from . import journal as jr
+from . import videosource as vsrc
 from .video import VideoReceiver
 
 LOG_LIMIT = 2000
@@ -126,6 +127,7 @@ class Backend(QObject):
     configChanged = Signal()
     appearanceChanged = Signal()
     logsChanged = Signal()
+    videoSourceChanged = Signal()
     message = Signal(str, str)          # уровень (info/warning/error), текст
 
     def __init__(self, data_dir, demo=False, speed=1.0, autostart=True, peer=None, local_video=False,
@@ -174,8 +176,11 @@ class Backend(QObject):
         for code, _ in report.actions:
             self.bench.events.inject("CFG-RECOVERED", detail=code)
             self.log("warning", "config", f"recovery action {code}")
+        self._vsrc = {**vsrc.empty(), **vsrc.display(vsrc.empty(), "off")}
+        self._remote_video_tel = None               # video из телеметрии блока, пока сеанс управления есть
         self.video = VideoReceiver(self, command=video_command)
         self.video.stateChanged.connect(self._journal_video_state)
+        self.video.stateChanged.connect(self._update_video_source)
         self._local_sender = None
         self._local_video = local_video
         self._video_scan = dict(video_scan or {})
@@ -375,13 +380,16 @@ class Backend(QObject):
         else:
             cnt = {"connects": 0, "disconnects": 0, "bad_messages": 0, "ignored_messages": 0, "received": 0,
                    "seq_gaps": 0}
+        self._remote_video_tel = vid if self.client is not None and s.peer_state == "connected" else None
+        self._update_video_source()
         # Пропадание видео — диагностическое событие, видно на главной панели и в диагностике
         expected = (self.client is not None and bool(vid.get("enabled")) and s.peer_state == "connected") or \
             self._local_sender is not None
         expected = {"uvc": True, "disabled": False}.get(self._video_source, expected)
-        if self.video.state in ("no-video", "restarting", "no-device", "unsupported") and expected:
-            self.bench.events.inject("VIDEO-LOST", state=self.video.state)
-        elif self.video.state == "playing" or not expected:
+        if (self.video.state in ("no-video", "restarting", "no-device", "unsupported")
+                or self._vsrc["display"] in vsrc.BLOCKING) and expected:   # на блоке нет сигнала/устройства
+            self.bench.events.inject("VIDEO-LOST", state=self._vsrc["display"])
+        elif self._vsrc["live"] or not expected:
             self.bench.events.clear("VIDEO-LOST")
         if self.video.state != self._last_video_state:
             self.log("info" if self.video.state in ("playing", "waiting", "off") else "warning", "video",
@@ -459,6 +467,39 @@ class Backend(QObject):
     @Property(QObject, constant=True)
     def videoReceiver(self):
         return self.video
+
+    @Property(dict, notify=videoSourceChanged)
+    def videoSource(self):
+        """Источник видео для экранов (sheregesh_console.videosource): вход, состояние, режим, причина, решение для
+        кадра (display, live)."""
+        return self._vsrc
+
+    def _video_report(self):
+        """Откуда сведения об источнике: режим и сырые данные для videosource.describe."""
+        if self._video_source == "uvc":
+            return {"mode": "local-input", "local_info": self.video.source}
+        if self._video_source == "disabled":
+            return {"mode": "off"}
+        if self._local_sender is not None:
+            return {"mode": "local-synthetic"}
+        if self.client is not None:
+            return {"mode": "remote", "telemetry_video": self._remote_video_tel,
+                    "session_info": self.video.session_info()}
+        return {"mode": "off"}
+
+    @Slot()
+    def _update_video_source(self):
+        src = vsrc.describe(rx_state=self.video.state, rx_error=self.video.error, **self._video_report())
+        src.update(vsrc.display(src, self.video.state))
+        if src != self._vsrc:
+            # переходы состояния источника (у приёмника — свой журнал «state …» в _link_status)
+            source_level = vsrc.BLOCKING + ("starting",)
+            if src["display"] != self._vsrc["display"] and (src["display"] in source_level or
+                                                             self._vsrc["display"] in source_level):
+                self.log("warning" if src["display"] in vsrc.BLOCKING else "info", "video",
+                         f"source {src['input'] or '-'} {src['display']} {src['error']}".strip())
+            self._vsrc = src
+            self.videoSourceChanged.emit()
 
     @Property(list, notify=statusChanged)
     def powerHistory(self):

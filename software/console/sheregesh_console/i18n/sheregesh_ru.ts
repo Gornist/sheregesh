@@ -325,24 +325,54 @@
         <translation>Отказы аутентификации: %1</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="151" />
-        <source>Video: playing · %1&#160;fps</source>
-        <translation>Видео: воспроизводится · %1&#160;к/с</translation>
+        <location filename="../qml/DashboardPage.qml" line="14" />
+        <source>playing · %1&#160;fps</source>
+        <translation>воспроизводится · %1&#160;к/с</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="152" />
-        <source>Video: waiting for stream</source>
-        <translation>Видео: ожидание потока</translation>
+        <location filename="../qml/DashboardPage.qml" line="15" />
+        <source>waiting for stream</source>
+        <translation>ожидание потока</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="153" />
-        <source>Video: no stream</source>
-        <translation>Видео: потока нет</translation>
+        <location filename="../qml/DashboardPage.qml" line="16" />
+        <source>no stream</source>
+        <translation>потока нет</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="154" />
-        <source>Video: no frames (%1)</source>
-        <translation>Видео: нет кадров (%1)</translation>
+        <location filename="../qml/DashboardPage.qml" line="17" />
+        <source>no signal</source>
+        <translation>нет сигнала</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="18" />
+        <source>no device</source>
+        <translation>нет устройства</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="19" />
+        <source>connection error</source>
+        <translation>ошибка подключения</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="20" />
+        <source>source error</source>
+        <translation>ошибка источника</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="21" />
+        <source>mode not supported</source>
+        <translation>режим не поддерживается</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="186" />
+        <source>Video (%1): %2</source>
+        <translation>Видео (%1): %2</translation>
+    </message>
+    <message>
+        <location filename="../qml/DashboardPage.qml" line="186" />
+        <source>Video: %1</source>
+        <translation>Видео: %1</translation>
     </message>
 </context>
 <context>
@@ -562,6 +592,56 @@
         <location filename="../qml/Main.qml" line="33" />
         <source>Remote unit: no link</source>
         <translation>Удалённый блок: нет связи</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="37" />
+        <source>Synthetic</source>
+        <translation>Синтетический</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="38" />
+        <source>USB (UVC)</source>
+        <translation>USB (UVC)</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="39" />
+        <source>unknown</source>
+        <translation>неизвестно</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="42" />
+        <source>streaming</source>
+        <translation>поток</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="42" />
+        <source>no signal</source>
+        <translation>нет сигнала</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="43" />
+        <source>no device</source>
+        <translation>нет устройства</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="43" />
+        <source>starting</source>
+        <translation>запуск</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="44" />
+        <source>connection error</source>
+        <translation>ошибка подключения</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="44" />
+        <source>error</source>
+        <translation>ошибка</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="44" />
+        <source>not reported</source>
+        <translation>не сообщается</translation>
     </message>
 </context>
 <context>
@@ -904,6 +984,91 @@
         <location filename="../qml/VideoPage.qml" line="91" />
         <source>The video source is turned off in the settings.</source>
         <translation>Видеоисточник выключен в настройках.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="19" />
+        <source>%1×%2 at %3&#160;fps</source>
+        <translation>%1×%2, %3&#160;к/с</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="23" />
+        <source>Source: none</source>
+        <translation>Источник: нет</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="25" />
+        <source> (input type not reported by the unit)</source>
+        <translation> (тип входа блоком не сообщается)</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="26" />
+        <source>Source: %1 · %2 · state: %3</source>
+        <translation>Источник: %1 · %2 · состояние: %3</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="26" />
+        <source>console input</source>
+        <translation>вход пульта</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="26" />
+        <source>remote unit</source>
+        <translation>удалённый блок</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="33" />
+        <source>No signal on the %1 input. The last frame is not shown; video returns automatically when the signal is back.</source>
+        <translation>Нет сигнала на входе %1. Последний кадр не показывается; видео вернётся автоматически, когда появится сигнал.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="34" />
+        <source>No capture device for the %1 input.</source>
+        <translation>Нет устройства захвата для входа %1.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="35" />
+        <source>Cannot connect to the %1 stream; retrying automatically.</source>
+        <translation>Не удаётся подключиться к потоку %1; повтор выполняется автоматически.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="36" />
+        <source>The %1 video source reports an error.</source>
+        <translation>Видеоисточник %1 сообщает об ошибке.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="37" />
+        <source>The %1 video source is starting.</source>
+        <translation>Видеоисточник %1 запускается.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="38" />
+        <source>The selected video mode is not supported by the device.</source>
+        <translation>Выбранный режим видео устройство не поддерживает.</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="61" />
+        <source>No signal</source>
+        <translation>Нет сигнала</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="62" />
+        <source>Source starting</source>
+        <translation>Запуск источника</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="63" />
+        <source>Connection error</source>
+        <translation>Ошибка подключения</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="64" />
+        <source>Video source error</source>
+        <translation>Ошибка видеоисточника</translation>
+    </message>
+    <message>
+        <location filename="../qml/VideoPage.qml" line="100" />
+        <source>Source mode %1 · shown %2&#160;fps · %3 · frames %4 · decoder restarts %5</source>
+        <translation>Режим источника %1 · показано %2&#160;к/с · %3 · кадров %4 · перезапусков декодера %5</translation>
     </message>
 </context>
 </TS>

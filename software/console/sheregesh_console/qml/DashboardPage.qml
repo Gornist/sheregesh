@@ -9,8 +9,20 @@ Item {
     readonly property var st: win.st
     readonly property real big: 34 * win.s
 
-    function videoState(s) {         // краткая причина для плитки связи (полный текст — на экране «Видео»)
-        return s === "no-video" ? qsTr("stream interrupted") : s === "unavailable" ? qsTr("GStreamer missing") : s
+    function videoShort(d, fps) {    // кратко для плитки связи (полный текст и причина — на экране «Видео»)
+        switch (d) {
+        case "playing": return qsTr("playing · %1\u00a0fps").arg(win.num(fps, 0))
+        case "waiting": case "restarting": case "starting": return qsTr("waiting for stream")
+        case "off": return qsTr("no stream")
+        case "no-signal": return qsTr("no signal")
+        case "no-device": return qsTr("no device")
+        case "connect-error": return qsTr("connection error")
+        case "error": return qsTr("source error")
+        case "unsupported": return qsTr("mode not supported")
+        case "no-video": return qsTr("stream interrupted")
+        case "unavailable": return qsTr("GStreamer missing")
+        default: return d
+        }
     }
 
     GridLayout {
@@ -135,8 +147,9 @@ Item {
                 objectName: "linkProtocol"
                 Layout.fillWidth: true; wrapMode: Text.WordWrap
                 maximumLineCount: 2; elide: Text.ElideRight
-                // без связи версия блока — прежняя, не текущая; при несовместимости — именно она и важна
-                visible: st.peerState === "connected" || st.peerState === "incompatible"
+                // без связи версия блока — прежняя, не текущая; совпадающая — уже в нижней строке и на «О системе»
+                // (на 1280×800 высота плитки ограничена); при несовместимости или различии — показывается
+                visible: st.peerState === "incompatible" || (st.peerState === "connected" && st.peerProtocol !== st.localProtocol)
                 text: qsTr("Protocol: remote %1 / console %2").arg(st.peerProtocol).arg(st.localProtocol); color: win.p.muted
             }
             Label {
@@ -167,13 +180,15 @@ Item {
             Label {
                 objectName: "linkVideo"
                 Layout.fillWidth: true; wrapMode: Text.WordWrap
+                maximumLineCount: 2; elide: Text.ElideRight
                 readonly property var rx: backend.videoReceiver
-                text: rx.state === "playing" ? qsTr("Video: playing · %1 fps").arg(win.num(rx.fps, 0))
-                    : rx.state === "waiting" || rx.state === "restarting" ? qsTr("Video: waiting for stream")
-                    : rx.state === "off" ? qsTr("Video: no stream")
-                    : qsTr("Video: no frames (%1)").arg(page.videoState(rx.state))
-                color: rx.state === "playing" || rx.state === "off" ? win.p.muted
-                     : rx.state === "waiting" || rx.state === "restarting" ? win.p.info : win.p.warning
+                readonly property var vs: backend.videoSource
+                // тип входа — когда источник известен; состояние — источника на блоке, если он его сообщает, иначе приёмника
+                text: (vs.input !== "" ? qsTr("Video (%1): %2").arg(win.videoInputText(vs.input)) : qsTr("Video: %1"))
+                      .arg(page.videoShort(vs.display, rx.fps))
+                color: vs.display === "playing" || vs.display === "off" ? win.p.muted
+                     : vs.display === "waiting" || vs.display === "restarting" || vs.display === "starting" ? win.p.info
+                     : win.p.warning
             }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 1; elide: Text.ElideRight
                 objectName: "linkHeartbeat"
