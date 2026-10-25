@@ -539,7 +539,10 @@ def _sanitize_video_source(v):
             "width": num("width", int, 16384), "height": num("height", int, 16384),
             "stream_width": num("stream_width", int, 16384), "stream_height": num("stream_height", int, 16384),
             "fps": num("fps", float, 1000), "fps_actual": num("fps_actual", float, 1000),
-            "restarts": num("restarts", int, 10 ** 9), "since_s": num("since_s", float, 10 ** 9)}
+            "restarts": num("restarts", int, 10 ** 9), "since_s": num("since_s", float, 10 ** 9),
+            # RTSP: заданный транспорт (auto|tcp|udp) и фактический (tcp|udp, "" — неизвестен, напр. при auto)
+            "transport_mode": v["transport_mode"] if v.get("transport_mode") in ("auto", "tcp", "udp") else "",
+            "transport": v["transport"] if v.get("transport") in ("tcp", "udp") else ""}
 
 
 def _sanitize_status(body):

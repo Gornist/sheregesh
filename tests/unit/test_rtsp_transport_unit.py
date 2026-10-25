@@ -113,3 +113,17 @@ def test_server_codec_names_and_encoder_choice():
     assert "vtenc_h264" in mac and "rtph264pay" in mac
     assert rt.h264_encoder(lambda e: e in ("openh264enc", "v4l2h264enc")) == "v4l2h264enc"
     assert rt.h264_encoder(lambda e: False) is None
+
+
+def test_transport_reaches_spec_file_and_console():
+    """Ключ transport верхнего уровня сохраняется в video-input.json (SPEC_KEYS блока); поля транспорта источника
+    доходят до пульта только из перечня значений."""
+    from sheregesh.link import client
+    from sheregesh_remote import agent
+    assert "transport" in agent.SPEC_KEYS
+    ok = client._sanitize_video_source({"state": "streaming", "input": "rtsp", "transport_mode": "auto",
+                                        "transport": "udp"})
+    assert (ok["transport_mode"], ok["transport"]) == ("auto", "udp")
+    bad = client._sanitize_video_source({"state": "streaming", "input": "rtsp", "transport_mode": "x" * 9,
+                                         "transport": "sctp"})
+    assert (bad["transport_mode"], bad["transport"]) == ("", "")
