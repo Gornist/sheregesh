@@ -12,7 +12,7 @@ from fake_v4l2 import FakeV4L2
 from sheregesh import videosources as vs
 from sheregesh.link import client as lc
 
-SPEC_KEYS = {"source", "device", "mode", "format", "standard", "url", "codec", "transport", "latency_ms", "timeout_s"}
+SPEC_KEYS = {"source", "device", "mode", "format", "standard", "input", "url", "codec", "transport", "latency_ms", "timeout_s"}
 
 
 @pytest.fixture

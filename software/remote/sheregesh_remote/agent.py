@@ -536,7 +536,8 @@ def log(text):
 
 
 VIDEO_CONFIG_NAME = "video-input.json"
-SPEC_KEYS = {"source", "device", "mode", "format", "standard", "url", "codec", "transport", "latency_ms", "timeout_s"}
+SPEC_KEYS = {"source", "device", "mode", "format", "standard", "input", "url", "codec", "transport", "latency_ms",
+             "timeout_s"}
 
 
 def video_config_path(args):
