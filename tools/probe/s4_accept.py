@@ -246,8 +246,13 @@ class Stand:
         return None
 
     def set_source(self, source):
-        """Записать описание источника атомарно и послать SIGHUP службе блока. Удаление файла + SIGHUP источник не
-        меняет (agent.video_spec: «not found» → конфигурация не перечитана), поэтому возврат — явной записью."""
+        """--source-cmd (команда выбора источника, например команда пульта; {source}, {url} подставляются) — если
+        задана; иначе описание источника атомарно в video-input.json и SIGHUP только главному процессу службы блока
+        (kill -HUP <MainPID>; `systemctl kill` без --kill-whom=main бьёт и gst-launch). Удаление файла + SIGHUP
+        источник не меняет (agent.video_spec: «not found» → конфигурация не перечитана), поэтому возврат — записью."""
+        if self.a.source_cmd:
+            cmd = self.a.source_cmd.format(source=source, url=shlex.quote(self.a.rtsp_url or ""))
+            return subprocess.run(cmd, shell=True, timeout=30).returncode == 0
         body = shlex.quote(spec_json(source, self.a.rtsp_url))
         code, _ = ssh(self.a.remote, f"umask 077; printf '%s' {body} > {VCONF}.tmp && mv {VCONF}.tmp {VCONF} && "
                                      f"kill -HUP $(systemctl show -p MainPID --value {E.REMOTE_UNIT})")
@@ -498,6 +503,8 @@ def main(argv=None):
     ap.add_argument("--rtsp-url")
     ap.add_argument("--rtsp-stop", help="команда (на Mac), останавливающая тестовый RTSP-сервер")
     ap.add_argument("--rtsp-start", help="команда (на Mac), запускающая его снова")
+    ap.add_argument("--source-cmd", help="команда выбора источника на Mac ({source} = synthetic|rtsp, {url}); "
+                                        "по умолчанию video-input.json + SIGHUP главному процессу блока")
     ap.add_argument("--outage", type=float, default=6.0)
     ap.add_argument("--cycles", type=int, default=2)
     ap.add_argument("--switches", type=int, default=3)

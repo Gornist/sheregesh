@@ -182,3 +182,22 @@ def test_plan_without_ssh(capsys):
     assert s.main(["--plan"]) == 0
     out = capsys.readouterr().out
     assert "VID-09" in out and "Модели" in out and "VID-07" in out
+
+
+def test_set_source_uses_source_cmd_or_main_pid_hup(monkeypatch):
+    import argparse
+    calls = []
+    monkeypatch.setattr(s.subprocess, "run", lambda cmd, shell, timeout: calls.append(cmd) or
+                        argparse.Namespace(returncode=0))
+    a = argparse.Namespace(console="c", remote="r", rtsp_url="rtsp://h:8554/s4",
+                           source_cmd="select-video {source} {url}")
+    st = s.Stand.__new__(s.Stand)
+    st.a = a
+    assert st.set_source("rtsp") and calls == ["select-video rtsp rtsp://h:8554/s4"]
+    sent = []
+    monkeypatch.setattr(s, "ssh", lambda h, c, timeout=60: sent.append((h, c)) or (0, ""))
+    a.source_cmd = None
+    assert st.set_source("synthetic")
+    host, cmd = sent[0]
+    assert host == "r" and "kill -HUP $(systemctl show -p MainPID --value sheregesh-remote-net)" in cmd
+    assert "systemctl kill" not in cmd and '{"source": "synthetic"}' in cmd
