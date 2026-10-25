@@ -16,7 +16,9 @@
 - Коммит **v2 09fca4e** (исправление цикла `sheregesh-var-seed`, причина отказа B в цикле 2 —
   [`hardware/cycle2/STOP-2.md`](hardware/cycle2/STOP-2.md) «Причина установлена»). Сборка devbox, `SOURCE_DATE_EPOCH`
   1792917547 → **V = 0.1.1792917547**. Сценарий сборки — `os/docker-build.sh` ветки `ota/e2e13` (syft из GitHub).
-- Пакет: путь и SHA-256 — по итогам [`PACKAGE.md`](PACKAGE.md) (§1–§6 с заменой коммита/версии) + гейты ниже.
+- Пакет: `build/image/devbox-09fca4e-run1/ota-1/sheregesh-ota_sheregesh-lab-dev-pi4_0.1.1792917547.shota`, SHA-256
+  **`d38cc0f09c514b06e0ea3640fd2f708bed301716ec7b86b8bf1093dfed554910`**, образ `image_sha256` `1aef13e5…12e8`.
+  Гейты ниже — все PASS ([`build-e2e13/GATES.md`](build-e2e13/GATES.md); отклонение `dirty: true` разобрано там).
   **SHA утверждает владелец** до `ota-install --sha256`.
 - Пакеты `c30de791…5a82` (цикл 2) и `a09082fb…c86a` (цикл 1) **не ставить**: в обоих образах цикл упорядочения.
 
