@@ -143,6 +143,13 @@ class FakeSysfs(unittest.TestCase):
         self.run_dir.mkdir()
 
     def tearDown(self):
+        async def shutdown():                                           # закрыть сервер и обработчики соединений
+            self.srv.close()
+            tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        asyncio.run_coroutine_threadsafe(shutdown(), self.loop).result(5)
         self.loop.call_soon_threadsafe(self.loop.stop)
         usbip_attach.VHCI, helper.USB_DEVICES = self.orig
         self.tmp.cleanup()
@@ -283,6 +290,7 @@ class Hardening(unittest.TestCase):
         authorize = [ln for ln in rules.splitlines() if 'ATTR{authorized}="1"' in ln]
         self.assertEqual(len(authorize), 1)
         self.assertIn('ATTR{bInterfaceClass}=="0e"', authorize[0])
+        self.assertIn("drivers_probe", authorize[0])          # без повторного probe uvcvideo не привяжется
 
     def test_ls4_vivid_symlinks_require_driver(self):
         for line in (PI2 / "etc/99-sheregesh-lab-vivid.rules").read_text().splitlines():

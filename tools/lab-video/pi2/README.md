@@ -72,32 +72,53 @@ vivid совпадает). Устройства USB/IP получают обыч
   указаны полностью. `enable`, другие экземпляры шаблонов и другие пользователи → `NOT_HANDLED`. Правило `50-…` не меняется.
 - **USB/IP — это ядерная поверхность**: подключённое по сети устройство обслуживает USB-стек ядра pi2. Поэтому сервер
   не задаётся пользователем. Помощник берёт только `SHCAM_HOST` из `/etc/sheregesh/lab-video.conf` (файл root), это
-  должен быть IPv4-литерал из частной `LAB_NET`, иначе отказ (rc 2). Слоты фиксированы: `hdmi`→`1-1`, `cvbs`→`1-2`, `camera`→`1-3`.
-  Плюс `IPAddressDeny=any` / `IPAddressAllow=192.168.1.0/24` в юните (должно совпадать с `LAB_NET`).
-- **Юниты**: `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`, `RestrictAddressFamilies`.
-  `ProtectKernelTunables`/`ProtectKernelModules` намеренно **не** включены: нужны запись в `/sys/…/vhci_hcd.0` и `modprobe`.
-  Подача vivid работает от `sheregesh-ui`, с `Nice=10`.
+  должен быть IPv4-литерал из частной `LAB_NET`, иначе отказ (rc 2). Слоты фиксированы: `hdmi`→`1-1 534d:2109`,
+  `cvbs`→`1-2 534d:0021`, `camera`→`1-3 1d6b:0102`. Плюс `IPAddressDeny=any` / `IPAddressAllow=192.168.1.0/24` в юните
+  (должно совпадать с `LAB_NET`).
+- **Подменённый сервер в той же сети** (LAB-SECURITY LS-1) — три рубежа:
+  1. до attach: заявленный сервером VID:PID должен совпасть со слотом, иначе сокет закрывается, attach не делается;
+  2. `98-sheregesh-lab-usbip.rules`: на корневых хабах vhci `interface_authorized_default=0`; udev авторизует
+     только интерфейсы класса `0e` (видео) и запускает `drivers_probe` — HID, накопитель и т. п. остаются без драйвера;
+  3. после attach: на порту наш `devid`, VID:PID и все классы интерфейсов в sysfs = слот и `0e`, иначе немедленный detach.
+- **Порт vhci** (LS-2, LS-3): `state.json` хранит порт и `devid`; `stop` отключает порт, только если там всё ещё
+  наше устройство (после «выдернуть» со стороны shcam порт мог занять другой слот). Выбор порта, attach и detach —
+  под `flock` на каталоге контроллера vhci, одновременный `start` двух слотов берёт разные порты.
+- **Узлы vivid** (LS-4): udev-ссылки и `lab-vivid` опознают узел по имени **и** драйверу `vivid` — UVC-устройство
+  по USB/IP может назваться `vivid-000-vid-cap`.
+- **Юниты** (LS-7): `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`, `RestrictAddressFamilies`,
+  `ProtectControlGroups/Clock/Hostname/KernelLogs`, `RestrictNamespaces/Realtime/SUIDSGID`, `LockPersonality`,
+  `SystemCallArchitectures=native`. Юниты от root — `CapabilityBoundingSet=CAP_SYS_MODULE` (только `modprobe`; запись
+  в sysfs vhci и узлы — по правам владельца-root). `ProtectKernelModules` нигде у root-юнитов (нужен `modprobe`),
+  `ProtectKernelTunables` — у vivid и подачи, но не у usbip (нужна запись в `/sys/…/vhci_hcd.0`). Подача vivid — от
+  `sheregesh-ui`, без привилегий, `Nice=10`.
 - vivid — тестовый драйвер ядра без внешних входов. Загружается только по `start`, не при загрузке.
 
 ## Что проверено (2026-10-25)
 
-- `python3 -m unittest tools/lab-video/pi2/tests/test_pi2_lab_video.py` — 11 тестов:
-  - правило polkit на настоящем движке JavaScript (`node`), 15 случаев;
-  - проверки конфига и отказы помощника;
-  - цикл `usbip start/stop` против настоящего эмулятора с подменённым sysfs vhci;
+- `python3 -m unittest tools/lab-video/pi2/tests/test_pi2_lab_video.py` — 27 тестов без root, на подменах:
+  - правило polkit на настоящем движке JavaScript (`node`), 15 случаев; манифест ↔ файлы ↔ правило;
+  - отказы конфига; цикл `usbip start/stop` против настоящего эмулятора с подменённым sysfs vhci;
+  - LS-1: сервер заявил HID `046d:c52b` → отказ до attach; проверка после attach (VID:PID, класс 03, чужой devid);
+  - LS-2: на переиспользованном порту чужой devid → не отключается; LS-3: два одновременных `start` → порты 0 и 1;
+  - LS-4: узел с именем vivid, но драйвером uvcvideo, не принимается; LS-7: привилегии юнитов;
   - разбор DV timings (720p30, 1080i50) и имён управлений.
-- **На живом ядре shcam** (Pi 5, та же раскладка vivid, настоящий vhci):
-  - `lab-vivid`: сигналы дают статусы `0x2` и `0x100` и `ENOLCK`, как в CONTRACT; `cvbs ntsc` и `hdmi 1920x1080p30` переключают узлы;
-  - `lab-vivid feed cvbs` даёт картинку камеры на входе (там `avdec_h264`, на Pi 4 будет `v4l2h264dec`);
-  - `sheregesh-lab-video usbip start/stop hdmi` подключает и отключает `534d:2109` через vhci;
-  - для `SHCAM_HOST=8.8.8.8` — отказ (rc 2).
+- **На живом ядре shcam** (Pi 5, ядро 6.18, systemd; набор поставлен по `manifest.tsv` в настоящие пути, юниты
+  запускались systemd с `DEV-MODE`, после проверки всё снято):
+  - `systemctl start sheregesh-lab-usbip@cvbs` и `@camera` одновременно → порты 0 и 1 (LS-3);
+  - корневые хабы vhci `interface_authorized_default=0`, видеоинтерфейсы `authorized=1` и привязаны к `uvcvideo`.
+    Без `drivers_probe` в правиле драйвер **не** привязывался — найдено на этой проверке и исправлено;
+  - **трафик USB/IP после выхода помощника идёт** (90 кадров MJPEG) при `IPAddressDeny=any`/`IPAddressAllow` юнита —
+    бывший пункт 2 списка ниже;
+  - LS-2: камеру «выдернули» со стороны shcam, порт 0 занял `cvbs`, `stop` камеры → «занят devid 0x10003, наш 0x10004 —
+    не отключаю», устройство cvbs на месте;
+  - `sheregesh-lab-vivid`: старт в песочнице с `CapabilityBoundingSet=cap_sys_module` (modprobe, `udevadm settle`,
+    `lab-vivid init`), ссылки `/dev/sheregesh-lab/*` только на узлы vivid; `stop`, пока узлы заняты подачами, →
+    «Module vivid is in use», юнит failed (ожидаемо, бывший пункт 5);
+  - `lab-vivid`: статусы `0x2`/`0x100`/`ENOLCK` как в CONTRACT, NTSC и 1080p30, подача даёт картинку камеры;
+    отказ помощника для `SHCAM_HOST=8.8.8.8` (rc 2).
 
-**Не проверено, проверить на pi2 после сборки образа:**
+**Осталось проверить на pi2 после установки образа:**
 1. polkitd применяет `51-…`: `systemctl start sheregesh-lab-usbip@hdmi` от `sheregesh-ui` проходит без пароля, `enable` — нет.
-2. `IPAddressAllow` для сокета, который после `attach` передан ядру: идёт ли трафик USB/IP после того, как процесс помощника
-   завершился (юнит `RemainAfterExit`, cgroup жива). Если фильтр мешает — убрать `IPAddress*` из `sheregesh-lab-usbip@`
-   и оставить проверку адреса в помощнике.
-3. `udevadm settle` внутри песочницы `sheregesh-lab-vivid` (AF_NETLINK разрешён) и появление `/dev/sheregesh-lab/*`.
-4. Подача на Pi 4: `v4l2h264dec` → `videoconvert` → `interlace` укладывается по CPU рядом с видеоприёмом блока.
-5. `systemctl stop sheregesh-lab-vivid`, пока видеоприём блока держит узел vivid, — ожидается отказ `modprobe -r`.
-   Сначала переключить блок на другой источник.
+2. Подача на Pi 4: `v4l2h264dec` → `videoconvert` → `interlace` укладывается по CPU рядом с видеоприёмом блока.
+3. Свежая загрузка vivid на pi2 сразу даёт `/dev/sheregesh-lab/*` (на shcam vivid был загружен заранее — проверено через
+   повторное событие udev).

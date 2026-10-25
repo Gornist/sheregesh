@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Лабораторный dev-образ (LAB-SECURITY LS-1): на шине vhci (USB/IP) интерфейсы по умолчанию не авторизованы —
+# драйвер к ним не привязывается. Разрешены только интерфейсы класса 0e (видео, uvcvideo). Подменённый сервер USB/IP
+# не подключит к ядру HID, накопитель и т. п.; помощник ещё сверяет VID:PID слота и классы интерфейсов после attach.
+# Драйвер пробуется при добавлении интерфейса, когда тот ещё не авторизован, и после авторизации сам не повторяет:
+# поэтому drivers_probe (Documentation/usb/authorization.rst). Проверено на ядре 6.18 (shcam, 2026-10-25).
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{bDeviceClass}=="09", DEVPATH=="/devices/platform/vhci_hcd.*/usb[0-9]*", ATTR{interface_authorized_default}="0"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", DEVPATH=="/devices/platform/vhci_hcd.*", ATTR{bInterfaceClass}=="0e", ATTR{authorized}="1", RUN+="/bin/sh -c 'echo %k > /sys/bus/usb/drivers_probe'"
