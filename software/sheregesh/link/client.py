@@ -13,6 +13,7 @@
 import ipaddress
 import json
 import os
+import re
 import socket
 import ssl
 import threading
@@ -97,6 +98,9 @@ class PeerClient:
         self._thread = threading.Thread(target=self._run, name="peer-link", daemon=True)
         self._seq = 0
         self._last_peer_seq = None
+        self._outbox = []                   # (тип, тело) от других потоков; отправляет только поток канала
+        self._vsel_req = 0
+        self._vsel = None                   # последний запрос выбора видеоисточника (snapshot()["video_select"])
 
     # ---------- жизненный цикл ----------
     def start(self):
@@ -120,6 +124,27 @@ class PeerClient:
     def set_heartbeat_timeout(self, seconds):
         self.heartbeat_timeout_s = float(seconds)
 
+    def select_video_source(self, source_id: str) -> None:
+        """Выбрать видеоисточник блока по id из status.video.sources (протокол 1.2, video-select). Асинхронно:
+        сообщение уходит из потока канала; результат — в телеметрии (status.video.select с тем же req, затем
+        status.video.sources[].active и status.video.source.state). Состояние запроса на стороне пульта —
+        snapshot()["video_select"]: {"req", "id", "state"}: queued → sent; unsupported (сессия 1.1: старый блок),
+        offline (нет соединения) — сообщение не отправлено. Неверный id (не строка из [A-Za-z0-9._:@+/-], > 96
+        символов) — ValueError."""
+        if not isinstance(source_id, str) or not VIDEO_SOURCE_ID.fullmatch(source_id):
+            raise ValueError(f"bad video source id {source_id!r}")
+        with self._lock:
+            self._vsel_req += 1
+            req = self._vsel_req
+            if self._st.phase != "connected":
+                state = "offline"
+            elif "video-select" not in TYPES.get(self._st.session or "", ()):
+                state = "unsupported"
+            else:
+                state = "queued"
+                self._outbox.append(("video-select", {"id": source_id, "req": req}))
+            self._vsel = {"req": req, "id": source_id, "state": state}
+
     # ---------- интерфейс Peer ----------
     def heartbeat_age(self):
         with self._lock:
@@ -133,7 +158,8 @@ class PeerClient:
                     "heartbeat_age": None if st.last_rx is None else round(time.monotonic() - st.last_rx, 2),
                     "host": st.host, "port": self.port, "tls": st.tls, "secure": self.ctx is not None,
                     "lost_s": None if st.lost_at is None else round(time.monotonic() - st.lost_at, 1),
-                    "peer_uri": self.tls_cfg.peer_uri if self.tls_cfg else None}
+                    "peer_uri": self.tls_cfg.peer_uri if self.tls_cfg else None,
+                    "video_select": dict(self._vsel) if self._vsel else None}
 
     def drain_link_events(self):
         with self._lock:
@@ -329,6 +355,7 @@ class PeerClient:
                     self.counters.received += 1
                     self._on_message(msg)
                     established = established or self._st.phase in ("connected", "incompatible")
+                self._flush_outbox(sock)
                 self._write_status()
                 phase = self._st.phase
                 now = time.monotonic()
@@ -345,6 +372,11 @@ class PeerClient:
                 self._set(detail="closed")
         finally:
             self._sock = None
+            with self._lock:
+                for mtype, body in self._outbox:          # соединение потеряно до отправки
+                    if mtype == "video-select" and self._vsel and self._vsel["req"] == body["req"]:
+                        self._vsel["state"] = "offline"
+                self._outbox.clear()
             try:
                 sock.close()
             except OSError:
@@ -400,6 +432,18 @@ class PeerClient:
             self._set(detail="closed")
 
 
+    def _flush_outbox(self, sock):
+        with self._lock:
+            out, self._outbox = self._outbox, []
+        for mtype, body in out:
+            if mtype not in TYPES.get(self._st.session or "", ()):
+                continue
+            self._send(sock, mtype, body)                # OSError — обрыв: обрабатывает _session
+            if mtype == "video-select":
+                with self._lock:
+                    if self._vsel and self._vsel["req"] == body["req"]:
+                        self._vsel["state"] = "sent"
+
     def _ack(self, seq):
         if "ack" in TYPES.get(self._st.session or "", ()) and self._sock is not None:
             try:
@@ -425,6 +469,36 @@ def _write_cache(cfg, host):
 # Те же наборы, что у пульта (sheregesh_console/videosource.py: INPUTS, SOURCE_STATES)
 VIDEO_SOURCE_STATES = ("no-device", "no-signal", "starting", "streaming", "connect-error", "error")
 VIDEO_SOURCE_INPUTS = ("synthetic", "hdmi", "cvbs", "usb", "v4l2", "rtsp")
+VIDEO_SOURCE_ID = re.compile(r"[A-Za-z0-9._:@+/-]{1,96}")       # sheregesh.videosources.ID_RE
+VIDEO_SOURCES_MAX = 16
+VIDEO_SELECT_RESULTS = ("ok", "unknown-id", "error")
+
+
+def _sanitize_video_sources(v):
+    """status.video.sources (sheregesh.videosources): не более 16 объектов {id, input, name, available, active};
+    неверные элементы и повторы id отбрасываются. Не список — None."""
+    if not isinstance(v, list):
+        return None
+    out, seen = [], set()
+    for e in v[:VIDEO_SOURCES_MAX]:
+        if not isinstance(e, dict) or not isinstance(e.get("id"), str) or not VIDEO_SOURCE_ID.fullmatch(e["id"]) \
+                or e["id"] in seen or e.get("input") not in VIDEO_SOURCE_INPUTS:
+            continue
+        seen.add(e["id"])
+        out.append({"id": e["id"], "input": e["input"],
+                    "name": e["name"][:64] if isinstance(e.get("name"), str) else "",
+                    "available": e.get("available") is True, "active": e.get("active") is True})
+    return out
+
+
+def _sanitize_video_select(v):
+    """status.video.select — результат последнего video-select: {req, id, result: ok|unknown-id|error, error}."""
+    if not isinstance(v, dict) or v.get("result") not in VIDEO_SELECT_RESULTS:
+        return None
+    req = v.get("req")
+    return {"req": req if isinstance(req, int) and not isinstance(req, bool) and 0 <= req < 2 ** 31 else 0,
+            "id": v["id"][:96] if isinstance(v.get("id"), str) else "", "result": v["result"],
+            "error": v["error"][:200] if isinstance(v.get("error"), str) else ""}
 
 
 def _sanitize_video_source(v):
@@ -468,6 +542,12 @@ def _sanitize_status(body):
         src = _sanitize_video_source(v.get("source"))
         if src is not None:                       # видеоприём блока: необязательное поле (протокол 1.1 без изменений)
             out["video"]["source"] = src
+        sources = _sanitize_video_sources(v.get("sources"))
+        if sources is not None:                   # список источников блока (S4): необязательное поле
+            out["video"]["sources"] = sources
+        sel = _sanitize_video_select(v.get("select"))
+        if sel is not None:                       # результат последнего video-select (протокол 1.2)
+            out["video"]["select"] = sel
     ev = body.get("active_events")
     out["active_events"] = [str(c)[:32] for c in ev if isinstance(c, str)][:20] if isinstance(ev, list) else []
     if isinstance(body.get("uptime_s"), (int, float)):
