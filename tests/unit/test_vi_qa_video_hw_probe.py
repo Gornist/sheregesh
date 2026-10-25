@@ -41,7 +41,8 @@ class AnalogFake(FakeV4L2):
         d = self.devices.get(self.fds.get(fd))
         if d is not None and d.get("no_framesizes") and req in (vi.VIDIOC_ENUM_FRAMESIZES, vi.VIDIOC_ENUM_FRAMEINTERVALS):
             raise OSError(errno.ENOTTY, "Inappropriate ioctl")
-        if d is not None and "inputs" in d:
+        # входы этого теста — строки; входы общей подделки (dict, по умолчанию None) обрабатывает FakeV4L2
+        if d is not None and d.get("inputs") and isinstance(d["inputs"][0], str):
             if req == hp.VIDIOC_ENUMINPUT:
                 index = hp.INPUT.unpack(buf)[0]
                 if index >= len(d["inputs"]):
