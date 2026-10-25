@@ -18,7 +18,9 @@
   no-plain     нет UDP вне loopback и видеопортов UDP; видео — TCP 7444 ESTABLISHED между платами
   ctl-loss     пауза службы блока 8 с: «нет видео» ≤ 3 с, затем потеря управления → видео выключено; после —
                сеанс и видео снова ≤ 10 с (REQ-SW-002)
-  sender-kill  SIGKILL генератора на pi2: видеосеанс кончается, пульт переподключается, видео восстановлено
+  sender-kill  SIGKILL генератора на pi2: видеоприём блока (Ingest, 3e147dd) перезапускает генератор, кадры
+               возобновляются ≤ 10 с — в том же видеосеансе (новый сеанс допустим, но не обязателен); «нет видео»
+               может не наступить, если перезапуск быстрее NO_VIDEO_AFTER_S (1,5 с) — это наблюдение
   restart      штатный перезапуск sheregesh-remote-net: управление и видео восстанавливаются
   leftovers    после испытаний: на каждой плате ровно один конвейер видео текущего сеанса, сирот нет
 Только синтетический videotestsrc; удалённых команд через лабораторный канал нет. Сигналы — процессам sheregesh-ui.
@@ -347,20 +349,78 @@ def sc_ctl_loss(ch, rh, pause=8):
     return {**res, "verdict": "PASS" if ok else "FAIL"}
 
 
-def sc_sender_kill(ch, rh):
-    if not wait(playing(ch), 60):
+SENDER_BACK_S = 10.0     # REQ-SW-002: отображение восстанавливается не позднее 10 с
+GEN_PAT = "gst-launch-1.0.*rtpstreampay"
+
+
+def judge_sender_kill(m):
+    """Вердикт sender-kill под Ingest (чистая функция). Требуется: генератор перезапущен (новый PID), старые процессы
+    сняты, на блоке ровно один конвейер без сирот, кадры на пульте возобновились ≤ 10 с (в том же сеансе или в новом),
+    управление не прерывалось. «Нет видео» (no_video_seen) и новый сеанс — только наблюдения."""
+    problems, errors = [], []
+    if not m.get("killed"):
+        errors.append("нет генератора на pi2 до сценария")
+    if m.get("restart_s") is None:
+        problems.append("генератор не перезапущен (нового процесса нет)")
+    if m.get("left"):
+        problems.append(f"убитые процессы остались: {m['left']}")
+    if m.get("remote_pipelines") != 1 or m.get("remote_orphans"):
+        problems.append(f"конвейеров на блоке {m.get('remote_pipelines')}, сирот {len(m.get('remote_orphans') or [])}")
+    back = m.get("video_back_s")
+    if back is None:
+        problems.append("кадры на пульте не возобновились")
+    elif back > SENDER_BACK_S:
+        problems.append(f"кадры возобновились через {back} с > {SENDER_BACK_S}")
+    if m.get("control_phase") != "connected" or m.get("control_dropped"):
+        problems.append("управление прерывалось (инвариант ADR-0011)")
+    verdict = "ERROR" if errors else "FAIL" if problems else "PASS"
+    return verdict, errors + problems
+
+
+def sc_sender_kill(ch, rh, timeout=30.0):
+    if wait(playing(ch), 60) is None:                # 0.0 — «уже играет», а не отказ
         return {"verdict": "ERROR", "reason": "нет видео до сценария"}
-    n0, t0 = _sessions(ch), time.time()
-    pids = ssh(rh, "pgrep -u sheregesh-ui -f 'gst-launch-1.0.*rtpstreampay'").split()
+    n0, t_wall = _sessions(ch), time.time()
+    r0 = rv(rh).get("sender_restarts")
+    pids = ssh(rh, f"pgrep -u sheregesh-ui -f '{GEN_PAT}'").split()
     if not pids:
-        return {"verdict": "ERROR", "reason": "нет генератора на pi2"}
+        return {"verdict": "ERROR", "reason": "нет генератора на pi2", "killed": []}
+    t0 = time.monotonic()
     ssh(rh, f"kill -KILL {' '.join(pids)}")
-    back = wait(lambda: playing(ch)() and _sessions(ch) > n0, 60, 0.5)
-    left = [p for p in pids if ssh(rh, f"test -d /proc/{p} && echo y") == "y"]
-    ctl = jread(ch, C_STATUS).get("phase")
-    return {"killed": pids, "left": left, "video_back_s": back, "sessions": [n0, _sessions(ch)], "control_phase": ctl,
-            "remote_log": journal(rh, "sheregesh-remote-net", t0, "video"),
-            "verdict": "PASS" if back is not None and not left and ctl == "connected" else "FAIL"}
+    m = {"killed": pids, "restart_s": None, "video_back_s": None, "no_video_seen": False, "control_dropped": False,
+         "new_pids": []}
+    f_ref = None
+    while time.monotonic() - t0 < timeout:
+        now = round(time.monotonic() - t0, 2)
+        if m["restart_s"] is None:
+            new = [p for p in ssh(rh, f"pgrep -u sheregesh-ui -f '{GEN_PAT}'").split() if p not in pids]
+            if new:
+                m["restart_s"], m["new_pids"] = now, new
+        v = cv(ch)
+        ctl = jread(ch, C_STATUS).get("phase")
+        m["control_dropped"] |= ctl not in (None, "connected")
+        live = v.get("mode") == "remote-tls" and v.get("state") == "playing"
+        m["no_video_seen"] |= not live
+        frames = v.get("frames_decoded") or 0
+        if m["restart_s"] is not None:
+            if f_ref is None:
+                f_ref = frames                       # кадры на момент перезапуска: дальше должны расти
+            elif live and (frames > f_ref or (v.get("sessions") or 0) > n0):
+                m["video_back_s"] = now
+                break
+        time.sleep(0.3)
+    m["left"] = [p for p in pids if ssh(rh, f"test -d /proc/{p} && echo y") == "y"]
+    rows = ssh(rh, f"ps -eo pid,ppid,args --no-headers | grep -E '{GEN_PAT}' | grep -v grep").splitlines()
+    m["remote_pipelines"] = len(rows)
+    m["remote_orphans"] = [r for r in rows if r.split()[1] == "1"]
+    m["control_phase"] = jread(ch, C_STATUS).get("phase")
+    m["sessions"] = [n0, _sessions(ch)]
+    m["new_session"] = m["sessions"][1] > n0
+    m["sender_restarts"] = [r0, rv(rh).get("sender_restarts")]
+    m["remote_log"] = journal(rh, "sheregesh-remote-net", t_wall, "video")
+    verdict, why = judge_sender_kill(m)
+    return {**m, "problems": why, "verdict": verdict,
+            "note": "«нет видео» и новый сеанс — наблюдения: Ingest перезапускает генератор в том же сеансе"}
 
 
 def sc_restart(ch, rh):

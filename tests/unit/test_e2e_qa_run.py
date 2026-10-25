@@ -65,9 +65,54 @@ def test_not_observed_and_tool_errors_are_never_pass():
 
 def test_restart_and_sender_kill_judge_only_applicable_limits():
     assert set(e.APPLICABLE["restart"]) == {"link_back_s", "video_back_s"}
-    assert set(e.APPLICABLE["sender-kill"]) == {"video_off_s", "video_back_s"}
+    assert set(e.APPLICABLE["sender-kill"]) == {"video_back_s"}       # «нет видео» — только наблюдение (Ingest)
     r = e.judge("sender-kill", {"detect_s": None, "video_off_s": 1.2, "video_back_s": 2.4}, {})
     assert r["verdict"] == "PASS" and "detect_s" not in r["criteria"]
+    r = e.judge("sender-kill", {"video_off_s": None, "video_back_s": 1.1}, {})
+    assert r["verdict"] == "PASS"                    # перезапуск быстрее NO_VIDEO_AFTER_S: «нет видео» не наступило
+    assert e.judge("sender-kill", {"video_off_s": 0.8, "video_back_s": 10.5}, {})["verdict"] == "FAIL"
+    assert e.judge("sender-kill", {"video_off_s": 0.8, "video_back_s": None}, {})["verdict"] == "ERROR"
+
+
+def vrow(t, frames, sessions=1, playing=True):
+    return (t, 1000.0 + t, {"peerLink": "CONNECTED",
+                            "video": {"mode": "remote-tls", "state": "playing" if playing else "no-video",
+                                      "decoded_fps_5s": 30.0 if playing else 0.0, "sessions": sessions,
+                                      "frames_decoded": frames}})
+
+
+def test_sender_kill_recovery_in_same_session_counts_from_new_frames():
+    """SIGKILL в t=0; Ingest перезапустил генератор в t=1,2; сеанс прежний. Строка t=0,5 «ещё играет» со старым
+    счётчиком — не возврат; возврат — первая строка после перезапуска с выросшим счётчиком кадров."""
+    rows = [vrow(-0.5, 900), vrow(0.5, 915), vrow(1.0, 915), vrow(1.5, 915), vrow(2.0, 930), vrow(3.0, 960)]
+    m = e.measure(rows, 0.0, 0.0, 1, restart_at=1.2)
+    assert m["video_back_s"] == 2.0
+    assert m["video_off_s"] is None                  # приёмник не успел уйти в «нет видео»: наблюдение, не ошибка
+    rows = [vrow(0.5, 915), vrow(1.0, 915, playing=False), vrow(2.5, 0, playing=False), vrow(4.0, 10, sessions=2)]
+    m = e.measure(rows, 0.0, 0.0, 1, restart_at=None)
+    assert m["video_back_s"] == 4.0 and m["video_off_s"] == 1.0     # новый сеанс тоже засчитывается
+    assert e.resumed_at([vrow(0.5, 915), vrow(2.0, 915)], 0.0, 1, 1.0) is None   # кадры не пошли — не возврат
+
+
+def test_sender_kill_invariant_generator_restart_or_new_session():
+    b = {"console": snap(), "remote": snap()}
+    inv = e.invariants("sender-kill", b, b, [], {"generator_restart_s": 1.3})
+    assert inv["remote.generator_restarted"][0]                      # тот же сеанс, новый процесс — норма
+    inv = e.invariants("sender-kill", b, b, ["[remote] video: session from 192.168.1.92: urn"], {})
+    assert inv["remote.generator_restarted"][0]
+    inv = e.invariants("sender-kill", b, b, [], {"generator_restart_s": None})
+    assert inv["remote.generator_restarted"] == (False, inv["remote.generator_restarted"][1], "FAIL")
+    assert "remote.journal_session" not in inv
+
+
+def test_sender_kill_new_generator_excludes_killed(monkeypatch):
+    f = FakeSSH({"pgrep": (0, "12 13")})
+    monkeypatch.setattr(e, "ssh", f)
+    fault = e.Fault("sender-kill", "pi2", 5)
+    assert fault.inject()[0] and fault.killed == ["12", "13"]
+    assert fault.new_generator() == []
+    f.replies["pgrep"] = (0, "13 57")
+    assert fault.new_generator() == ["57"]
 
 
 def test_invariants_watchdog_in_pause_is_error_restart_of_console_is_fail():
@@ -80,7 +125,7 @@ def test_invariants_watchdog_in_pause_is_error_restart_of_console_is_fail():
     assert not inv["console.gst_pipelines"][0] and not inv["remote.gst_pipelines"][0]
     assert not inv["remote.journal_session"][0]
     inv = e.invariants("sender-kill", b, b, ["[remote] video: session from 192.168.1.92: urn"])
-    assert inv["remote.journal_video_session"][0]
+    assert inv["remote.generator_restarted"][0]
 
 
 def test_summary_order_fail_error_pass_and_resource_growth_is_measured_only():
