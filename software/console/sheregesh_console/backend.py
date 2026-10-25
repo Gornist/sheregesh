@@ -175,6 +175,7 @@ class Backend(QObject):
             self.bench.events.inject("CFG-RECOVERED", detail=code)
             self.log("warning", "config", f"recovery action {code}")
         self.video = VideoReceiver(self, command=video_command)
+        self.video.stateChanged.connect(self._journal_video_state)
         self._local_sender = None
         self._local_video = local_video
         self._video_scan = dict(video_scan or {})
@@ -423,17 +424,25 @@ class Backend(QObject):
                                     f"peer={peer} host={st['linkHost'] or '-'} tls={st['linkTls'] or 'none'} "
                                     f"mode={st['peerMode']})")
             self._journal_link = view
+        self._journal_video_state()
+
+    @Slot()
+    def _journal_video_state(self):
+        """Наличие видеопотока — по сигналу приёмника, а не по такту бэкенда: обрыв короче такта (0,125–0,5 с)
+        при опросе по такту в журнал не попадал (CI ubuntu, E2E-12)."""
         cls = jr.video_class(self.video.state)
-        if cls is not None and cls != self._journal_video:
-            if cls == "playing":
-                self.journal.emit(jr.INFO, f"video: stream {'restored' if self._journal_video == 'no-stream' else 'started'} "
-                                           f"(codec={self.video.codec or '-'} source={self._video_source})")
-            elif cls == "no-stream":
-                self.journal.emit(jr.WARNING, f"video: no stream (state={self.video.state} "
-                                              f"error={self.video.error or '-'} source={self._video_source})")
-            elif self._journal_video is not None:
-                self.journal.emit(jr.NOTICE, f"video: off (source={self._video_source})")
-            self._journal_video = cls
+        if cls is None or cls == self._journal_video:
+            return
+        src = getattr(self, "_video_source", None)
+        if cls == "playing":
+            how = "restored" if self._journal_video == "no-stream" else "started"
+            self.journal.emit(jr.INFO, f"video: stream {how} (codec={self.video.codec or '-'} source={src})")
+        elif cls == "no-stream":
+            self.journal.emit(jr.WARNING, f"video: no stream (state={self.video.state} "
+                                          f"error={self.video.error or '-'} source={src})")
+        elif self._journal_video is not None:
+            self.journal.emit(jr.NOTICE, f"video: off (source={src})")
+        self._journal_video = cls
 
     def _mirror_to_log(self, s):
         for e in self.bench.monitor.log.events:
