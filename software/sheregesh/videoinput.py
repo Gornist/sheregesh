@@ -416,6 +416,12 @@ def _probe(node, dev_root, ioctl, opener):
         os.close(fd)
 
 
+def stable_id(node):
+    """Постоянная часть идентификатора устройства: VID:PID[:serial], иначе имя ссылки by-path (порт), bus_info,
+    в крайнем случае videoN. Одна и та же для V4L2Source.id и списка источников (sheregesh.videosources)."""
+    return node.usb_id or (os.path.basename(node.by_path) if node.by_path else "") or node.bus_info or node.name
+
+
 def capture_devices(**kw):
     return [n for n in scan(**kw) if n.capture]
 
@@ -537,8 +543,7 @@ class V4L2Source(VideoSource):
 
     def __init__(self, node: Node, mode: Mode, standard="", ioctl=fcntl.ioctl, opener=os.open):
         self.node = node
-        stable = node.usb_id or (os.path.basename(node.by_path) if node.by_path else "") or node.bus_info or node.name
-        self.id = f"{self.kind}:{stable}"
+        self.id = f"{self.kind}:{stable_id(node)}"
         self.name = node.card
         self.mode = mode
         modes = list(node.modes)
