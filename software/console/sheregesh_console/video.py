@@ -18,7 +18,7 @@ import subprocess
 import threading
 import time
 
-from PySide6.QtCore import Property, QObject, QRectF, QTimer, Signal, Slot
+from PySide6.QtCore import Property, QObject, QRectF, QSize, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtQuick import QQuickPaintedItem
 
@@ -53,7 +53,8 @@ class VideoReceiver(QObject):
         self._reaper = None
         self._gen = 0                      # поколение конвейера: потоки остановленного не трогают новый
         self._lock = threading.Lock()
-        self._latest = None                # bytes последнего полного кадра
+        self._latest = None                # буфер последнего полного кадра (после передачи не меняется)
+        self._image_buf = None
         self._seq = 0
         self._shown_seq = 0
         self._last_frame_t = None
@@ -297,41 +298,50 @@ class VideoReceiver(QObject):
 
     # ---------- фоновое чтение ----------
     def _reader(self, proc, gen):
+        """Кадры читаются в отдельный буфер на кадр (readinto, без склейки и срезов): кадр, отданный интерфейсу,
+        больше не меняется, и QImage строится прямо на нём без копии."""
         size = FRAME_W * FRAME_H * 4
-        buf = bytearray()
         fd = proc.stdout.fileno()
-        while True:
-            try:
-                ready, _, _ = select.select([fd], [], [], 0.5)
-            except (OSError, ValueError):
-                return
-            if proc.poll() is not None and not ready:
-                return
-            if not ready:
-                continue
-            try:
-                chunk = os.read(fd, 1 << 20)
-            except OSError:
-                return
-            if not chunk:
-                return
-            buf += chunk
-            if len(buf) >= size:
-                full = len(buf) // size
-                frame = bytes(buf[(full - 1) * size: full * size])   # только последний полный кадр
-                del buf[: full * size]
+        try:                                       # Linux: труба на целый кадр — меньше пробуждений и чтений
+            import fcntl
+            fcntl.fcntl(fd, 1031, 1 << 20)         # F_SETPIPE_SZ
+        except (ImportError, OSError):
+            pass
+        raw = os.fdopen(os.dup(fd), "rb", buffering=0)
+        frame, got = bytearray(size), 0
+        try:
+            while True:
+                try:
+                    ready, _, _ = select.select([fd], [], [], 0.5)
+                except (OSError, ValueError):
+                    return
+                if proc.poll() is not None and not ready:
+                    return
+                if not ready:
+                    continue
+                try:
+                    n = raw.readinto(memoryview(frame)[got:])
+                except OSError:
+                    return
+                if not n:
+                    return
+                got += n
+                if got < size:
+                    continue
                 now = time.monotonic()
                 with self._lock:
                     if gen != self._gen:            # конвейер уже остановлен
                         return
                     self._latest = frame
-                    self._seq += full
+                    self._seq += 1
                     self._last_frame_t = now
-                    self._decoded.extend([now] * full)
+                    self._decoded.append(now)
+                frame, got = bytearray(size), 0
                 client = self._client
                 if client is not None:
-                    for _ in range(full):
-                        client.frame_decoded(now)
+                    client.frame_decoded(now)
+        finally:
+            raw.close()
 
     # ---------- основной поток: таймер ----------
     def _set_state(self, state):
@@ -367,7 +377,8 @@ class VideoReceiver(QObject):
         with self._lock:
             frame, seq, last = self._latest, self._seq, self._last_frame_t
         if frame is not None and seq != self._shown_seq:
-            self.image = QImage(frame, FRAME_W, FRAME_H, QImage.Format_RGBX8888).copy()
+            self.image = QImage(frame, FRAME_W, FRAME_H, QImage.Format_RGBX8888)   # на буфере кадра, без копии
+            self._image_buf = frame                                                 # буфер живёт вместе с QImage
             self._fps_window = [t for t in self._fps_window if now - t < 1.0] + [now]
             self._fps = float(len(self._fps_window))         # показанных кадров за последнюю секунду
             self._shown_seq = seq
@@ -403,6 +414,21 @@ class VideoView(QQuickPaintedItem):
         self._live = True
         self._stale_seq = -1             # кадры с номером не больше этого не показываются (сняты при live=false)
         self.setAntialiasing(False)
+
+    def geometryChange(self, new, old):
+        super().geometryChange(new, old)
+        self._fit_texture()
+
+    def _fit_texture(self):
+        """Текстура не больше, чем нужно кадру: при растяжении кадра (поле видео больше 640×360) paint() рисует в
+        текстуру с разрешением самого кадра, а до размера поля её увеличивает сцена (GPU, линейная фильтрация).
+        Иначе процессор масштабирует кадр до размера поля 30 раз в секунду (на 1920×1200 — около 2 Мп на кадр).
+        Система координат paint() от этого не меняется (QQuickPaintedItem.textureSize)."""
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            return
+        k = max(1.0, min(w / FRAME_W, h / FRAME_H))
+        self.setTextureSize(QSize(max(1, round(w / k)), max(1, round(h / k))))
 
     def _get_live(self):
         return self._live
@@ -444,12 +470,23 @@ class VideoView(QQuickPaintedItem):
     receiver = Property(QObject, _get_receiver, _set_receiver, notify=receiverChanged)
 
     def paint(self, painter: QPainter):
-        painter.fillRect(QRectF(0, 0, self.width(), self.height()), QColor("#000000"))
+        w, h = self.width(), self.height()
         if not self.showing_frame():
+            painter.fillRect(QRectF(0, 0, w, h), QColor("#000000"))
             return
         img = self._receiver.image
-        sw, sh = self.width() / img.width(), self.height() / img.height()
-        k = min(sw, sh)
-        w, h = img.width() * k, img.height() * k
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        painter.drawImage(QRectF((self.width() - w) / 2, (self.height() - h) / 2, w, h), img)
+        k = min(w / img.width(), h / img.height())
+        dw, dh = img.width() * k, img.height() * k
+        x, y = (w - dw) / 2, (h - dh) / 2
+        black = QColor("#000000")
+        if x > 0.5:                                # поля по бокам / сверху-снизу, а не заливка всего кадра
+            painter.fillRect(QRectF(0, 0, x, h), black)
+            painter.fillRect(QRectF(x + dw, 0, w - x - dw, h), black)
+        if y > 0.5:
+            painter.fillRect(QRectF(0, 0, w, y), black)
+            painter.fillRect(QRectF(0, y + dh, w, h - y - dh), black)
+        # В текстуре размером с кадр (_fit_texture) масштаб ≈ 1: сглаживание не нужно, копия идёт быстрым путём
+        t = self.textureSize()
+        scale = min(t.width() / w, t.height() / h) * k if w > 0 and h > 0 else 1.0
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, abs(scale - 1.0) > 0.02)
+        painter.drawImage(QRectF(x, y, dw, dh), img)
