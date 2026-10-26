@@ -233,7 +233,8 @@ class Loop:
     def procs(self, scoped=True):
         """Снимок процессов в формате s6_jr_accept.parse_procs (MainPID — процесс агента). scoped — только агент
         и его потомки: на машине разработчика параллельно идут чужие тесты со своими эмуляторами."""
-        ps = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,args="], capture_output=True, text=True).stdout
+        # -ww: без терминала procps обрезает строку до 80 символов (CI: длинный путь к python отрезал имя модуля)
+        ps = subprocess.run(["ps", "-ww", "-A", "-o", "pid=,ppid=,args="], capture_output=True, text=True).stdout
         pid = self.agent.pid if self.agent else 0
         snap = J.parse_procs(f"MainPID={pid} NRestarts=0 ActiveState={'active' if pid else 'inactive'}\n{ps}")
         if scoped:

@@ -39,7 +39,9 @@ def alive(pid):
 
 def descendants(pid):
     """Потомки процесса (ps): дочерний процесс эмулятора и, вне Linux, его сторож pdeath.py."""
-    rows = [r.split() for r in subprocess.run(["ps", "-eo", "pid=,ppid=,command="], capture_output=True,
+    # -ww: procps на Linux без терминала обрезает строку до 80 символов — с длинным путём к python в CI имя модуля
+    # эмулятора отрезалось, и процесс «не находился».
+    rows = [r.split() for r in subprocess.run(["ps", "-ww", "-eo", "pid=,ppid=,command="], capture_output=True,
                                               text=True).stdout.splitlines() if r.strip()]
     kids, out = {}, []
     for r in rows:

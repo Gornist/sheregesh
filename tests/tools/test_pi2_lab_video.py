@@ -339,7 +339,9 @@ class Manifest(unittest.TestCase):
 
     def test_every_project_file_is_listed(self):
         listed = {src for src, _d, _m in self.rows()}
-        files = {str(p.relative_to(LAB)) for d in ("bin", "etc", "units") for p in (PI2 / d).iterdir()}
+        # __pycache__ появляется, когда тесты импортируют pi2/bin (pytest в CI) — это не файл проекта.
+        files = {str(p.relative_to(LAB)) for d in ("bin", "etc", "units") for p in (PI2 / d).iterdir()
+                 if p.name != "__pycache__"}
         self.assertEqual(files - listed, set())
 
     def test_units_dev_only_and_rule_matches_units(self):

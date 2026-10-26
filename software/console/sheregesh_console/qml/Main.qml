@@ -134,19 +134,28 @@ ApplicationWindow {
                 id: tabs
                 objectName: "tabBar"
                 Layout.fillWidth: true
+                Layout.preferredWidth: 1            // ширина — только от раскладки, не от суммы вкладок (pad зависит от width)
+                // Поля вкладок: 24·s, пока девять вкладок помещаются; иначе поровну урезаются до нуля
+                // (шрифты CI шире шрифтов устройства — вкладка «Управление» уходила за край на 1280×800).
+                readonly property real pad: {
+                    var sum = 0
+                    for (var i = 0; i < count; ++i)
+                        sum += itemAt(i).implicitWidth
+                    return count ? Math.max(0, Math.min(24 * win.s, Math.floor((width - sum) / count))) : 24 * win.s
+                }
                 focus: true
                 Keys.onLeftPressed: decrementCurrentIndex()
                 Keys.onRightPressed: incrementCurrentIndex()
                 Keys.onDownPressed: pages.children[currentIndex].forceActiveFocus()
-                TabButton { objectName: "tabDashboard"; text: qsTr("Dashboard"); width: implicitWidth + 24 * win.s }
-                TabButton { objectName: "tabVideo"; text: qsTr("Video"); width: implicitWidth + 24 * win.s }
-                TabButton { objectName: "tabDiagnostics"; text: qsTr("Diagnostics") + (st.activeCount > 0 ? " (" + st.activeCount + ")" : ""); width: implicitWidth + 24 * win.s }
-                TabButton { objectName: "tabPower"; text: qsTr("Power"); width: implicitWidth + 24 * win.s }
-                TabButton { objectName: "tabLogs"; text: qsTr("Logs"); width: implicitWidth + 24 * win.s }
-                TabButton { objectName: "tabSettings"; text: qsTr("Settings"); width: implicitWidth + 24 * win.s }
-                TabButton { objectName: "tabAbout"; text: qsTr("About"); width: implicitWidth + 24 * win.s }
-                TabButton { objectName: "tabModule"; text: qsTr("Module"); width: implicitWidth + 24 * win.s }
-                TabButton { objectName: "tabSticks"; text: qsTr("Control"); width: implicitWidth + 24 * win.s }
+                TabButton { objectName: "tabDashboard"; text: qsTr("Dashboard"); width: implicitWidth + tabs.pad }
+                TabButton { objectName: "tabVideo"; text: qsTr("Video"); width: implicitWidth + tabs.pad }
+                TabButton { objectName: "tabDiagnostics"; text: qsTr("Diagnostics") + (st.activeCount > 0 ? " (" + st.activeCount + ")" : ""); width: implicitWidth + tabs.pad }
+                TabButton { objectName: "tabPower"; text: qsTr("Power"); width: implicitWidth + tabs.pad }
+                TabButton { objectName: "tabLogs"; text: qsTr("Logs"); width: implicitWidth + tabs.pad }
+                TabButton { objectName: "tabSettings"; text: qsTr("Settings"); width: implicitWidth + tabs.pad }
+                TabButton { objectName: "tabAbout"; text: qsTr("About"); width: implicitWidth + tabs.pad }
+                TabButton { objectName: "tabModule"; text: qsTr("Module"); width: implicitWidth + tabs.pad }
+                TabButton { objectName: "tabSticks"; text: qsTr("Control"); width: implicitWidth + tabs.pad }
             }
         }
     }
