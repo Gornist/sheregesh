@@ -300,7 +300,7 @@ def check_rollback_negative_cases(key, value, bad):
 
 def check_rollback_still_on_b_or_same_boot_as_trial_fails():
     v, ids = run_rb(trial())
-    assert v == "FAIL" and "slot.back_on_A" in ids
+    assert v == "FAIL" and "slot.back_on_original" in ids
     a, t = rolled_back(), trial()
     t["boot_id"] = a["boot_id"]
     assert run_rb(a, t) == ("FAIL", ["rebooted_after_trial"])

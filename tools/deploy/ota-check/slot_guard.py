@@ -33,6 +33,7 @@ from shdeploy import BOARDS  # noqa: E402 — серийные номера пл
 BOARD_ROLE = {"pi1": "console", "pi2": "remote"}
 ROLE_UNIT = {"console": "sheregesh-console", "remote": "sheregesh-remote-net"}
 LAYOUT = {"p1": "bootconfig", "p2": "boot_a", "p3": "boot_b", "p4": "system_a", "p5": "system_b", "p6": "persistent"}
+BOOT_PART = {"A": "2", "B": "3"}                 # boot_partition в autoboot.txt
 SLOT_PARTS = {"A": ("p2", "p4"), "B": ("p3", "p5")}
 EMPTY_SHA = hashlib.sha256(b"").hexdigest()
 HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -277,14 +278,18 @@ def compare(before, after, mode, version, trial=None):
         same(k)
     same("serial")
     same("autoboot.sha256")
+    # Направление — от основного слота снимка «до» (orig) к другому (new): A → B или B → A (после OTA на B)
+    orig = db["active"]
+    new = "B" if orig == "A" else "A"
     ab = autoboot_parts(a["autoboot"])
-    add("bootconfig.autoboot", ab.get("all") == "2" and ab.get("tryboot") == "3", f"разбор файла: {ab}")
+    add("bootconfig.autoboot", ab.get("all") == BOOT_PART[orig] and ab.get("tryboot") == BOOT_PART[new],
+        f"разбор файла: {ab}")
     sl = json.loads(a["ota.status"])
     st = sl.get("state", {})
     add("health", a["health"] == "PASS", a["health"])
     add("failed", a["failed"] == "none", a["failed"])
     if mode in ("install", "unchanged"):
-        add("slot.active_unchanged", db["active"] == da["active"] == "A", f"{db['active']} → {da['active']}")
+        add("slot.active_unchanged", db["active"] == da["active"], f"{db['active']} → {da['active']}")
         for k in ("boot_id", "package", "build", "slot.root", "slot.boot", "slot.dt", "dt.tryboot", "mnt.root",
                   "mnt.boot", "mounts", "tree.boot", "tree.system", "ota.enable_present", "deploy.status", *(
                       f"unit.{u}" for u in UNITS)):
@@ -301,17 +306,17 @@ def compare(before, after, mode, version, trial=None):
             dw = da["io"][p][0] - db["io"][p][0]
             add(f"written.{p}.{LAYOUT[p]}", dw * SECTOR >= size, f"записано {dw * SECTOR} байт, образ {size}")
         if mode == "install":
-            add("ota.state", st.get("state") == "INSTALLED" and st.get("target") == "B"
+            add("ota.state", st.get("state") == "INSTALLED" and st.get("target") == new
                 and st.get("version_target") == version,
                 f"{st.get('state')} → {st.get('target')} {st.get('version_target')}")
     elif mode == "rollback":                                    # возврат на A после abort/сбоя пробной загрузки
-        add("slot.back_on_A", db["active"] == da["active"] == "A", f"{db['active']} → {da['active']} "
+        add("slot.back_on_original", db["active"] == da["active"], f"{db['active']} → {da['active']} "
             "(корень, boot, by-slot, device-tree — согласованно)")
         add("dt.tryboot", a["dt.tryboot"] == "0", f"флаг пробной загрузки {a['dt.tryboot']}")
         add("rebooted", b["boot_id"] != a["boot_id"], "boot_id сменился относительно снимка «до»")
         if trial is not None:                                   # снимок пробной загрузки: B, и после неё — новая загрузка
             et, dt = validate(trial)
-            add("trial.evidence", not et and dt.get("active") == "B" and trial["meta"]["board"] == before["meta"][
+            add("trial.evidence", not et and dt.get("active") == new and trial["meta"]["board"] == before["meta"][
                 "board"], "; ".join(et) or f"пробная загрузка: активный {dt.get('active')}",
                 status=None if not et else "ERROR")
             if not et:
@@ -321,7 +326,7 @@ def compare(before, after, mode, version, trial=None):
                   "tree.boot", "tree.system", "deploy.status"):
             same(k)
         add("mnt.root_ro", "ro" in a["mnt.root"].split(","), a["mnt.root"])
-        for p in SLOT_PARTS["B"]:                              # отвергнутый слот с начала этой загрузки не писался
+        for p in SLOT_PARTS[new]:                              # отвергнутый слот с начала этой загрузки не писался
             w, d = da["io"][p]
             add(f"untouched_since_boot.{p}.{LAYOUT[p]}", w == 0 and d == 0, f"записано {w}, отброшено {d}")
         add("ota.state", st.get("state") in ("ROLLED_BACK", "IDLE") and not st.get("target"),
@@ -330,14 +335,14 @@ def compare(before, after, mode, version, trial=None):
             s = dict(x.split("=", 1) for x in a[f"unit.{u}"].strip(";").split(";") if "=" in x)
             add(f"unit.{u}", s.get("ActiveState") == "active" and s.get("NRestarts") == "0", a[f"unit.{u}"])
     else:                                                       # trial: шаг 4, после пробной загрузки слота B
-        add("slot.trial_B", db["active"] == "A" and da["active"] == "B", f"{db['active']} → {da['active']} "
+        add("slot.trial_new", da["active"] == new, f"{db['active']} → {da['active']} "
             "(корень, boot, by-slot, device-tree — согласованно)")
         add("dt.tryboot", a["dt.tryboot"] == "1", f"флаг пробной загрузки {a['dt.tryboot']}")
         add("rebooted", b["boot_id"] != a["boot_id"], "boot_id сменился")
         add("build.version", json.loads(a["build"]).get("ota_version") == version, a["build"][:120])
-        add("ota.state", st.get("state") in ("TRYBOOT", "HEALTH_PENDING") and st.get("target") == "B",
+        add("ota.state", st.get("state") in ("TRYBOOT", "HEALTH_PENDING") and st.get("target") == new,
             f"{st.get('state')} → {st.get('target')}")
-        for p in SLOT_PARTS["A"]:                              # прежний основной слот с начала этой загрузки не писался
+        for p in SLOT_PARTS[orig]:                             # прежний основной слот с начала этой загрузки не писался
             w, d = da["io"][p]
             add(f"untouched_since_boot.{p}.{LAYOUT[p]}", w == 0 and d == 0, f"записано {w}, отброшено {d}")
         for u in ("ssh", unit):
