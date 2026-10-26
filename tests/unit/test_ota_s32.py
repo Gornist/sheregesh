@@ -218,8 +218,10 @@ def test_confirm_refused_when_any_mandatory_gate_fails(tmp_path, breakage, gate)
     assert res["state"]["state"] != "COMMITTED" and autoboot(b) == (2, 3)      # основной слот не сменился
 
 
-def test_confirm_commits_console_when_all_gates_pass(tmp_path):
+@pytest.mark.parametrize("mode", ["remote-tls", "remote-srtp"])      # ADR-0016: видео по TLS или через службу rx
+def test_confirm_commits_console_when_all_gates_pass(tmp_path, mode):
     b = console_board(tmp_path)
+    b.status_files["/run/sheregesh-ui/ui-state.json"]["video"]["mode"] = mode
     res, _ = b.request("confirm")
     assert res["result"] == "OK", [c for c in res["checks"] if c["status"] != "PASS"]
     assert autoboot(b) == (3, 2) and res["state"]["state"] == "COMMITTED"

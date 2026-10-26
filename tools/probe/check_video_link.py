@@ -78,7 +78,7 @@ def rv(rh):
 
 
 def playing(ch):
-    return lambda: (lambda v: v.get("mode") == "remote-tls" and v.get("state") == "playing")(cv(ch))
+    return lambda: (lambda v: v.get("mode") in ("remote-tls", "remote-srtp") and v.get("state") == "playing")(cv(ch))
 
 
 def journal(host, unit, since, pattern):
@@ -398,7 +398,7 @@ def sc_sender_kill(ch, rh, timeout=30.0):
         v = cv(ch)
         ctl = jread(ch, C_STATUS).get("phase")
         m["control_dropped"] |= ctl not in (None, "connected")
-        live = v.get("mode") == "remote-tls" and v.get("state") == "playing"
+        live = v.get("mode") in ("remote-tls", "remote-srtp") and v.get("state") == "playing"
         m["no_video_seen"] |= not live
         frames = v.get("frames_decoded") or 0
         if m["restart_s"] is not None:

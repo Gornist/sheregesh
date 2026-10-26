@@ -146,7 +146,7 @@ def link_up(ui):
 
 def video_up(ui):
     v = ui.get("video") or {}
-    return v.get("mode") == "remote-tls" and v.get("state") == "playing" and (v.get("decoded_fps_5s") or 0) > 0
+    return v.get("mode") in ("remote-tls", "remote-srtp") and v.get("state") == "playing" and (v.get("decoded_fps_5s") or 0) > 0
 
 
 def first(rows, t0, pred):

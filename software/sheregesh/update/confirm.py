@@ -161,7 +161,7 @@ def gates(layout, state, probe: Probe, lab_video=True):
             f"{ls.get('phase')} {ls.get('tls')} {ls.get('peer_uri')}")
         if lab_video:
             v = probe.json_file("/run/sheregesh-ui/ui-state.json").get("video") or {}
-            add("video", v.get("mode") == "remote-tls" and v.get("state") == "playing"
+            add("video", v.get("mode") in ("remote-tls", "remote-srtp") and v.get("state") == "playing"
                 and (v.get("decoded_fps_5s") or 0) >= 25, f"{v.get('mode')} {v.get('state')} {v.get('decoded_fps_5s')} к/с")
     elif r == "remote":
         ls = probe.json_file("/run/sheregesh-remote/link-status.json")
