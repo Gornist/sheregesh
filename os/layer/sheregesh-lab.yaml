@@ -37,6 +37,10 @@ mmdebstrap:
       # зависит от частоты VPU, поэтому частота закреплена на штатных для Pi 4 500 МГц (кодер H.264 не замедляется).
       printf '\n[all]\n# Sheregesh (ADR-0002): BT on mini-UART, console UART on GPIO14/15\ndtoverlay=miniuart-bt\ncore_freq_min=500\n' \
         >> $1/boot/firmware/config.txt
+      # ADR-0014: UART3 (PL011, GPIO4 TX / GPIO5 RX) — линия CRSF к JR-модулю удалённого блока. Без управления
+      # потоком; на пульте выводы свободны, оверлей одинаков для обеих плат (единый образ).
+      printf '# Sheregesh (ADR-0014): UART3 on GPIO4/5 for the CRSF line to the JR module\ndtoverlay=uart3\n' \
+        >> $1/boot/firmware/config.txt
     # sheregesh-ota.socket и sheregesh-ota-boot (S3.1-DEPLOY) включены всегда, но работают только при открытом
     # ключе подписи владельца (/etc/sheregesh/deploy/allowed_signers — только dev-образ).
     - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console sheregesh-remote-net sheregesh-health.timer sheregesh-ota.socket sheregesh-ota-boot sheregesh-var-seed

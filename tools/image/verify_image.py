@@ -437,6 +437,8 @@ def verify(img, variant, out):
                 cfg = cfg + "\n" + r.stdout
             rep.add("boot.config", "config.txt: dtoverlay=miniuart-bt и core_freq_min=500 — консоль ttyAMA0 на GPIO14/15 (ADR-0002)",
                     cfg is not None and "dtoverlay=miniuart-bt" in cfg and "core_freq_min=500" in cfg)
+            rep.add("boot.uart3", "config.txt: dtoverlay=uart3 — линия CRSF к JR-модулю на GPIO4/5 (ADR-0014)",
+                    cfg is not None and "dtoverlay=uart3" in cfg)
             auto = mtype(img, by["bootconfig"], "autoboot.txt") if "bootconfig" in by else None
             rep.add("boot.tryboot", "autoboot.txt: tryboot_a_b=1 (ADR-0006)", auto is not None and "tryboot_a_b=1" in auto,
                     (auto or "").strip().replace("\n", " "))
