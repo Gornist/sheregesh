@@ -307,7 +307,14 @@ def test_jr01_to_jr07_lab_scenarios_through_console(loop):
     rc, d = loop.ctl("reinit", "--wait", "15", "--expect", "READY", "--expect-timeout", "15")
     m = {"rc": rc, "result": d.get("result"), "ready_s": loop.wait(loop.rs, J.rs_state_is("READY", seq_gt=seq0),
                                                                     15, t0)[0]}
-    t = loop.status()
+    # status пульта отстаёт от файла состояния блока (rs) на период телеметрии: ждём перехода в истории, а не
+    # берём первый снимок (CI 40320233228: снимок без INITIALIZING → READY)
+    t = {}
+
+    def ready_in_history():
+        t.update(loop.status())
+        return J.has_transition(J.history_after(t.get("history"), seq0), "INITIALIZING", "READY", "init-ok")
+    wait_for(ready_in_history, 5, step=0.5)
     m.update(history=J.history_after(t.get("history"), seq0), init_ms=(t.get("diag") or {}).get("init_ms"))
     v, dd = J.judge_init(m)
     assert v == "PASS", (dd, m)
