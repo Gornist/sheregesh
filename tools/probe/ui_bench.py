@@ -152,6 +152,7 @@ def finish():
         "variant": {"size": f"{FW}x{FH}", "fmt": __FMT__, "conv": __CONV__, "wake": __WAKE__, "gl": __GL__,
                     "gl_active": ui.backend.videoReceiver.property("glActive")}, "shown_series": res["shown"][1:], "section_series": res["sec"][1:],
         "video_state": ui.backend.videoReceiver.property("state")}), flush=True)
+    ui.close()                                # как рабочий пульт: конвейер GL останавливается до QML
     app.quit()
 
 QTimer.singleShot(WARMUP * 1000, start)
@@ -196,7 +197,7 @@ def main():
               f"XDG_RUNTIME_DIR=$D WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_HEADLESS_OUTPUTS=1 "
               f"QT_QPA_PLATFORM=wayland SHEREGESH_HEADLESS_SIZE={w}x{h} "
               f"timeout {a.seconds + a.warmup + 60} cage -- sh -c 'wlr-randr >/dev/null 2>&1; python3 bench.py' "
-              f">$D/out.log 2>$D/err.log; grep -E '^(RESULT|PROFILE)' $D/out.log || tail -20 $D/err.log; "
+              f">$D/out.log 2>$D/err.log || echo \"EXIT $?\"; grep -E '^(RESULT|PROFILE)' $D/out.log || tail -20 $D/err.log; "
               + ("echo '== out'; grep -v '^RESULT' $D/out.log | tail -40; echo '== err'; grep -vE 'GL_|EGL|cage.c|backend|wlr_' "
                  "$D/err.log | tail -40; " if a.debug else "")
               + ("tar -C $D -cf - $(cd $D && ls pi1-*.png 2>/dev/null) | base64 -w0 | sed 's/^/GRABS /'; echo; " if a.grab else "")
