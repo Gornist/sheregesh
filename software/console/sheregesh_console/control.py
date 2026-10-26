@@ -23,6 +23,13 @@ id проверяется по списку источников блока (sta
   {"cmd": "module", "op": "configure", "args": {"enabled": false}, "wait": 30}
 M = ModuleView.snapshot(); result: ok | коды блока (disabled, forbidden, not-running, invalid, not-saved, error, …) |
 no-link | unsupported | timeout | busy | bad-request | failed.
+
+Стики и кнопки → блок (S7, ADR-0013, 4.2) — тот же слот SticksView.setEnabled, что переключатель экрана «Управление»:
+  {"cmd": "sticks", "op": "status"}                     → {"result": "ok", "detail": "", "sticks": S}
+  {"cmd": "sticks", "op": "enable", "confirmed": true}  → {"result": код, "detail": текст, "sticks": S}
+  {"cmd": "sticks", "op": "disable"}                    → то же (выключение — без подтверждения)
+S = SticksView.snapshot(); result: ok | not-confirmed (enable без "confirmed": true) | no-device | no-link | old-remote |
+bad-request | busy | failed. Включение из локального канала — только с явным флагом confirmed (для QA, ST-03).
 """
 import json
 import os
@@ -43,6 +50,7 @@ WAIT_MAX_S = 60.0
 CALL_TIMEOUT_S = 5.0        # поток интерфейса не ответил за это время — «busy», а не зависшая команда
 MODULE_OPS = ("status", "reinit", "reset", "lab", "configure")
 MODULE_WAIT_S = {"configure": 30.0}         # по умолчанию 15 с
+STICKS_OPS = ("status", "enable", "disable")
 
 
 def server_path(env=None):
@@ -142,13 +150,15 @@ class ControlServer(QObject):
             req = json.loads(raw.decode("utf-8").strip() or "null")
         except (UnicodeDecodeError, ValueError):
             return self._fail("bad-request", "not a JSON line")
-        if not isinstance(req, dict) or req.get("cmd") not in ("list", "select", "module"):
-            return self._fail("bad-request", "cmd: list | select | module")
+        if not isinstance(req, dict) or req.get("cmd") not in ("list", "select", "module", "sticks"):
+            return self._fail("bad-request", "cmd: list | select | module | sticks")
         if not self._busy.acquire(blocking=False):
             return self._fail("busy", "another request is in progress")
         try:
             if req["cmd"] == "module":
                 return self._module(req)
+            if req["cmd"] == "sticks":
+                return self._sticks(req)
             snap = self._invoke(self._snapshot)
             if req["cmd"] == "list":
                 return self._reply("ok", "", snap)
@@ -225,6 +235,29 @@ class ControlServer(QObject):
             if time.monotonic() >= end:
                 return self._module_reply("timeout", f"no result after {wait:g} s", snap())
             time.sleep(0.1)
+
+    # ---------- стики и кнопки → блок (S7) ----------
+    def _sticks(self, req):
+        sv = self.backend.sticks
+        snap = lambda: self._invoke(sv.snapshot)          # noqa: E731
+        op, confirmed = req.get("op"), req.get("confirmed", False)
+        if op not in STICKS_OPS:
+            return self._sticks_reply("bad-request", "op: " + " | ".join(STICKS_OPS), snap())
+        if not isinstance(confirmed, bool) or set(req) - {"cmd", "op", "confirmed"}:
+            return self._sticks_reply("bad-request", "fields: op, confirmed (bool)", snap())
+        if op == "status":
+            return self._sticks_reply("ok", "", snap())
+        if op == "enable" and confirmed is not True:
+            return self._sticks_reply("not-confirmed", "enable requires \"confirmed\": true", snap())
+        ok = self._invoke(lambda: sv.setEnabled(op == "enable", confirmed))
+        code = "ok" if ok else (self._invoke(lambda: sv.result) or "failed")
+        detail = {"no-device": "no control device", "no-link": "no link to the remote unit",
+                  "old-remote": "remote unit does not support rc (protocol < 1.4)"}.get(code, "")
+        return self._sticks_reply(code, detail, snap())
+
+    @staticmethod
+    def _sticks_reply(code, detail, sticks):
+        return {"result": code, "detail": detail, "sticks": sticks}
 
     @staticmethod
     def _module_reply(code, detail, module):

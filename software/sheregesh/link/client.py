@@ -9,20 +9,26 @@
 Режимы: loopback без TLS (разработка, тесты) и сетевой лабораторный профиль (tls_cfg, S3.1): TLS 1.3 с взаимной
 аутентификацией, вторая сторона опознаётся по URI в сертификате; адрес — из конфигурации или поиском в подсети
 (DHCP), но доверие только по сертификату.
+
+Поток канала ждёт данные блока в select вместе с сокетом пробуждения: сообщения от других потоков (video-select,
+module-cmd, кадры органов управления rc) уходят сразу, без ожидания таймаута приёма 0,2 с.
 """
 import ipaddress
 import json
 import os
 import re
+import select
 import socket
 import ssl
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import PROTOCOL_VERSION, __version__
+from ..control import wire as control_wire
 from ..faults import CATALOG
 from ..hal import PeerStatus
 from ..module import wire
@@ -35,6 +41,8 @@ AUTH_BACKOFF_S = 10.0                  # после отказа аутенти�
 DISCOVER_EVERY_S = 30.0
 HANDSHAKE_TIMEOUT_S = 3.0
 MAX_BAD_IN_ROW = 10
+RX_WAIT_S = 0.2                        # ожидание данных блока за один оборот цикла канала
+RC_RING = 64                           # времена отправки последних кадров rc (задержка по rc-state.n)
 
 
 @dataclass
@@ -104,6 +112,17 @@ class PeerClient:
         self._vsel = None                   # последний запрос выбора видеоисточника (snapshot()["video_select"])
         self._mcmd_req = 0
         self._mcmd = None                   # последняя команда внешнему модулю (snapshot()["module_cmd"])
+        # Органы управления (протокол 1.4, ADR-0013): только последний кадр, не очередь; номер n — в потоке канала
+        # при отправке (новое соединение — с 1), поэтому перезаписанные до отправки кадры не дают пропусков номеров.
+        self._rc = None                     # тело последнего кадра rc без n, ещё не отправленное
+        self._rc_n = 0                      # номер последнего отправленного кадра в сеансе
+        self._rc_at = None                  # monotonic отправки кадра _rc_n
+        self._rc_ring = deque(maxlen=RC_RING)   # (n, monotonic отправки)
+        self._rc_state = None               # последний rc-state блока (sanitize_rc_state) + rx_at, latency_ms
+        # Пробуждение потока канала из других потоков (select на сокете канала и _wake_r)
+        self._wake_r, self._wake_w = socket.socketpair()
+        self._wake_r.setblocking(False)
+        self._wake_w.setblocking(False)
 
     # ---------- жизненный цикл ----------
     def start(self):
@@ -112,6 +131,7 @@ class PeerClient:
 
     def stop(self):
         self._stop.set()
+        self._wake()
         s = self._sock
         if s is not None:
             try:
@@ -123,6 +143,9 @@ class PeerClient:
             except OSError:
                 pass
         self._thread.join(timeout=5)
+        if not self._thread.is_alive():
+            for w in (self._wake_r, self._wake_w):
+                w.close()
 
     def set_heartbeat_timeout(self, seconds):
         self.heartbeat_timeout_s = float(seconds)
@@ -149,6 +172,8 @@ class PeerClient:
                 state = "queued"
                 self._outbox.append(("video-select", {"id": source_id, "req": req}))
             self._vsel = {"req": req, "id": source_id, "state": state}
+        if state == "queued":
+            self._wake()
         if state == "offline":
             return {"ok": False, "error": "not-connected", "detail": "no link to remote unit"}
         if state == "unsupported":
@@ -197,6 +222,8 @@ class PeerClient:
                 self._outbox.append(("module-cmd", body))
             self._mcmd = {"req": req, "op": op, "state": state}
             connects = self.counters.connects
+        if state == "queued":
+            self._wake()
         if state == "offline":
             return {"ok": False, "result": "not-connected", "error": "no link to remote unit", "req": req}
         if state == "unsupported":
@@ -222,6 +249,33 @@ class PeerClient:
         return {"ok": False, "result": "timeout", "req": req,
                 "error": f"no result in {wait_s:g} s" + (" (still pending)" if cmd and cmd.get("req") == req else "")}
 
+    def send_rc(self, body: dict) -> str:
+        """Кадр органов управления блоку (протокол 1.4, rc; ADR-0013, раздел 3.1). Можно вызывать из любого потока,
+        не ждёт: → "queued" | "offline" (нет соединения) | "unsupported" (сессия < 1.4: старый блок или пульт).
+
+        body = {"en": bool, "ch": [8 целых −1000…1000], "btn": 0…2^24−1, "dev": {"name": str, "ok": bool}}; ключ n,
+        если есть, не используется — номер ставит поток канала при отправке. dev.name длиннее NAME_MAX обрезается.
+        Неверное тело — sheregesh.control.wire.BadRc (ValueError). Хранится только последний кадр: новый вызов до
+        отправки заменяет прежний. Поток канала будится сразу. Отправленное — snapshot()["rc_sent"], ответ блока —
+        snapshot()["rc_state"]."""
+        if not isinstance(body, dict):
+            raise control_wire.BadRc("body is not an object")
+        b = {k: v for k, v in body.items() if k != "n"}
+        dev = b.get("dev")
+        if isinstance(dev, dict) and isinstance(dev.get("name"), str):
+            b["dev"] = {**dev, "name": dev["name"][:control_wire.NAME_MAX]}
+        if isinstance(b.get("ch"), tuple):
+            b["ch"] = list(b["ch"])
+        control_wire.check_rc({**b, "n": 1})
+        with self._lock:
+            if self._st.phase != "connected":
+                return "offline"
+            if "rc" not in TYPES.get(self._st.session or "", ()):
+                return "unsupported"
+            self._rc = b
+        self._wake()
+        return "queued"
+
     # ---------- интерфейс Peer ----------
     def heartbeat_age(self):
         with self._lock:
@@ -237,7 +291,23 @@ class PeerClient:
                     "lost_s": None if st.lost_at is None else round(time.monotonic() - st.lost_at, 1),
                     "peer_uri": self.tls_cfg.peer_uri if self.tls_cfg else None,
                     "video_select": dict(self._vsel) if self._vsel else None,
-                    "module_cmd": dict(self._mcmd) if self._mcmd else None}
+                    "module_cmd": dict(self._mcmd) if self._mcmd else None,
+                    "rc_state": self._rc_state_snapshot(), "rc_sent": self._rc_sent_snapshot()}
+
+    def _rc_state_snapshot(self):
+        """snapshot()["rc_state"]: тело rc-state (sanitize_rc_state) + rx_at (monotonic приёма), rx_age_s, latency_ms
+        (приём rc-state − отправка кадра n, мс; None — кадра n нет среди последних RC_RING отправленных). Под _lock."""
+        if self._rc_state is None:
+            return None
+        out = dict(self._rc_state, ch=list(self._rc_state["ch"]), dev=dict(self._rc_state["dev"]))
+        out["rx_age_s"] = round(time.monotonic() - out["rx_at"], 3)
+        return out
+
+    def _rc_sent_snapshot(self):
+        """snapshot()["rc_sent"]: {"n": номер последнего отправленного кадра сеанса (0 — не было), "at": его monotonic
+        или None, "pending": кадр ждёт отправки, "ring": [[n, monotonic], …] — последние RC_RING}. Под _lock."""
+        return {"n": self._rc_n, "at": self._rc_at, "pending": self._rc is not None,
+                "ring": [[n, at] for n, at in self._rc_ring]}
 
     def drain_link_events(self):
         with self._lock:
@@ -265,6 +335,25 @@ class PeerClient:
     def _event(self, event_code, **params):        # params может содержать свой «code» (REMOTE-EVENT)
         with self._lock:
             self._events.append((event_code, params))
+
+    def _wake(self):
+        try:
+            self._wake_w.send(b"\0")
+        except OSError:                                # буфер полон (пробуждение уже ждёт) или клиент остановлен
+            pass
+
+    def _wait_readable(self, sock):
+        """Ждать данные блока не дольше RX_WAIT_S или пробуждение. True — читать сокет."""
+        if self.ctx is not None and sock.pending():     # TLS: расшифрованное уже в буфере, select его не видит
+            return True
+        r, _, _ = select.select([sock, self._wake_r], [], [], RX_WAIT_S)
+        if self._wake_r in r:
+            try:
+                while self._wake_r.recv(4096):
+                    pass
+            except OSError:                            # BlockingIOError: всё прочитано
+                pass
+        return sock in r
 
     def _send(self, sock, mtype, body):
         self._seq += 1
@@ -386,18 +475,21 @@ class PeerClient:
         self.counters.connects += 1
         self._last_peer_seq = None
         self._set(phase="handshake", detail="handshake", peer={}, session=None, telemetry=None)
+        with self._lock:                                  # кадры rc и их нумерация — заново в каждом соединении
+            self._rc, self._rc_n, self._rc_at, self._rc_state = None, 0, None, None
+            self._rc_ring.clear()
         dec = Decoder()
         bad_in_row = 0
         rx0 = self.counters.received
         deadline = time.monotonic() + HANDSHAKE_TIMEOUT_S
         established = False
         try:
-            sock.settimeout(0.2)
+            sock.settimeout(RX_WAIT_S)
             self._send(sock, "hello", self.info)
             while not self._stop.is_set():
                 try:
-                    data = sock.recv(65536)
-                    if not data:
+                    data = sock.recv(65536) if self._wait_readable(sock) else None
+                    if data == b"":
                         if self._st.phase == "auth-failed":
                             return False
                         if self.ctx is not None and self._st.phase == "handshake" and self.counters.received == rx0:
@@ -408,6 +500,7 @@ class PeerClient:
                         if self._st.phase != "incompatible":   # причина отказа важнее факта закрытия
                             self._set(detail="closed")
                         break
+                    data = data or b""                          # None: данных нет (таймаут ожидания или пробуждение)
                 except socket.timeout:
                     data = b""
                 except (ssl.SSLError, OSError) as e:
@@ -457,6 +550,7 @@ class PeerClient:
                     if mtype == "module-cmd" and self._mcmd and self._mcmd["req"] == body["req"]:
                         self._mcmd["state"] = "offline"
                 self._outbox.clear()
+                self._rc = None                           # неотправленный кадр устарел: в новое соединение не идёт
             try:
                 sock.close()
             except OSError:
@@ -501,6 +595,16 @@ class PeerClient:
             self._ack(seq)
         elif mtype == "status":
             self._set(telemetry=_sanitize_status(body))
+        elif mtype == "rc-state":
+            rs = control_wire.sanitize_rc_state(body)
+            if rs is None:
+                self.counters.ignored_messages += 1
+                return
+            now = time.monotonic()
+            with self._lock:
+                sent = next((at for n, at in reversed(self._rc_ring) if n == rs["n"]), None) if rs["n"] else None
+                rs.update(rx_at=now, latency_ms=None if sent is None else round((now - sent) * 1000, 1))
+                self._rc_state = rs
         elif mtype == "event":
             code = body.get("code")
             if code in CATALOG:
@@ -527,6 +631,15 @@ class PeerClient:
                 with self._lock:
                     if self._mcmd and self._mcmd["req"] == body["req"]:
                         self._mcmd["state"] = "sent"
+        with self._lock:
+            rc, self._rc = self._rc, None
+            if rc is None or "rc" not in TYPES.get(self._st.session or "", ()):
+                return
+            self._rc_n += 1
+            n, at = self._rc_n, time.monotonic()
+            self._rc_at = at
+            self._rc_ring.append((n, at))
+        self._send(sock, "rc", {"n": n, **rc})           # OSError — обрыв: обрабатывает _session
 
     def _ack(self, seq):
         if "ack" in TYPES.get(self._st.session or "", ()) and self._sock is not None:

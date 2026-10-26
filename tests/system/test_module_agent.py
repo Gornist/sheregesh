@@ -16,6 +16,7 @@ import time
 import pytest
 
 from procs import ENV, Agent, wait_for
+from sheregesh import PROTOCOL_VERSION
 from sheregesh.link.client import PeerClient
 from sheregesh.module import wire
 
@@ -112,7 +113,7 @@ def test_ready_status_and_health(unit):
     t0 = time.monotonic()
     m = u.wait_state("READY")
     assert time.monotonic() - t0 <= READY_S
-    assert u.pc.snapshot()["session"] == "1.3"
+    assert u.pc.snapshot()["session"] == PROTOCOL_VERSION
     assert m["profile"] == {"id": "radiomaster-nomad", "name": "RadioMaster Nomad", "family": "elrs",
                             "interface": "uart-crsf"}
     assert m["output"] == "none" and m["backend"]["kind"] == "lab-emulator" and m["backend"]["lab"] is True
@@ -263,7 +264,7 @@ def test_modulectl_direct_expect_ready(unit):
         return p.returncode, json.loads(p.stdout) if p.stdout.strip() else {"stderr": p.stderr}
     rc, out = ctl("status")
     assert rc == 0 and out["via"] == "direct" and out["module"]["support"] == "ok"
-    assert out["module"]["telemetry"]["state"] == "READY" and out["module"]["session"] == "1.3"
+    assert out["module"]["telemetry"]["state"] == "READY" and out["module"]["session"] == PROTOCOL_VERSION
     rc, out = ctl("lab", "detach", "--expect", "DISCONNECTED", "--expect-timeout", "5")
     assert rc == 0 and out["module"]["telemetry"]["state"] == "DISCONNECTED", out
     rc, out = ctl("lab", "attach", "--expect", "READY", "--expect-timeout", "15")

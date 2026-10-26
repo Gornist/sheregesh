@@ -18,8 +18,11 @@ video-input.json, результат — в status.video.select.
 лабораторным эмулятором модуля дочерним процессом (sheregesh_emulators.jrmodule); состояние — в status.module,
 команды — сообщением module-cmd (протокол 1.3), настройки — в remote-config/ рядом с link.json (ConfigStore).
 Выхода управления нет: эмулятор моделирует только состояние модуля, радиосигналов не формирует.
-От пульта принимает только hello, ack, bye, (сессия ≥ 1.2) video-select и (сессия 1.3) module-cmd; остальные
-сообщения не исполняются, а учитываются. Команд ОС, управления устройствами и радиоинтерфейсов нет.
+Органы управления пульта (S7, ADR-0013): кадры rc (сессия ≥ 1.4) принимает сторож свежести sheregesh.control
+(ControlReceiver, такт 25 мс): IDLE / ACTIVE / FAILSAFE, состояние — сообщением rc-state (10 Гц, в IDLE — 1 Гц, при
+переходе — сразу) и в link-status.json (control). Значения никуда не выводятся: rc-state.output = "none".
+От пульта принимает только hello, ack, bye, (сессия ≥ 1.2) video-select, (сессия ≥ 1.3) module-cmd и (сессия ≥ 1.4)
+rc; остальные сообщения не исполняются, а учитываются. Команд ОС, управления устройствами и радиоинтерфейсов нет.
 
 Неисправности для испытаний задаются расписанием (--fault AT:KIND[:ARG]), время — в секундах от старта:
   silence:DUR   не отправлять heartbeat и status DUR секунд (соединение не рвётся)
@@ -44,6 +47,8 @@ from pathlib import Path
 from sheregesh import PROTOCOL_VERSION, __version__, sdnotify, video, videoinput, videosources
 from sheregesh.videoingest import Ingest
 from sheregesh.videolink import VideoServer
+from sheregesh.control import wire as control_wire
+from sheregesh.control.receiver import ControlReceiver
 from sheregesh.link import tls
 from sheregesh.link.codec import TYPES, BadMessage, Decoder, encode
 from sheregesh.module.service import ModuleService
@@ -58,6 +63,11 @@ REMOTE_CONFIG_DIR = "remote-config"
 # Пульт не забирает данные дольше — соединение зависло (буфер отправки полон): разрыв, а не ожидание в основном цикле,
 # который же шлёт WATCHDOG (WatchdogSec=15 у службы) и heartbeat новому сеансу.
 DRAIN_TIMEOUT_S = 3.0
+# Сторож команд органов управления (ADR-0013): такт не реже 50 мс — FAILSAFE не позже timeout + 50 мс после последнего
+# кадра; отдельная сопрограмма, чтобы ожидания основного тикера (delay, drain) не задерживали сторож.
+CONTROL_TICK_S = 0.025
+RC_STATE_ACTIVE_S = 0.1                             # rc-state в ACTIVE/FAILSAFE — 10 Гц
+RC_STATE_IDLE_S = 1.0                               # … в IDLE — 1 Гц
 
 
 class Agent:
@@ -124,6 +134,14 @@ class Agent:
         self.module_sent = None                     # (seq, итог команды) модуля в последнем отправленном status
         self.module_seq_written = None              # … и в последнем записанном файле состояния
         self.last_status = 0.0                      # monotonic последней отправки status
+        # Команды органов управления (ADR-0013): сторож свежести, rc-state пульту, control в link-status.json
+        self.control = ControlReceiver(time.monotonic, timeout_ms=args.rc_timeout_ms,
+                                       log=lambda s: log(f"control: {s}"))
+        self.rc_state_at = 0.0                      # monotonic последней отправки rc-state
+        self.hello_writer = None                    # сеанс, чей hello согласовал self.session
+        self.rc_state_sent = None                   # control.transitions в последнем отправленном rc-state
+        self.rc_state_task = None                   # отправка rc-state не задерживает такт сторожа
+        self.control_written = None                 # control.transitions в последнем записанном файле состояния
 
     def open_video_source(self, spec=None):
         a = self.args
@@ -357,6 +375,8 @@ class Agent:
         self.writer = writer
         self.hb_wait = None
         self.video_select = None                    # результат выбора — только для сеанса, который его запросил
+        self.control.on_link_lost()                 # прежний сеанс (если был) кончился; нумерация кадров — заново
+        self.rc_state_sent = None
         if self.module is not None:
             self.module.new_session()               # и итог команды модулю — тоже
         await self.send("hello", self.info())
@@ -369,6 +389,8 @@ class Agent:
                 if self.writer is writer:
                     self.hb_wait = None             # пульт жив: любой приём от него
                 for msg in dec.feed(data):
+                    if self.writer is not writer and isinstance(msg, dict) and msg.get("type") == "rc":
+                        continue                    # кадр закрытого или заменённого сеанса не исполняется
                     await self.on_message(msg)
         except ConnectionError:
             pass
@@ -379,6 +401,8 @@ class Agent:
             # новым, видео закрывается. Новый сеанс сам закрыл видео при подключении.
             if self.writer is None and self.vserver is not None:
                 self.vserver.drop("сеанс управления завершён")
+            if self.writer is None:                 # не заменён новым: команды органов управления — FAILSAFE сразу
+                self.control.on_link_lost()
             writer.close()
 
     def authorize_video(self, addr):
@@ -435,6 +459,7 @@ class Agent:
         self.writer.transport.abort()
         self.writer = None
         self.hb_wait = None
+        self.control.on_link_lost()
         if self.vserver is not None:
             self.vserver.drop("пульт не отвечает")
 
@@ -448,6 +473,7 @@ class Agent:
             n = negotiate(self.proto, body.get("proto"), body.get("software"), body.get("hardware"))
             log(f"hello from console proto={body.get('proto')} -> {n.reason}")
             self.session = n.session
+            self.hello_writer = self.writer
             if self.peer_desc is not None:          # что сообщил пульт — для проверки версий в sheregesh-health
                 self.peer_desc["hello"] = {k: body.get(k) for k in ("proto", "software", "hardware")}
             if not n.compatible:
@@ -469,6 +495,13 @@ class Agent:
             else:                                   # подсистема выключена: status.module нет, пульт видит «absent»
                 self.ignored += 1
                 log("module-cmd ignored: module subsystem disabled (--no-module)")
+        elif mtype == "rc" and mtype in TYPES.get(self.session or "", ()):
+            mono = time.monotonic()
+            try:
+                self.control.on_rc(control_wire.check_rc(body), mono)
+            except control_wire.BadRc as e:
+                self.control.on_bad(e.text, mono)
+            self.control_tick(mono)                 # переход — rc-state сразу
         elif mtype == "ack" and mtype in TYPES.get(self.session or self.proto, ()):
             sent = self.sent.pop(body.get("seq"), None) if isinstance(body.get("seq"), int) else None
             if sent:
@@ -486,6 +519,26 @@ class Agent:
             if mtype not in TYPES.get(self.proto, ()):
                 log(f"ignored unknown message type {mtype!r}")
 
+    # ---------- органы управления ----------
+    def control_tick(self, mono):
+        """Такт сторожа и, если пора, rc-state пульту: при переходе — сразу, иначе 10 Гц (IDLE — 1 Гц). Отправка — в
+        отдельной задаче: пульт, не забирающий данные, не задерживает сторож."""
+        self.control.tick(mono)
+        if self.writer is None or self.hello_writer is not self.writer \
+                or "rc-state" not in TYPES.get(self.session or "", ()) or self.now() < self.silent_until:
+            return                                  # нет сеанса, его hello ещё не принят, сессия < 1.4 или silence
+        if self.rc_state_task is not None and not self.rc_state_task.done():
+            return
+        period = RC_STATE_IDLE_S if self.control.state() == "IDLE" else RC_STATE_ACTIVE_S
+        if self.control.transitions != self.rc_state_sent or mono - self.rc_state_at >= period:
+            self.rc_state_at, self.rc_state_sent = mono, self.control.transitions
+            self.rc_state_task = asyncio.ensure_future(self.send("rc-state", self.control.snapshot(mono)))
+
+    async def control_ticker(self):
+        while True:
+            await asyncio.sleep(CONTROL_TICK_S)
+            self.control_tick(time.monotonic())
+
     async def ticker(self):
         dt = min(0.2, self.args.heartbeat_interval)
         next_hb = 0.0
@@ -501,8 +554,10 @@ class Agent:
             if self.module is not None:
                 self.module.tick()                    # миллисекунды: события эмулятора и таймеры, без ожиданий
             if self.args.status_file and (mono >= next_status or (self.writer is not None) != self.written_connected
-                                          or (self.module is not None and self.module.seq != self.module_seq_written)):
-                self.write_status()                   # смена «есть/нет пульта» и состояния модуля — сразу, иначе раз в 2 с
+                                          or (self.module is not None and self.module.seq != self.module_seq_written)
+                                          or self.control.transitions != self.control_written):
+                self.write_status()                   # смена «есть/нет пульта», состояния модуля и команд — сразу,
+                # иначе раз в 2 с
                 next_status = mono + 2.0
             if self.args.event_interval and self.writer is not None and mono >= self.next_event:
                 self.event_k += 1
@@ -539,13 +594,15 @@ class Agent:
               "session": self.session if self.writer is not None else None, "peer": self.peer_desc, "stats": self.stats,
               "own_uri": self.tls_cfg.own_uri if self.tls_cfg else None,
               "video": self.vserver.stats() if self.vserver is not None else None,
-              "module": self.module.health() if self.module is not None else None}
+              "module": self.module.health() if self.module is not None else None,
+              "control": self.control.health()}
         path = Path(self.args.status_file)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(st, ensure_ascii=False))
         os.replace(tmp, path)
         self.written_connected = st["connected"]
         self.module_seq_written = self.module.seq if self.module is not None else None
+        self.control_written = self.control.transitions
 
     async def run(self):
         self.handshakes = asyncio.Semaphore(4)
@@ -576,7 +633,7 @@ class Agent:
             self.module.start()                       # эмулятора не ждёт: READY придёт по событиям
         sdnotify.ready(f"listening {self.args.host}:{port}" + (" mTLS" if self.ctx else " loopback"))
         async with server:
-            await asyncio.gather(server.serve_forever(), self.ticker())
+            await asyncio.gather(server.serve_forever(), self.ticker(), self.control_ticker())
 
 
 def log(text):
@@ -713,7 +770,11 @@ def main(argv=None):
                     help="настройки модуля (ConfigStore, схема remote-1); по умолчанию remote-config/ рядом с "
                          "--link-config, без него — только в памяти")
     ap.add_argument("--module-emulator-command", nargs="+", default=None, help=argparse.SUPPRESS)  # испытания
+    ap.add_argument("--rc-timeout-ms", type=int, default=500,
+                    help="сторож команд органов управления: нет кадра rc дольше N мс — FAILSAFE (50…10000, ADR-0013)")
     args = ap.parse_args(argv)
+    if not 50 <= args.rc_timeout_ms <= 10000:
+        ap.error("--rc-timeout-ms: ожидается 50…10000")
     args.tls_cfg = None
     if args.link_config:
         try:

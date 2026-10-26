@@ -96,8 +96,8 @@
     </message>
     <message>
         <location filename="../qml/AboutPage.qml" line="77" />
-        <source>%1&#160;s</source>
-        <translation>%1&#160;с</translation>
+        <source>%1 s</source>
+        <translation>%1 с</translation>
     </message>
     <message>
         <location filename="../qml/AboutPage.qml" line="83" />
@@ -139,8 +139,8 @@
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="78" />
-        <source>%1&#160;%</source>
-        <translation>%1&#160;%</translation>
+        <source>%1 %</source>
+        <translation>%1 %</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="78" />
@@ -225,8 +225,8 @@
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="150" />
-        <source>SoC %1&#160;°C · power %2&#160;% · uptime %3&#160;s</source>
-        <translation>SoC %1&#160;°C · питание %2&#160;% · работает %3&#160;с</translation>
+        <source>SoC %1 °C · power %2 % · uptime %3 s</source>
+        <translation>SoC %1 °C · питание %2 % · работает %3 с</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="160" />
@@ -235,8 +235,8 @@
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="211" />
-        <source>Last heartbeat %1&#160;s ago</source>
-        <translation>Последний heartbeat %1&#160;с назад</translation>
+        <source>Last heartbeat %1 s ago</source>
+        <translation>Последний heartbeat %1 с назад</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="211" />
@@ -250,23 +250,23 @@
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="228" />
-        <source>SoC %1&#160;°C</source>
-        <translation>SoC %1&#160;°C</translation>
+        <source>SoC %1 °C</source>
+        <translation>SoC %1 °C</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="236" />
-        <source>Board %1&#160;°C</source>
-        <translation>Плата %1&#160;°C</translation>
+        <source>Board %1 °C</source>
+        <translation>Плата %1 °C</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="239" />
-        <source>Fan %1&#160;% · %2 rpm</source>
-        <translation>Вентилятор %1&#160;% · %2 об/мин</translation>
+        <source>Fan %1 % · %2 rpm</source>
+        <translation>Вентилятор %1 % · %2 об/мин</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="239" />
-        <source>Fan %1&#160;% · no speed signal</source>
-        <translation>Вентилятор %1&#160;% · нет сигнала оборотов</translation>
+        <source>Fan %1 % · no speed signal</source>
+        <translation>Вентилятор %1 % · нет сигнала оборотов</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="248" />
@@ -295,8 +295,8 @@
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="167" />
-        <source>Mutual TLS %1 · %2 · round trip %3&#160;ms</source>
-        <translation>Взаимный TLS %1 · %2 · задержка %3&#160;мс</translation>
+        <source>Mutual TLS %1 · %2 · round trip %3 ms</source>
+        <translation>Взаимный TLS %1 · %2 · задержка %3 мс</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="22" />
@@ -320,8 +320,8 @@
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="176" />
-        <source>No TLS (local test channel) · round trip %1&#160;ms</source>
-        <translation>Без TLS (локальный тестовый канал) · круговая задержка %1&#160;мс</translation>
+        <source>No TLS (local test channel) · round trip %1 ms</source>
+        <translation>Без TLS (локальный тестовый канал) · круговая задержка %1 мс</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="184" />
@@ -330,8 +330,8 @@
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="14" />
-        <source>playing · %1&#160;fps</source>
-        <translation>воспроизводится · %1&#160;к/с</translation>
+        <source>playing · %1 fps</source>
+        <translation>воспроизводится · %1 к/с</translation>
     </message>
     <message>
         <location filename="../qml/DashboardPage.qml" line="15" />
@@ -433,8 +433,8 @@
     </message>
     <message>
         <location filename="../qml/DiagnosticsPage.qml" line="82" />
-        <source>%1&#160;s</source>
-        <translation>%1&#160;с</translation>
+        <source>%1 s</source>
+        <translation>%1 с</translation>
     </message>
     <message>
         <location filename="../qml/DiagnosticsPage.qml" line="85" />
@@ -458,8 +458,8 @@
     </message>
     <message>
         <location filename="../qml/DiagnosticsPage.qml" line="90" />
-        <source>resolved at %1&#160;s</source>
-        <translation>устранено на %1&#160;с</translation>
+        <source>resolved at %1 s</source>
+        <translation>устранено на %1 с</translation>
     </message>
     <message>
         <location filename="../qml/DiagnosticsPage.qml" line="90" />
@@ -533,67 +533,72 @@
         <translation>Норма</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="89" />
+        <location filename="../qml/Main.qml" line="90" />
         <source>Sheregesh console</source>
         <translation>Пульт «Шерегеш»</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="95" />
+        <location filename="../qml/Main.qml" line="96" />
         <source>Emulation · synthetic data only</source>
         <translation>Эмуляция · только синтетические данные</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="140" />
+        <location filename="../qml/Main.qml" line="141" />
         <source>Dashboard</source>
         <translation>Главная панель</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="141" />
+        <location filename="../qml/Main.qml" line="142" />
         <source>Video</source>
         <translation>Видео</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="142" />
+        <location filename="../qml/Main.qml" line="143" />
         <source>Diagnostics</source>
         <translation>Диагностика</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="143" />
+        <location filename="../qml/Main.qml" line="144" />
         <source>Power</source>
         <translation>Питание</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="144" />
+        <location filename="../qml/Main.qml" line="145" />
         <source>Logs</source>
         <translation>Журналы</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="145" />
+        <location filename="../qml/Main.qml" line="146" />
         <source>Settings</source>
         <translation>Настройки</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="146" />
+        <location filename="../qml/Main.qml" line="147" />
         <source>About</source>
         <translation>О системе</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="147" />
+        <location filename="../qml/Main.qml" line="148" />
         <source>Module</source>
         <translation>Модуль</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="178" />
-        <source>Model time %1&#160;s</source>
-        <translation>Модельное время %1&#160;с</translation>
+        <location filename="../qml/Main.qml" line="149" />
+        <source>Control</source>
+        <translation>Управление</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="183" />
+        <location filename="../qml/Main.qml" line="181" />
+        <source>Model time %1 s</source>
+        <translation>Модельное время %1 с</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="186" />
         <source>Scenario: %1</source>
         <translation>Сценарий: %1</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="190" />
+        <location filename="../qml/Main.qml" line="193" />
         <source>Software %1 · protocol %2</source>
         <translation>ПО %1 · протокол %2</translation>
     </message>
@@ -859,13 +864,13 @@
     </message>
     <message>
         <location filename="../qml/ModulePage.qml" line="102" />
-        <source>Changed: %1 (%2&#160;min ago)</source>
-        <translation>Изменено: %1 (%2&#160;мин назад)</translation>
+        <source>Changed: %1 (%2 min ago)</source>
+        <translation>Изменено: %1 (%2 мин назад)</translation>
     </message>
     <message>
         <location filename="../qml/ModulePage.qml" line="103" />
-        <source>Changed: %1 (%2&#160;s ago)</source>
-        <translation>Изменено: %1 (%2&#160;с назад)</translation>
+        <source>Changed: %1 (%2 s ago)</source>
+        <translation>Изменено: %1 (%2 с назад)</translation>
     </message>
     <message>
         <location filename="../qml/ModulePage.qml" line="107" />
@@ -1094,8 +1099,8 @@
     </message>
     <message>
         <location filename="../qml/ModulePage.qml" line="187" />
-        <source>%1&#160;ms</source>
-        <translation>%1&#160;мс</translation>
+        <source>%1 ms</source>
+        <translation>%1 мс</translation>
     </message>
     <message>
         <location filename="../qml/ModulePage.qml" line="188" />
@@ -1104,8 +1109,8 @@
     </message>
     <message>
         <location filename="../qml/ModulePage.qml" line="189" />
-        <source>%1&#160;s ago</source>
-        <translation>%1&#160;с назад</translation>
+        <source>%1 s ago</source>
+        <translation>%1 с назад</translation>
     </message>
     <message>
         <location filename="../qml/ModulePage.qml" line="190" />
@@ -1144,8 +1149,8 @@
     </message>
     <message>
         <location filename="../qml/ModulePage.qml" line="195" />
-        <source>next in %1&#160;s</source>
-        <translation>следующая через %1&#160;с</translation>
+        <source>next in %1 s</source>
+        <translation>следующая через %1 с</translation>
     </message>
     <message>
         <location filename="../qml/ModulePage.qml" line="196" />
@@ -1313,8 +1318,8 @@
     <message>
         <location filename="../qml/PowerPage.qml" line="34" />
         <location filename="../qml/PowerPage.qml" line="57" />
-        <source>%1&#160;%</source>
-        <translation>%1&#160;%</translation>
+        <source>%1 %</source>
+        <translation>%1 %</translation>
     </message>
     <message>
         <location filename="../qml/PowerPage.qml" line="34" />
@@ -1355,8 +1360,8 @@
     </message>
     <message>
         <location filename="../qml/PowerPage.qml" line="43" />
-        <source>Thresholds: warning %1&#160;%, critical %2&#160;%</source>
-        <translation>Пороги: предупреждение %1&#160;%, критический %2&#160;%</translation>
+        <source>Thresholds: warning %1 %, critical %2 %</source>
+        <translation>Пороги: предупреждение %1 %, критический %2 %</translation>
     </message>
     <message>
         <location filename="../qml/PowerPage.qml" line="49" />
@@ -1568,6 +1573,219 @@
     </message>
 </context>
 <context>
+    <name>SticksPage</name>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="20" />
+        <source>No link to the remote unit</source>
+        <translation>Нет связи с удалённым блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="21" />
+        <source>Not supported by the remote unit</source>
+        <translation>Не поддерживается блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="24" />
+        <source>No commands</source>
+        <translation>Нет команд</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="25" />
+        <source>Commands are arriving</source>
+        <translation>Команды идут</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="26" />
+        <source>FAILSAFE: no fresh commands</source>
+        <translation>FAILSAFE: нет свежих команд</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="27" />
+        <source>No data from the remote unit</source>
+        <translation>Нет данных от блока</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="39" />
+        <source>Transmission is unavailable until the link is restored.</source>
+        <translation>Передача недоступна, пока связь не восстановится.</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="40" />
+        <source>The remote unit does not accept stick commands (protocol %1).</source>
+        <translation>Удалённый блок не принимает команды стиков (протокол %1).</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="43" />
+        <source>Waiting for the command state from the remote unit…</source>
+        <translation>Ожидание состояния команд от удалённого блока…</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="45" />
+        <source>No commands since the remote unit started</source>
+        <translation>Команд не было с запуска блока</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="46" />
+        <source>Fresh commands from the console</source>
+        <translation>Свежие команды с пульта</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="47" />
+        <source>Transmission disabled by the operator</source>
+        <translation>Передача выключена оператором</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="48" />
+        <source>No commands for longer than %1 ms: channels centered, buttons released</source>
+        <translation>Нет команд дольше %1 мс: каналы в центре, кнопки отпущены</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="49" />
+        <source>Link session lost: channels centered, buttons released</source>
+        <translation>Сеанс связи потерян: каналы в центре, кнопки отпущены</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="50" />
+        <source>Control device disconnected: channels centered, buttons released</source>
+        <translation>Аппаратура отключена: каналы в центре, кнопки отпущены</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="56" />
+        <source>no control device</source>
+        <translation>аппаратура не подключена</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="57" />
+        <source>no link to the remote unit</source>
+        <translation>нет связи с удалённым блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="58" />
+        <source>not supported by the remote unit</source>
+        <translation>не поддерживается удалённым блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="64" />
+        <source>The control device was disconnected: transmission is off. Enable it again after reconnecting.</source>
+        <translation>Аппаратура была отключена: передача выключена. После подключения включите её снова.</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="66" />
+        <source>Transmission was not enabled: %1</source>
+        <translation>Передача не включена: %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="115" />
+        <source>No radio output (S7): commands reach the remote unit but are not passed to the module</source>
+        <translation>Радиовыхода нет (S7): команды доходят до блока, модулю не передаются</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="157" />
+        <source>Transmission</source>
+        <translation>Передача</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="193" />
+        <source>Channels: console → remote unit</source>
+        <translation>Каналы: пульт → удалённый блок</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="203" />
+        <source>console</source>
+        <translation>пульт</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="205" />
+        <source>remote unit (echo)</source>
+        <translation>удалённый блок (эхо)</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="215" />
+        <source>CH%1</source>
+        <translation>К%1</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="296" />
+        <source>Control device</source>
+        <translation>Аппаратура</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="301" />
+        <source>No control device</source>
+        <translation>Аппаратура не подключена</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="310" />
+        <source>Axes: %1 · buttons: %2</source>
+        <translation>Осей: %1 · кнопок: %2</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="311" />
+        <source>Connect the radio via USB in USB Joystick mode</source>
+        <translation>Подключите аппаратуру по USB в режиме USB Joystick</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="324" />
+        <source>Buttons</source>
+        <translation>Кнопки</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="253" />
+        <source>Rate: %1 Hz</source>
+        <translation>Частота: %1 Гц</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="253" />
+        <source>Rate: —</source>
+        <translation>Частота: —</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="261" />
+        <source>Latency: %1 ms</source>
+        <translation>Задержка: %1 мс</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="261" />
+        <source>Latency: —</source>
+        <translation>Задержка: —</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="269" />
+        <source>Gaps: %1</source>
+        <translation>Пропуски: %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="269" />
+        <source>Gaps: —</source>
+        <translation>Пропуски: —</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="278" />
+        <source>Failsafes: %1</source>
+        <translation>Срабатываний FAILSAFE: %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="278" />
+        <source>Failsafes: —</source>
+        <translation>Срабатываний FAILSAFE: —</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="377" />
+        <source>Enable command transmission?</source>
+        <translation>Включить передачу команд?</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="380" />
+        <source>Axes and buttons of «%1» are sent to the remote unit 50 times per second. If commands stop for longer than %2 ms, the remote unit switches to FAILSAFE. There is no radio output (S7).</source>
+        <translation>Оси и кнопки «%1» передаются удалённому блоку 50 раз в секунду. Если команды прекратятся дольше чем на %2 мс, блок перейдёт в FAILSAFE. Радиовыхода нет (S7).</translation>
+    </message>
+    <message>
+        <location filename="../qml/SticksPage.qml" line="381" />
+        <source>control device</source>
+        <translation>аппаратура</translation>
+    </message>
+</context>
+<context>
     <name>VideoPage</name>
     <message>
         <location filename="../qml/VideoPage.qml" line="63" />
@@ -1602,8 +1820,8 @@
     </message>
     <message>
         <location filename="../qml/VideoPage.qml" line="143" />
-        <source>Synthetic test pattern · %1 · port %2 · %3&#160;fps · frames %4 · decoder restarts %5</source>
-        <translation>Синтетическая испытательная таблица · %1 · порт %2 · %3&#160;к/с · кадров %4 · перезапусков декодера %5</translation>
+        <source>Synthetic test pattern · %1 · port %2 · %3 fps · frames %4 · decoder restarts %5</source>
+        <translation>Синтетическая испытательная таблица · %1 · порт %2 · %3 к/с · кадров %4 · перезапусков декодера %5</translation>
     </message>
     <message>
         <location filename="../qml/VideoPage.qml" line="48" />
@@ -1637,8 +1855,8 @@
     </message>
     <message>
         <location filename="../qml/VideoPage.qml" line="135" />
-        <source>%1 · %2 %3 at %4&#160;fps · shown %5&#160;fps · frames %6 · capture restarts %7</source>
-        <translation>%1 · %2 %3, %4&#160;к/с · показано %5&#160;к/с · кадров %6 · перезапусков захвата %7</translation>
+        <source>%1 · %2 %3 at %4 fps · shown %5 fps · frames %6 · capture restarts %7</source>
+        <translation>%1 · %2 %3, %4 к/с · показано %5 к/с · кадров %6 · перезапусков захвата %7</translation>
     </message>
     <message>
         <location filename="../qml/VideoPage.qml" line="51" />
@@ -1647,8 +1865,8 @@
     </message>
     <message>
         <location filename="../qml/VideoPage.qml" line="23" />
-        <source>%1×%2 at %3&#160;fps</source>
-        <translation>%1×%2, %3&#160;к/с</translation>
+        <source>%1×%2 at %3 fps</source>
+        <translation>%1×%2, %3 к/с</translation>
     </message>
     <message>
         <location filename="../qml/VideoPage.qml" line="27" />
@@ -1737,8 +1955,8 @@
     </message>
     <message>
         <location filename="../qml/VideoPage.qml" line="140" />
-        <source>Source mode %1 · shown %2&#160;fps · %3 · frames %4 · decoder restarts %5</source>
-        <translation>Режим источника %1 · показано %2&#160;к/с · %3 · кадров %4 · перезапусков декодера %5</translation>
+        <source>Source mode %1 · shown %2 fps · %3 · frames %4 · decoder restarts %5</source>
+        <translation>Режим источника %1 · показано %2 к/с · %3 · кадров %4 · перезапусков декодера %5</translation>
     </message>
     <message>
         <location filename="../qml/VideoPage.qml" line="29" />

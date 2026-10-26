@@ -32,6 +32,7 @@ from sheregesh_emulators.scenario import TICK_S
 from . import journal as jr
 from . import videosource as vsrc
 from .module import ModuleView
+from .sticks import INPUT_DIR, StickSource, SticksView
 from .video import VideoReceiver
 
 LOG_LIMIT = 2000
@@ -171,10 +172,12 @@ class Backend(QObject):
     message = Signal(str, str)          # уровень (info/warning/error), текст
 
     def __init__(self, data_dir, demo=False, speed=1.0, autostart=True, peer=None, local_video=False,
-                 video_command=None, link_cfg=None, link_status_file=None, video_scan=None, journal=None):
+                 video_command=None, link_cfg=None, link_status_file=None, video_scan=None, journal=None,
+                 stick_source=None):
         """peer=None — удалённый блок эмулируется в процессе пульта; peer=(host, port) — внешний процесс-эмулятор.
         local_video — локальный синтетический генератор видео (без удалённого блока).
-        video_scan — для испытаний: корни sysfs/dev и ioctl обнаружения устройств UVC (sheregesh.videoinput.scan)."""
+        video_scan — для испытаний: корни sysfs/dev и ioctl обнаружения устройств UVC (sheregesh.videoinput.scan).
+        stick_source — для испытаний: источник стиков вместо USB-джойстика из /dev/input (ADR-0013)."""
         super().__init__()
         self.data_dir = Path(data_dir)
         self.usb_dir = self.data_dir / "usb"
@@ -229,6 +232,10 @@ class Backend(QObject):
                                   log=lambda level, text: self.log(level, "module", text))
         self._module_key = None                     # (support, seq) последней записи в журналы
         self._module_fault = ""                     # код активного события MODULE-FAULT
+        # Стики и кнопки аппаратуры → удалённый блок (ADR-0013): передача выключена после каждого старта пульта
+        self._sticks = SticksView(self, source=stick_source if stick_source is not None else StickSource(INPUT_DIR),
+                                  client=lambda: self._sticks_peer(),
+                                  log=lambda level, text: self._sticks_log(level, text))
         self.video = VideoReceiver(self, command=video_command)
         self.video.stateChanged.connect(self._journal_video_state)
         self.video.stateChanged.connect(self._update_video_source)
@@ -250,6 +257,7 @@ class Backend(QObject):
         self._refresh()
         if autostart:
             self._timer.start()
+            self._sticks.start()                    # потоки устройства и передачи — только в работающем пульте
 
     # ---------- время и сценарий ----------
     @Slot()
@@ -271,6 +279,7 @@ class Backend(QObject):
 
     def stop(self):
         self._timer.stop()
+        self._sticks.stop()                         # без прощального кадра: блок сам уйдёт в FAILSAFE (ST-06)
         self.video.shutdown()
         self._stop_local_sender()
         if self.client is not None:
@@ -385,6 +394,8 @@ class Backend(QObject):
         }
         self._status.update(self._link_status(s))
         self._update_module(s)
+        self._sticks.update_link(self._status["peerLink"] if self._status["peerMode"] != "emulated" else "",
+                                 s.peer.session)
         self._journal_transitions()
         if p is not None:
             self._power_history.append(round(p.percent, 1))
@@ -515,6 +526,20 @@ class Backend(QObject):
     def module(self):
         """Представление внешнего модуля для ModulePage.qml (sheregesh_console.module.ModuleView)."""
         return self._module
+
+    # ---------- стики и кнопки → блок (ADR-0013, S7) ----------
+    def _sticks_peer(self):
+        """Клиент канала с блоком, у которого вызывается send_rc (для испытаний подменяется)."""
+        return self.client
+
+    def _sticks_log(self, level, text):
+        self.log(level, "sticks", text)
+        self.journal.emit({"warning": jr.WARNING, "error": jr.ERR}.get(level, jr.INFO), f"sticks: {text}")
+
+    @Property(QObject, constant=True)
+    def sticks(self):
+        """Представление стиков и передачи для SticksPage.qml (sheregesh_console.sticks.SticksView)."""
+        return self._sticks
 
     def _journal_transitions(self):
         """Системный журнал (E2E-12): только смены обобщённого состояния канала и наличия видеопотока."""

@@ -748,6 +748,20 @@ def boards(a):
     return {"pi1": board_state(E.out(a.console, BOARD_CMD)), "pi2": board_state(E.out(a.remote, BOARD_CMD))}
 
 
+def preflight(a):
+    """Предпроверка без действий (её же берёт s7_sticks_accept): серийные номера плат, OTA обеих в покое и не пробная
+    загрузка; заодно снимок JR-10 «до» → (ids, before, problems)."""
+    ids = {"console": E.board_identity(a.console), "remote": E.board_identity(a.remote)}
+    problems = [f"{r}: серийный номер {ids[r]['serial']!r} ≠ {E.SERIALS[r]!r}" for r in ids
+                if ids[r]["serial"] != E.SERIALS[r]]
+    before = boards(a)
+    for b, st in before.items():
+        o = st.get("ota")
+        if o is None or o.get("state") not in E.OTA_OK or o.get("tryboot_now") is True:
+            problems.append(f"{b}: OTA {o!r} не в покое (или пробная загрузка) — без действий")
+    return ids, before, problems
+
+
 def step_emulator(a, stand):
     snap, health = procs(a), stand.unit()
     v, d = judge_emulator(snap, health)
@@ -1201,17 +1215,9 @@ def main(argv=None, prompt=None):
     prompt = prompt or E.fresh_input
     a.out.mkdir(parents=True, exist_ok=True)
     LOG = a.out / "run.log"
-    ids = {"console": E.board_identity(a.console), "remote": E.board_identity(a.remote)}
+    ids, before, problems = preflight(a)
     meta = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "boards": ids, "limits": LIMITS,
-            "args": {k: str(v) for k, v in vars(a).items()}}
-    problems = [f"{r}: серийный номер {ids[r]['serial']!r} ≠ {E.SERIALS[r]!r}" for r in ids
-                if ids[r]["serial"] != E.SERIALS[r]]
-    before = boards(a)
-    meta["before"] = before
-    for b, st in before.items():
-        o = st.get("ota")
-        if o is None or o.get("state") not in E.OTA_OK or o.get("tryboot_now") is True:
-            problems.append(f"{b}: OTA {o!r} не в покое (или пробная загрузка) — без действий")
+            "args": {k: str(v) for k, v in vars(a).items()}, "before": before}
     stand = Stand(a)
     if not problems:
         code, d, text = stand.ctl("status")

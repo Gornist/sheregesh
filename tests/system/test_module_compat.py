@@ -10,6 +10,7 @@ import socket
 import time
 
 from procs import Agent, wait_for
+from sheregesh import PROTOCOL_VERSION
 from sheregesh.link.client import PeerClient
 from sheregesh.link.codec import Decoder, encode
 
@@ -98,7 +99,7 @@ def test_remote_13_without_module_subsystem():
     pc = PeerClient("127.0.0.1", a.port).start()
     try:
         assert wait_for(lambda: pc.snapshot()["phase"] == "connected" and pc.snapshot()["telemetry"], 5)
-        assert pc.snapshot()["session"] == "1.3" and "module" not in pc.snapshot()["telemetry"]
+        assert pc.snapshot()["session"] == PROTOCOL_VERSION and "module" not in pc.snapshot()["telemetry"]
         r = pc.module_command("status")
         assert r["result"] == "unsupported" and "disabled" in r["error"]
         sts = []

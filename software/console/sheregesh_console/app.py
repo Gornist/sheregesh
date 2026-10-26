@@ -35,7 +35,7 @@ PKG = Path(__file__).resolve().parent
 QML = PKG / "qml"
 I18N = PKG / "i18n"
 LANGS = ("ru",)
-PAGE_NAMES = ["dashboard", "video", "diagnostics", "power", "logs", "settings", "about", "module"]   # порядок вкладок Main.qml   # исходные строки QML — английские; переводы — файлы .ts/.qm
+PAGE_NAMES = ["dashboard", "video", "diagnostics", "power", "logs", "settings", "about", "module", "sticks"]   # порядок вкладок Main.qml   # исходные строки QML — английские; переводы — файлы .ts/.qm
 
 
 def qt_tool(name):
@@ -86,6 +86,29 @@ def module_ui_state(ui):
             "changedText": text("moduleChangedText"), "outputText": text("moduleOutputText"),
             "labBanner": bool(banner is not None and banner.property("shown")),
             "faultEvent": b.bench.monitor.log.is_active("MODULE-FAULT"), "command": dict(mv.command)}
+
+
+def sticks_ui_state(ui):
+    """Что показывает страница «Управление» (ADR-0013, 4.2): тексты QML и состояние SticksView для ui-state.json."""
+    sv = ui.backend.sticks
+
+    def text(name):                      # видимость — по условию элемента (shown), а не по текущей вкладке
+        o = ui.find(name)
+        return o.property("text") if o is not None and o.property("shown") is not False else ""
+    banner, switch = ui.find("sticksNoOutputBanner"), ui.find("sticksEnableSwitch")
+    snd = sv.sender.status()
+    return {"support": sv.support, "present": sv.present, "deviceName": sv.deviceName, "enabled": sv.enabled,
+            "axisCount": sv.axisCount, "buttonCount": sv.buttonCount, "axes": list(sv.axes), "buttons": sv.buttons,
+            "remoteState": sv.remoteState, "remoteReason": sv.remoteReason, "remoteAxes": list(sv.remoteAxes),
+            "remoteButtons": sv.remoteButtons, "remoteOutput": sv.remoteOutput, "rateHz": sv.rateHz,
+            "latencyMs": sv.latencyMs, "gaps": sv.gaps, "failsafes": sv.failsafes, "sent": sv.sent,
+            "frame": snd["n"], "latency": dict(snd["latency"]), "result": sv.result, "notice": sv.notice,
+            "stateText": text("sticksRemoteStateText"), "reasonText": text("sticksRemoteReasonText"),
+            "noticeText": text("sticksNoticeText"), "deviceText": text("sticksDeviceText"),
+            "rateText": text("sticksRateText"), "latencyText": text("sticksLatencyText"),
+            "switchChecked": bool(switch is not None and switch.property("checked")),
+            "noOutputBanner": bool(banner is not None and banner.property("shown")),
+            "noOutputText": text("sticksNoOutputText")}
 
 
 class Ui:
@@ -260,7 +283,8 @@ def main(argv=None):
                     "peerDetailText": detail.property("text") if detail and detail.property("visible") else "",
                     "video": backend.video.metrics(),   # фактически декодированные кадры и видеоканал (S3.1-VIDEO)
                     "videoSource": backend.videoSource,  # вход/состояние источника и решение для кадра (display, live)
-                    "module": module_ui_state(ui)}       # страница «Модуль» (ADR-0012, S6)
+                    "module": module_ui_state(ui),       # страница «Модуль» (ADR-0012, S6)
+                    "sticks": sticks_ui_state(ui)}       # страница «Управление» (ADR-0013, S7)
             try:
                 tmp = Path(ui_state + ".tmp")
                 tmp.write_text(json.dumps(data, ensure_ascii=False))
@@ -275,14 +299,15 @@ def main(argv=None):
 
         def dump_on_change():
             st = backend.status
-            mv = backend.module
+            mv, sv = backend.module, backend.sticks
             key = (st.get("linkView"), st.get("peerLink"), st.get("peerDetail"), backend.video.state,
-                   mv.support, mv.state, mv.seq)
+                   mv.support, mv.state, mv.seq, sv.support, sv.present, sv.enabled, sv.remoteState, sv.remoteReason)
             if key != last_key["k"]:
                 last_key["k"] = key
                 dump_ui()
         backend.statusChanged.connect(dump_on_change)
         backend.video.stateChanged.connect(dump_on_change)
+        backend.sticks.changed.connect(dump_on_change)  # передача и состояние команд на блоке — сразу (ST-03, ST-06)
     mark = os.environ.get("SHEREGESH_FIRST_FRAME_MARK")
     if mark:                                 # проба S2-2: время от загрузки ядра до первого показанного кадра
         def first_frame():
