@@ -24,6 +24,7 @@ Python только строит конвейер, задаёт свойства
 from __future__ import annotations
 
 import base64
+import collections
 import itertools
 import json
 import os
@@ -415,7 +416,7 @@ class _Base:
             d = {}
             for f in ("ssrc", "internal", "validated", "sender", "packets-received", "packets-lost", "jitter",
                       "bitrate", "octets-received", "packets-sent", "octets-sent", "have-rb", "rb-packetslost",
-                      "rb-jitter", "rb-fractionlost"):
+                      "rb-jitter", "rb-fractionlost", "sent-pli-count", "sent-fir-count"):
                 if s.has_field(f):
                     d[f] = s.get_value(f)
             out["sources"].append(d)
@@ -424,6 +425,38 @@ class _Base:
 
 def _sfield(st, name, default):
     return st.get_value(name) if st.has_field(name) else default
+
+
+def _set_every_packet(ext) -> bool:
+    """Включить расширение rtphdrextntp64 на каждом пакете; False, если у элемента нет такого свойства."""
+    try:
+        if ext.find_property("every-packet") is None:
+            return False
+        ext.set_property("every-packet", True)
+        return bool(ext.get_property("every-packet"))
+    except Exception:
+        return False
+
+
+NTP_UNIX_OFFSET_S = 2208988800.0   # секунд между эпохой NTP (1900) и Unix (1970)
+LATENCY_WINDOW = 600               # кадров в окне оценки задержки
+
+
+def ntp_ns_to_unix(ts: int) -> float:
+    """Метка GstReferenceTimestampMeta (timestamp/x-ntp) — наносекунды от эпохи NTP (1900) -> секунды Unix."""
+    return ts / 1e9 - NTP_UNIX_OFFSET_S
+
+
+def latency_summary(samples) -> dict:
+    """p50/p95/max по окну отсчётов (мс), ближайший ранг; пустое окно — все None."""
+    xs = sorted(samples)
+    if not xs:
+        return {"p50": None, "p95": None, "max": None, "samples": 0}
+
+    def pct(q):
+        return round(xs[min(len(xs) - 1, max(0, int(q * len(xs) + 0.999999) - 1))], 3)
+
+    return {"p50": pct(0.50), "p95": pct(0.95), "max": round(xs[-1], 3), "samples": len(xs)}
 
 
 class SrtpTx(_Base):
@@ -466,12 +499,16 @@ class SrtpTx(_Base):
                 self.ntp64 = False
                 return
             ext.set_id(1)
+            # Метка NTP нужна на КАЖДОМ пакете (по умолчанию её получает только первый): задержку считает приёмник
+            # по каждому кадру. Свойства every-packet нет в старых GStreamer — тогда метка редкая, это видно в stats().
+            self.ntp64_every_packet = _set_every_packet(ext)
             pay.emit("add-extension", ext)
             self.ntp64 = True
         except Exception:
             self.ntp64 = False
 
     ntp64 = False
+    ntp64_every_packet = False
 
     def _hook_session(self, rtpbin, internal_ssrc):
         sess = rtpbin.emit("get-session", 0)
@@ -522,7 +559,8 @@ class SrtpTx(_Base):
             "packets": src.get("packets-sent"), "lost": None, "jitter_ms": None, "fps": None, "frames": None,
             "bitrate_kbps": (src["bitrate"] / 1000.0 if src.get("bitrate") else None),
             "pli_sent": None, "pli_received": c["pli_received"], "keyframes_requested": c["keyframes_requested"],
-            "latency_ms": None, "unknown_ssrc": c["unknown_ssrc"], "ntp64": self.ntp64, "uptime_s": round(age, 2),
+            "latency_ms": None, "unknown_ssrc": c["unknown_ssrc"], "ntp64": self.ntp64,
+            "ntp64_every_packet": self.ntp64_every_packet, "uptime_s": round(age, 2),
         }
 
 
@@ -536,6 +574,29 @@ class SrtpRx(_Base):
         self.frames = 0
         self.last_frame = 0.0
         self._hist: list[tuple[float, int]] = []
+        # Смещение часов (приёмник минус передатчик, с); пока None, задержка не считается (latency_ms = null).
+        self.clock_offset_s: Optional[float] = None
+        self._lat: collections.deque = collections.deque(maxlen=LATENCY_WINDOW)
+        self._lat_lock = threading.Lock()
+        self._ntp_caps = None
+
+    def set_clock_offset(self, offset_s: Optional[float]) -> None:
+        """Смещение часов приёмника относительно передатчика; прежние отсчёты задержки сбрасываются."""
+        with self._lat_lock:
+            self.clock_offset_s = None if offset_s is None else float(offset_s)
+            self._lat.clear()
+
+    def request_keyframe(self) -> bool:
+        """Запросить ключевой кадр у передатчика: GstForceKeyUnit вверх от depay, rtpbin превращает его в PLI."""
+        Gst, _, _ = gst()
+        with self._lock:
+            pipe = self._pipe
+            if pipe is None:
+                return False
+            depay = pipe.get_by_name("depay")
+        ev = Gst.Event.new_custom(Gst.EventType.CUSTOM_UPSTREAM, Gst.Structure.new_from_string(
+            "GstForceKeyUnit, all-headers=(boolean)true"))
+        return bool(depay.get_static_pad("sink").push_event(ev))
 
     def _build(self):
         Gst, GLib, GObject = gst()
@@ -546,6 +607,9 @@ class SrtpRx(_Base):
         self.frames = 0
         self.last_frame = 0.0
         self._hist = [(time.monotonic(), 0)]
+        self._ntp_caps = Gst.Caps.from_string("timestamp/x-ntp")
+        with self._lat_lock:
+            self._lat.clear()
         rtpbin = self._rtpbin = pipe.get_by_name("rtpbin")
         rx_rtcp = rtcp_ssrc_for(self.cfg.ssrc)
         enc, dec = pipe.get_by_name("senc"), pipe.get_by_name("sdec")
@@ -580,12 +644,14 @@ class SrtpRx(_Base):
             ext = Gst.ElementFactory.make("rtphdrextntp64", None)
             if ext is not None:
                 ext.set_id(1)
+                self.ntp64_every_packet = _set_every_packet(ext)
                 depay.emit("add-extension", ext)
                 self.ntp64 = True
         except Exception:
             pass
 
     ntp64 = False
+    ntp64_every_packet = False
 
     def _hook_session(self, rtpbin, internal_ssrc):
         sess = rtpbin.emit("get-session", 0)
@@ -597,9 +663,8 @@ class SrtpRx(_Base):
         isess.connect("on-sending-rtcp", self._on_sending_rtcp)
 
     def _on_sending_rtcp(self, _sess, buf, early):
-        # ранний RTCP (is_early) — это обратная связь: считаем PLI (PSFB fmt=1) разбором заголовка составного пакета
-        if not early:
-            return False
+        # PLI (PSFB fmt=1) и FIR (fmt=4) считаются разбором заголовков составного пакета RTCP. Фильтра по early нет:
+        # на плате (GStreamer 1.26.2) обратная связь уходит и в обычном (не раннем) пакете, и счётчик оставался нулём.
         try:
             ok, mi = buf.map(1)  # Gst.MapFlags.READ
             if ok:
@@ -625,7 +690,22 @@ class SrtpRx(_Base):
         self.last_frame = now
         if self.frames == 1:
             self._emit("first-frame")
+        off = self.clock_offset_s
+        if off is not None:
+            self._sample_latency(info.get_buffer(), off)
         return Gst.PadProbeReturn.OK
+
+    def _sample_latency(self, buf, off: float) -> None:
+        """Задержка кадра, мс: сейчас (Unix) - метка NTP отправки из расширения RTP - смещение часов."""
+        try:
+            meta = buf.get_reference_timestamp_meta(self._ntp_caps)
+            if meta is None:
+                return
+            ms = (time.time() - ntp_ns_to_unix(meta.timestamp) - off) * 1000.0
+        except Exception:
+            return
+        with self._lat_lock:
+            self._lat.append(ms)
 
     def stats(self) -> dict:
         now = time.monotonic()
@@ -640,14 +720,19 @@ class SrtpRx(_Base):
             if not s.get("internal") and s.get("ssrc") == self.cfg.ssrc:
                 src = s
         c = self.counters
+        with self._lat_lock:
+            lat = latency_summary(list(self._lat)) if self.clock_offset_s is not None else None
         return {
             "packets": src.get("packets-received"),
             "lost": (max(0, src["packets-lost"]) if src.get("packets-lost") is not None else None),
             "jitter_ms": (src["jitter"] * 1000.0 / CLOCK_RATE if src.get("jitter") is not None else None),
             "fps": fps, "frames": self.frames,
             "bitrate_kbps": (src["bitrate"] / 1000.0 if src.get("bitrate") else None),
-            "pli_sent": c["pli_sent"], "pli_received": None, "keyframes_requested": None,
-            "latency_ms": None, "unknown_ssrc": c["unknown_ssrc"], "ntp64": self.ntp64,
+            # PLI/FIR: разбор исходящего RTCP и счётчики источника rtpsession (берётся большее: на плате разбор давал 0)
+            "pli_sent": max(c["pli_sent"], int(src.get("sent-pli-count") or 0) + int(src.get("sent-fir-count") or 0)),
+            "pli_received": None, "keyframes_requested": None,
+            "latency_ms": lat, "unknown_ssrc": c["unknown_ssrc"], "ntp64": self.ntp64,
+            "ntp64_every_packet": self.ntp64_every_packet,
             "last_frame_age_s": (round(now - self.last_frame, 3) if self.last_frame else None),
         }
 
