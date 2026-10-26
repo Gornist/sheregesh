@@ -51,6 +51,7 @@ from pathlib import Path
 from sheregesh import PROTOCOL_VERSION, __version__, sdnotify, video, videoinput, videosources
 from sheregesh.videoingest import Ingest
 from sheregesh.videolink import VideoServer
+from .videotx import VideoTx
 from sheregesh.control import wire as control_wire
 from sheregesh.control.receiver import ControlReceiver
 from sheregesh.link import tls
@@ -121,6 +122,12 @@ class Agent:
             # Источник может появиться позже (горячее подключение): канал объявляется при любом его состоянии.
             self.net_video_codec = video.choose_codec(args.video_codec) if net_video and video.available() \
                 else None
+        # Видеосеанс SRTP (ADR-0016): агент — клиент службы sheregesh-video-tx; TLS-видео — резерв (videotx.py)
+        self.peer_addr = None                        # адрес пульта текущего сеанса управления
+        self.vtx = VideoTx(send=self.send, log=lambda s: log(s), spec_fn=lambda: self.video_spec,
+                           profile_fn=self.video_profile, enabled=not args.no_video)
+        self.vtx_task = None                         # опрос службы tx раз в секунду, не задерживает основной цикл
+        self.vtx_end_task = None
         self.handshakes = None                       # asyncio.Semaphore: не более 4 рукопожатий одновременно
         self.sent = {}                               # seq heartbeat/event → (тип, monotonic) для ack
         self.session = None
@@ -153,6 +160,11 @@ class Agent:
         return videoinput.open_source(spec or self.video_spec,
                                       synthetic=lambda: video.synthetic(a.video_width, a.video_height, a.video_fps),
                                       **self.scan_kw)
+
+    def video_profile(self):
+        """Профиль для video-key и start службы tx: размер и частота из аргументов, битрейт — в кбит/с."""
+        a = self.args
+        return {"width": a.video_width, "height": a.video_height, "fps": a.video_fps, "bitrate": 6000}
 
     def video_ingest(self):
         """Видеоприём сетевого профиля: источник по описанию, конвейер — тот же stream_sender_args (сквозной или
@@ -231,6 +243,9 @@ class Agent:
             out["sources"] = self.catalog.snapshot()     # S4: список источников (необязательное поле)
         if self.video_select is not None:                # результат video-select этого сеанса (протокол 1.2)
             out["select"] = dict(self.video_select)
+        srtp = self.vtx.status()                         # SRTP: фактический транспорт и состояние службы tx
+        if srtp is not None:
+            out.update(srtp, enabled=True, codec=out.get("codec") or "h264")
         return out
 
     def video_source_status(self):
@@ -263,8 +278,11 @@ class Agent:
         return (time.monotonic() - self.t0) * self.args.speed
 
     def info(self):
-        return {"role": "remote", "proto": self.proto, "software": self.args.software, "hardware": self.args.hardware,
+        body = {"role": "remote", "proto": self.proto, "software": self.args.software, "hardware": self.args.hardware,
                 "device_id": self.args.device_id}
+        if "video-key" in TYPES.get(self.proto, ()):
+            body["video_transports"] = self.vtx.transports()
+        return body
 
     async def send(self, mtype, body):
         if self.writer is None:
@@ -321,7 +339,7 @@ class Agent:
 
     # ---------- видео ----------
     def video_start(self):
-        if not self.video_codec or self.video_proc is not None:
+        if not self.video_codec or self.video_proc is not None or self.vtx.mode == "srtp":
             return
         self.video_proc = video.spawn(
             video.sender_args(self.video_codec, self.video_port, self.args.video_width, self.args.video_height,
@@ -364,6 +382,7 @@ class Agent:
             self.video_off_until = self.now() + float(arg)
             if self.vserver is not None:            # и защищённый видеоканал: сеанс закрыт, новые отклоняются до конца
                 self.vserver.drop("неисправность video-off")
+            await self.vtx.end("fault video-off")
         elif kind == "alert":
             self.alerts.append(arg)
         elif kind == "alert-clear":
@@ -374,11 +393,15 @@ class Agent:
         if self.ctx is not None and not await self.secure(writer):
             writer.close()
             return
+        await self.vtx.end("control session replaced")   # video-stop уходит ещё старому пульту, пока он не оборван
         if self.writer is not None:                 # одно соединение: новое заменяет старое (старое могло «повиснуть»)
             self.writer.transport.abort()
         if self.vserver is not None:                # видеосеанс привязан к сеансу управления — новый сеанс, новое видео
             self.vserver.drop("сеанс управления заменён")
         self.writer = writer
+        self.peer_addr = (writer.get_extra_info("peername") or (None,))[0]
+        if "video-key" in TYPES.get(self.proto, ()):
+            await self.vtx.probe()                  # hello объявляет srtp, только если сокет службы tx отвечает
         self.hb_wait = None
         self.video_select = None                    # результат выбора — только для сеанса, который его запросил
         self.control.on_link_lost()                 # прежний сеанс (если был) кончился; нумерация кадров — заново
@@ -407,6 +430,8 @@ class Agent:
             # новым, видео закрывается. Новый сеанс сам закрыл видео при подключении.
             if self.writer is None and self.vserver is not None:
                 self.vserver.drop("сеанс управления завершён")
+            if self.writer is None:
+                await self.vtx.end("control session closed")
             if self.writer is None:                 # не заменён новым: команды органов управления — FAILSAFE сразу
                 self.control.on_link_lost()
             writer.close()
@@ -415,6 +440,8 @@ class Agent:
         """Видеосеанс — только тому же пульту (URI проверен TLS) и с того же адреса, что текущий сеанс управления."""
         if self.writer is None or self.peer_desc is None:
             return "no active control session"
+        if not self.vtx.tls_allowed:
+            return "srtp video session"
         if self.now() < self.video_off_until:
             return "video off (fault)"
         if self.peer_desc.get("addr") != addr:
@@ -468,6 +495,7 @@ class Agent:
         self.control.on_link_lost()
         if self.vserver is not None:
             self.vserver.drop("пульт не отвечает")
+        self.vtx_end_task = asyncio.ensure_future(self.vtx.end("console silent"))
 
     async def on_message(self, msg):
         if isinstance(msg, BadMessage):
@@ -487,12 +515,18 @@ class Agent:
                 if self.writer:
                     self.writer.close()
                     self.writer = None
+            else:                                   # выбор транспорта видео (SRTP при 1.5 и объявлении обеих сторон)
+                peer_ip = self.peer_desc.get("addr") if self.peer_desc else self.peer_addr
+                await self.vtx.begin(body, peer_ip, n.session)
         elif mtype == "bye":
             if self.writer:
                 self.writer.close()
                 self.writer = None
         elif mtype == "video-select" and mtype in TYPES.get(self.session or "", ()):
             self.select_video(body)
+            await self.vtx.on_select()              # SRTP: новое поколение с новым источником
+        elif mtype in ("video-key-ack", "video-fallback") and mtype in TYPES.get(self.session or "", ()):
+            await self.vtx.on_message(mtype, body)
         elif mtype == "module-cmd" and mtype in TYPES.get(self.session or "", ()):
             if self.module is not None:
                 self.module.command(body)
@@ -551,7 +585,7 @@ class Agent:
         dt = min(0.2, self.args.heartbeat_interval)
         next_hb = 0.0
         wd = sdnotify.watchdog_interval()
-        next_ping = next_status = 0.0
+        next_ping = next_status = next_vtx = 0.0
         while True:
             await asyncio.sleep(dt)
             mono = time.monotonic()
@@ -559,6 +593,9 @@ class Agent:
                 sdnotify.ping()
                 next_ping = mono + wd
             self.check_peer_alive(mono)
+            if mono >= next_vtx and (self.vtx_task is None or self.vtx_task.done()):
+                next_vtx = mono + 1.0                 # опрос службы tx раз в секунду, отдельной задачей
+                self.vtx_task = asyncio.ensure_future(self.vtx.tick())
             if self.module is not None:
                 self.module.tick()                    # миллисекунды: события эмулятора и таймеры, без ожиданий
             if self.args.status_file and (mono >= next_status or (self.writer is not None) != self.written_connected

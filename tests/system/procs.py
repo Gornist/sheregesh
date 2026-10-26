@@ -21,10 +21,10 @@ def free_port(kind=socket.SOCK_STREAM):
 
 
 class Agent:
-    def __init__(self, *args, port=None):
+    def __init__(self, *args, port=None, env=None):
         self.port = port or free_port()
         self.proc = subprocess.Popen([sys.executable, "-m", "sheregesh_remote", "--port", str(self.port), *args],
-                                     env=ENV, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                     env={**ENV, **(env or {})}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                      start_new_session=True)
         self.banner = []
         deadline = time.monotonic() + 10
