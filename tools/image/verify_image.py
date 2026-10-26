@@ -314,11 +314,11 @@ def video_checks(rep, root, packages_tsv):
     rep.add("video.hardening", "службы видео: notify, watchdog, LimitCORE=0, каталог 0700, песочница",
             all(k in tx and k in rx for k in common) and "ExecStart=/usr/bin/sheregesh-video-tx" in tx
             and "ExecStart=/usr/bin/sheregesh-video-rx" in rx)
-    rep.add("video.rx_nft", "rx не стартует без таблицы nftables (Requires= и After= юнита загрузки)",
-            "Requires=sheregesh-video-nft.service" in rx and "After=" in rx and "sheregesh-video-nft.service" in
+    rep.add("video.rx_nft", "rx не работает без таблицы nftables (BindsTo= и After= юнита загрузки)",
+            "BindsTo=sheregesh-video-nft.service" in rx and "After=" in rx and "sheregesh-video-nft.service" in
             next((x for x in rx.splitlines() if x.startswith("After=")), ""))
-    rep.add("video.tx_nft", "tx не стартует без таблицы блока (Requires= и After=)",
-            "Requires=sheregesh-video-nft-remote.service" in tx and "sheregesh-video-nft-remote.service" in
+    rep.add("video.tx_nft", "tx не работает без таблицы блока (BindsTo= и After=)",
+            "BindsTo=sheregesh-video-nft-remote.service" in tx and "sheregesh-video-nft-remote.service" in
             next((x for x in tx.splitlines() if x.startswith("After=")), ""))
     nft = {n: "\n".join(x for x in root.cat(f"/usr/share/sheregesh/nft/{n}").splitlines() if not x.startswith("#"))
            for n in VIDEO_NFT}                                  # без комментариев: в них «ct state» упоминается

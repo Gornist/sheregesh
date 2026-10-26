@@ -62,10 +62,10 @@ class VideoServiceUnitTest(unittest.TestCase):
 
     def test_rx_requires_nft_table(self):
         rx = load("sheregesh-video-rx.service")[0]["Unit"]
-        self.assertEqual(rx["Requires"], "sheregesh-video-nft.service")
+        self.assertEqual(rx["BindsTo"], "sheregesh-video-nft.service")
         self.assertIn("sheregesh-video-nft.service", rx["After"].split())
         tx = load("sheregesh-video-tx.service")[0]["Unit"]
-        self.assertEqual(tx["Requires"], "sheregesh-video-nft-remote.service")
+        self.assertEqual(tx["BindsTo"], "sheregesh-video-nft-remote.service")
         self.assertIn("sheregesh-video-nft-remote.service", tx["After"].split())
 
     def test_nft_units(self):
@@ -77,6 +77,7 @@ class VideoServiceUnitTest(unittest.TestCase):
             self.assertEqual(cp["Service"]["User"], "root")
             self.assertEqual(cp["Service"]["ExecStart"], f"/usr/sbin/nft -f /usr/share/sheregesh/nft/sheregesh-video-{nft}.nft")
             self.assertIn("nftables.service", cp["Unit"]["After"].split())
+            self.assertEqual(cp["Unit"]["PartOf"], "nftables.service")   # flush ruleset → таблица загружается заново
             self.assertIn(cond, text)
             self.assertNotIn("ExecStart=-", text)                    # ошибка загрузки не маскируется
             self.assertTrue((ROOT / f"tools/image/nft/sheregesh-video-{nft}.nft").exists())
@@ -160,7 +161,7 @@ class VideoPackageTest(unittest.TestCase):
         self.assertEqual(self.run_checks(files, tsv2)["video.nftables"], "FAIL")
         broken = dict(files)
         broken["/usr/lib/systemd/system/sheregesh-video-rx.service"] = \
-            broken["/usr/lib/systemd/system/sheregesh-video-rx.service"].replace("Requires=sheregesh-video-nft.service\n", "")
+            broken["/usr/lib/systemd/system/sheregesh-video-rx.service"].replace("BindsTo=sheregesh-video-nft.service\n", "")
         del broken["/usr/share/sheregesh/nft/sheregesh-video-remote.nft"]
         del broken["/etc/polkit-1/rules.d/52-sheregesh-video-allow.rules"]
         del broken["/usr/bin/sheregesh-video-allow"]

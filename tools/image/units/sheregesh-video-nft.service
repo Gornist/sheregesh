@@ -8,6 +8,9 @@
 Description=Sheregesh: video firewall table (console, UDP 7444/7445 peer only)
 Before=network-pre.target sheregesh-video-rx.service
 After=local-fs.target nftables.service
+# PartOf: перезапуск штатного nftables.service (flush ruleset) перезапускает и этот юнит — таблица загружается заново
+# с пустыми наборами, то есть закрытой; без этого порт видео остался бы открытым до перезагрузки.
+PartOf=nftables.service
 ConditionPathExists=!/home/sheregesh-ui/.config/sheregesh/remote.role
 
 [Service]

@@ -7,7 +7,8 @@
 [Unit]
 Description=Sheregesh: video service, console (SRTP receiver)
 After=network.target local-fs.target sheregesh-video-nft.service
-Requires=sheregesh-video-nft.service
+# BindsTo: пропала таблица (юнит остановлен или упал) — приём останавливается, а не работает без защиты.
+BindsTo=sheregesh-video-nft.service
 RequiresMountsFor=/home/sheregesh-ui
 ConditionPathExists=!/home/sheregesh-ui/.config/sheregesh/remote.role
 ConditionPathExists=/home/sheregesh-ui/.config/sheregesh/link.json

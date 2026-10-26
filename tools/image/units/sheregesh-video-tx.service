@@ -8,7 +8,7 @@
 [Unit]
 Description=Sheregesh: video service, remote unit (SRTP sender)
 After=network.target local-fs.target sheregesh-video-nft-remote.service
-Requires=sheregesh-video-nft-remote.service
+BindsTo=sheregesh-video-nft-remote.service
 RequiresMountsFor=/home/sheregesh-ui
 ConditionPathExists=/home/sheregesh-ui/.config/sheregesh/remote.role
 ConditionPathExists=/home/sheregesh-ui/.config/sheregesh/link.json
