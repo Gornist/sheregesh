@@ -89,15 +89,14 @@ class CtlServer:
             except FileNotFoundError:
                 pass
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            old = os.umask(0o177)
+            # Без os.umask: он общий для всего процесса и гонялся бы с другими потоками службы (state.json и др.).
+            # Каталог сокета — RuntimeDirectory с правами 0700, поэтому до chmod 0600 сокет никому, кроме нас, не виден.
             try:
                 s.bind(self.path)
+                os.chmod(self.path, 0o600)
             except BaseException:
                 s.close()
                 raise
-            finally:
-                os.umask(old)
-            os.chmod(self.path, 0o600)
             s.listen(16)
             s.settimeout(0.05)
             self._stop.clear()
