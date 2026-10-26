@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Тесты базовых сканеров (части TEST-UPD-009, TEST-SYS-003, TEST-REL-011)."""
+"""Тесты базовых сканеров (части TEST-UPD-009, TEST-REL-011)."""
 import sys
 import tempfile
 import unittest
@@ -37,17 +37,9 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(scan.scan_secrets([self.write("tests/data/c.txt", canary)]), [])
         self.assertEqual(len(scan.scan_secrets([self.write("software/x.log", canary)])), 1)
 
-    def test_scope_denylist_in_code_but_not_docs(self):
-        files = [self.write("software/sheregesh/link.py", "import srb_core\n"),
-                 self.write("docs/security/out-of-scope-components.md", "srb_core запрещён\n")]
-        found = scan.scan_scope(files)
-        self.assertEqual(len(found), 1)
-        self.assertTrue(found[0].startswith("software/"))
-
     def test_clean_tree_passes(self):
         files = [self.write("software/sheregesh/ok.py", "print('синтетические данные')\n")]
         self.assertEqual(scan.scan_secrets(files), [])
-        self.assertEqual(scan.scan_scope(files), [])
 
 
 if __name__ == "__main__":

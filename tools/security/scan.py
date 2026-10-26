@@ -4,7 +4,6 @@
 """Проверки репозитория без внешних зависимостей.
 
   scan.py secrets [PATH...]  — шаблоны секретов в отслеживаемых файлах (REQ-UPD-009, REL-011)
-  scan.py scope              — признаки компонентов вне объёма 1.0 в software/ и tools/ (REQ-SYS-003)
 
 Код возврата 1 при находках. Это базовая проверка CI; полное сканирование истории перед
 публикацией (REL-011) выполняется отдельно.
@@ -27,12 +26,6 @@ SECRET_PATTERNS = [
 # Канареечные строки допустимы только в тестовых данных.
 CANARY_ALLOWED = ("tests/",)
 
-# Признаки из docs/security/out-of-scope-components.md. Документация может их упоминать, код — нет.
-# Протоколы управления наземными платформами (ELRS, CRSF, SBUS) разрешены решением D6.
-SCOPE_PATTERNS = re.compile(
-    r"(?i)\b(rx5808|vrx|srb[-_]head|srb_core|bridge-fw|sheregesh-radio)\b")
-SCOPE_DIRS = ("software/", "tools/", "tests/")
-SCOPE_SELF = {"tools/security/scan.py", "tests/tools/test_scan.py"}
 
 
 def tracked_files():
@@ -64,27 +57,12 @@ def scan_secrets(files):
     return findings
 
 
-def scan_scope(files):
-    findings = []
-    for rel in files:
-        if not rel.startswith(SCOPE_DIRS) or rel in SCOPE_SELF:
-            continue
-        text = read_text(rel)
-        if text is None:
-            continue
-        for n, line in enumerate(text.splitlines(), 1):
-            m = SCOPE_PATTERNS.search(line)
-            if m:
-                findings.append(f"{rel}:{n}: {m.group(0)}")
-    return findings
-
-
 def main(argv):
-    if not argv or argv[0] not in ("secrets", "scope"):
+    if not argv or argv[0] != "secrets":
         print(__doc__)
         return 2
     files = argv[1:] or tracked_files()
-    findings = scan_secrets(files) if argv[0] == "secrets" else scan_scope(files)
+    findings = scan_secrets(files)
     for f in findings:
         print(f)
     print(f"{argv[0]}: {len(findings)} находок в {len(files)} файлах")

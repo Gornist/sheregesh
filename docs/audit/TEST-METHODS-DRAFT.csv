@@ -1,7 +1,6 @@
 ﻿REQ-ID;TEST-ID;Приоритет;Устройство;Метод (A/H/M/I/X);Оборудование / эмулятор;Доказательство;Однозначность критерия;Связанные AUD;Уровень доказательства (L0–L5);Статус
 REQ-SYS-001;TEST-SYS-001;Must;Оба;I;BOM, паспорта;Ревизия BOM + фото сборок;OK;;L0;NOT TESTED
 REQ-SYS-002;TEST-SYS-002;Must;Стенд;H+A;2×Pi4, патч-корд, скрипт обрыва линии (ip link down / реле);Журнал обмена, время восстановления;Уточнить: время восстановления, объём данных;AUD-016;L0;NOT TESTED
-REQ-SYS-003;TEST-SYS-003;Must;Процесс;I;Протоколы испытаний;Чек-лист ревизии протоколов;OK;;L0;NOT TESTED
 REQ-SYS-004;TEST-SYS-004;Must;Стенд;H;Изолированная сеть без шлюза, захват трафика;Лог теста + pcap без исходящих WAN-попыток;Уточнить «после первичной настройки»;AUD-018;L0;NOT TESTED
 REQ-SYS-005;TEST-SYS-005;Must;Процесс;I;BOM, CAD;Ревизия BOM;OK;;L0;NOT TESTED
 REQ-SYS-006;TEST-SYS-006;Should;Процесс;I;BOM с актуальными котировками;BOM-сумма по устройствам;OK;;L0;NOT TESTED
@@ -44,7 +43,6 @@ REQ-UI-004;TEST-UI-004;Must;Оба?;H;RGB-индикатор, таблица с�
 REQ-UI-005;TEST-UI-005;Must;Пульт;A+H;DPMS/затемнение, сценарий пробуждения;Отчёт: настройки/состояние не изменились;Поведение HDMI-дисплея при DPMS не проверено;AUD-025;L0;NOT TESTED
 REQ-UI-006;TEST-UI-006;Must;Пульт (удалённый?);H;Кнопка питания (GPIO);Журнал сценариев короткого/длинного нажатия;"Кнопки нет в BOM; длительности не заданы";AUD-022;L0;NOT TESTED
 REQ-UI-007;TEST-UI-007;Must;Пульт;A+H;Сборка справки из Markdown, офлайн-стенд;Отчёт сверки версии справки и ПО;OK;;L0;NOT TESTED
-REQ-UI-008;TEST-UI-008;Must;Процесс;I;Протоколы;Чек-лист;Дублирует REQ-SYS-003;AUD-038;L0;NOT TESTED
 REQ-SW-001;TEST-SW-001;Must;Оба;A+H;systemd, журналы, экспорт;Отчёт состояния служб, архив журнала;OK;;L0;NOT TESTED
 REQ-SW-002;TEST-SW-002;Must;Стенд;H;Синтетический источник (GStreamer), дисплей;Лог кадров/потерь, видеозапись экрана;Нет параметров потока и источника;AUD-011;L0;NOT TESTED
 REQ-SW-003;TEST-SW-003;Must;Оба;A;Эмулятор пира;Отчёт pytest;OK;;L0;NOT TESTED
@@ -76,7 +74,6 @@ REQ-DOC-003;TEST-DOC-003;Must;Процесс;I;BOM;Ревизия;OK;;L0;NOT TES
 REQ-DOC-004;TEST-DOC-004;Must;Процесс;A+I;Сборка RU/EN-документации в образ;Отчёт сборки + ревью;OK;;L0;NOT TESTED
 REQ-DOC-005;TEST-DOC-005;Must;Процесс;I;Changelog;Ревизия;OK;;L0;NOT TESTED
 REQ-DOC-006;TEST-DOC-006;Must;Процесс;A;Генерация SBOM (SPDX/CycloneDX), REUSE;Артефакт SBOM;OK;;L0;NOT TESTED
-REQ-DOC-007;TEST-DOC-007;Must;Процесс;I;Миграционный реестр;Реестр со статусами;OK;AUD-009;L0;NOT TESTED
 REQ-DOC-008;TEST-DOC-008;Must;Процесс;M;Сторонний исполнитель;Отчёт исполнителя;Исполнитель не определён;AUD-029;L0;NOT TESTED
 REQ-REL-001;TEST-REL-001;Must;Процесс;A;Скрипт гейта матрицы;Вывод GO/NO-GO;OK;;L0;NOT TESTED
 REQ-REL-002;TEST-REL-002;Must;Процесс;A;Проверка полноты полей матрицы;Отчёт;OK;;L0;NOT TESTED

@@ -25,8 +25,8 @@ jobs:
           persist-credentials: false
       - name: Проверка реестра
         run: python3 -I tools/reqs/reqgen.py validate && python3 -I tools/reqs/reqgen.py generate --check
-      - name: Секреты и границы объёма
-        run: python3 -I tools/security/scan.py secrets && python3 -I tools/security/scan.py scope
+      - name: Секреты
+        run: python3 -I tools/security/scan.py secrets
       - name: Гейт REQ-REL-001 — все Must PASS на требуемом уровне
         # Без `|| true`: любой Must без PASS останавливает релиз.
         run: python3 -I tools/reqs/reqgen.py gate

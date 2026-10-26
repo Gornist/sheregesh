@@ -31,9 +31,17 @@ class RegistryTest(unittest.TestCase):
     def test_repository_registry_is_consistent(self):
         self.assertEqual(reqgen.validate(self.doc, self.baseline), [])
 
-    def test_every_baseline_requirement_is_kept(self):
+    def test_every_baseline_requirement_is_kept_or_removed_by_change(self):
         ids = {r["id"] for r in self.doc["requirements"]}
-        self.assertTrue({b["id"] for b in self.baseline} <= ids)
+        removed = {rid for c in self.doc["changes"] for rid in c.get("removes", [])}
+        self.assertTrue({b["id"] for b in self.baseline} <= ids | removed)
+        self.assertFalse(ids & removed)
+
+    def test_baseline_requirement_removed_without_change_is_error(self):
+        doc = self.doc_copy()
+        doc["requirements"] = [r for r in doc["requirements"] if r["id"] != "REQ-SYS-001"]
+        errors = reqgen.validate(doc, self.baseline)
+        self.assertTrue(any(e.startswith("REQ-SYS-001: требование baseline удалено") for e in errors), errors)
 
     def test_every_must_has_objective_criteria_and_test(self):
         for r in self.doc["requirements"]:

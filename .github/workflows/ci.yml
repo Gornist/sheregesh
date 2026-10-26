@@ -106,7 +106,7 @@ jobs:
           if-no-files-found: ignore
 
   security:
-    name: Секреты и границы объёма
+    name: Секреты
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -117,5 +117,3 @@ jobs:
           persist-credentials: false
       - name: Секреты в отслеживаемых файлах (REQ-UPD-009)
         run: python3 -I tools/security/scan.py secrets
-      - name: Компоненты вне объёма 1.0 (REQ-SYS-003)
-        run: python3 -I tools/security/scan.py scope

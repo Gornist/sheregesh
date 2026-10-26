@@ -103,7 +103,12 @@ def validate(doc, baseline=None):
                 if not t.get(field):
                     err(f"{tid}: PASS без поля {field}")
 
+    removed = {}
     for c in doc["changes"]:
+        for rid in c.get("removes", []):
+            if rid in reqs:
+                err(f"{c['id']}: удаляет требование {rid}, но оно есть в реестре")
+            removed[rid] = c["id"]
         for rid in c.get("affects", []):
             if rid != "*" and rid not in reqs:
                 err(f"{c['id']}: затрагивает несуществующее требование {rid}")
@@ -114,6 +119,8 @@ def validate(doc, baseline=None):
     # REQ-REL-009: любое отличие от baseline Rev A прослеживается до содержательного изменения.
     if baseline is not None:
         base = {b["id"]: b for b in baseline}
+        for rid in base.keys() - reqs.keys() - removed.keys():
+            err(f"{rid}: требование baseline удалено без записи об изменении (поле removes)")
         for rid, r in reqs.items():
             b = base.get(rid)
             specific = set(r.get("changes", [])) - GENERIC_CHANGES
@@ -271,7 +278,10 @@ def render_changelog(doc):
         out += [f"## {c['id']} — {c['title']}", "",
                 f"- **Дата:** {c['date']}; **основание:** {c['decision']}",
                 f"- **Затронутые REQ:** {', '.join(c['affects']) or '—'}",
-                f"- **Затронутые TEST:** {', '.join(c['tests']) or '—'}", "", c["description"], ""]
+                f"- **Затронутые TEST:** {', '.join(c['tests']) or '—'}"]
+        if c.get("removes"):
+            out.append(f"- **Удалённые REQ:** {', '.join(c['removes'])}")
+        out += ["", c["description"], ""]
     changed = [r for r in doc["requirements"] if "rev_a" not in r or r["requirement"] != r["rev_a"]["requirement"]]
     out += ["## Требования с изменённым текстом", "", "| REQ-ID | Rev A | Rev " + doc["document"]["revision"] + " | Изменения |", "|---|---|---|---|"]
     for r in changed:
