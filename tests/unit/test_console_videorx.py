@@ -226,3 +226,28 @@ def test_stale_state_json_is_ignored(env):
     write_state(tmp)
     rx._wall = lambda: time.time() + 60
     assert rx.read_state() == {}
+
+
+def test_rx_service_restart_repeats_same_start(env):
+    """Служба rx перезапущена (state.json — idle без нашего поколения): пульт повторяет тот же start, не чаще раза в 2 с."""
+    rx, svc, tmp = env
+    body = key_body()
+    rx.handle("video-key", body)
+    write_state(tmp, session=body["session"], gen=body["gen"])
+    rx.tick()
+    assert rx.phase == "streaming" and len(svc.cmds("start")) == 1
+    write_state(tmp, state="idle", session="", gen=0)
+    rx.tick()
+    starts = svc.cmds("start")
+    assert len(starts) == 2 and starts[1] == starts[0]
+    svc.t += 1
+    rx.tick()
+    assert len(svc.cmds("start")) == 2
+    svc.t += 1.1
+    rx.tick()
+    assert len(svc.cmds("start")) == 3
+    write_state(tmp, session=body["session"], gen=body["gen"])
+    svc.t += 5
+    rx.tick()
+    assert len(svc.cmds("start")) == 3 and rx.phase == "streaming"
+

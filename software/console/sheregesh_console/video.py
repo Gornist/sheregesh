@@ -39,6 +39,22 @@ REAP_WAIT_S = 0.05           # остановка: сколько поток GUI
 STALL_RESTART_S = 5.0       # локальный вход: нет кадров дольше — перезапуск захвата с новым поиском устройства
 
 
+
+def service_rgbx_args(path, width, height):
+    """Кадры службы rx без дисплея → RGBx в stdout. Служба отдаёт dmabuf v4l2h264dec (caps memory:DMABuf, DMA_DRM),
+    их не принимают программные videoscale/videoconvert (not-negotiated). На Pi 4 — ISP: v4l2convert импортирует
+    dmabuf и сам уменьшает кадр (pi1: 30 к/с, CPU 11 %); иначе — GPU без окна (EGL surfaceless, 28 %)."""
+    src = [gst.GST_LAUNCH, "-q", "unixfdsrc", f"socket-path={path}", "!"]
+    tail = ["videoconvert", "!", f"video/x-raw,format=RGBx,width={width},height={height}", "!", "fdsink", "fd=1",
+            "sync=false"]
+    if gst.has_element("v4l2convert"):
+        return [*src, "v4l2convert", "output-io-mode=dmabuf-import", "!",
+                f"video/x-raw,format=BGRx,width={width},height={height}", "!", *tail]
+    return ["env", "GST_GL_WINDOW=surfaceless", "GST_GL_PLATFORM=egl", *src, "glupload", "!", "glcolorconvert", "!",
+            "glcolorscale", "!", f"video/x-raw(memory:GLMemory),format=RGBA,width={width},height={height}", "!",
+            "gldownload", "!", *tail]
+
+
 class VideoReceiver(QObject):
     frameChanged = Signal()
     stateChanged = Signal()
@@ -258,8 +274,7 @@ class VideoReceiver(QObject):
             return
         gl_on = self._use_gl()
         if not gl_on:
-            args = self._command or [gst.GST_LAUNCH, "-q", "unixfdsrc", f"socket-path={path}", "!",
-                                     *gst._to_rgbx(FRAME_W, FRAME_H)]
+            args = self._command or service_rgbx_args(path, FRAME_W, FRAME_H)
             try:
                 self._proc = gst.spawn(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                        stderr=subprocess.DEVNULL)

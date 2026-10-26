@@ -27,6 +27,7 @@ RX_PORT = 7444                   # порт видео пульта (UDP SRTP); 
 RTCP_PORT = 7445
 FIRST_FRAME_TIMEOUT_S = 5.0      # контракт v5 §6
 OFFSET_EVERY_S = 5.0
+RESTART_EVERY_S = 2.0            # повтор start после перезапуска службы rx, не чаще
 STATE_MAX_AGE_S = 5.0            # state.json старше — сведений нет (служба не пишет)
 SYSTEMCTL_TIMEOUT_S = 10.0
 STREAM = "main"
@@ -102,6 +103,8 @@ class VideoRx:
         self._mu = threading.Lock()             # короткая защита полей, которые читает GUI
         self._phase = "idle"                    # idle | starting | streaming | fallback
         self._ident = None                      # (stream, session, gen) запущенного приёма
+        self._start_args = None                 # аргументы start текущего поколения (повтор после перезапуска rx)
+        self._restart_at = None
         self._codec = "h264"
         self._ack_at = None
         self._last_offset_at = None
@@ -282,6 +285,8 @@ class VideoRx:
             self._fallback(ident, "start-failed")
             return
         self._ident, self._codec = ident, body["codec"]
+        self._start_args = args                     # для повтора start, если служба rx перезапустилась (ключ — только в памяти)
+        self._restart_at = None
         self._ack_at = self._clock()
         self._last_offset_at = None
         self._set("starting")
@@ -295,6 +300,7 @@ class VideoRx:
         """Остановить приём и закрыть порт (если что-то было запущено/разрешено)."""
         started = self._ident is not None
         self._ident = None
+        self._start_args = None
         if started:
             try:
                 self._ctl("stop", {"stream": self.stream, "reason": reason})
@@ -317,6 +323,7 @@ class VideoRx:
             pass
         self._allow("none")
         self._ident = None
+        self._start_args = None
         self._set("fallback", reason)
 
     # ---------- периодическое ----------
@@ -343,6 +350,18 @@ class VideoRx:
         now = self._clock()
         with self._op:
             if self._ident is None:
+                return
+            if "gen" in st and self._start_args is not None and (st.get("session") != self._ident[1]
+                                                        or st.get("gen") != self._ident[2]):
+                # Служба rx перезапущена (или потеряла поток): её состояние не про наше поколение. Повторяем тот же
+                # start — для приёма это безопасно (ключ и SSRC те же, шифрует только блок), не чаще раза в 2 с.
+                if self._restart_at is None or now - self._restart_at >= RESTART_EVERY_S:
+                    self._restart_at = now
+                    self._log("warning", "video rx lost the session (service restarted?) — repeating start")
+                    try:
+                        self._ctl("start", self._start_args)
+                    except (CtlError, OSError):
+                        pass
                 return
             if phase == "starting":
                 if st.get("state") == "streaming":

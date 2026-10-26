@@ -169,10 +169,7 @@ def test_service_rgbx_path_spawns_gst_and_reads_frames(qapp, monkeypatch, tmp_pa
     try:
         assert len(spawned) == 1
         args, kw = spawned[0]
-        assert args == [gst.GST_LAUNCH, "-q", "unixfdsrc", f"socket-path={sock}", "!",
-                        "videoscale", "!", f"video/x-raw,width={V.FRAME_W},height={V.FRAME_H}", "!",
-                        "videoconvert", "!", f"video/x-raw,format=RGBx,width={V.FRAME_W},height={V.FRAME_H}", "!",
-                        "fdsink", "fd=1", "sync=false"]
+        assert args == V.service_rgbx_args(sock, V.FRAME_W, V.FRAME_H)
         assert kw["stdout"] == subprocess.PIPE
         assert rx.glActive is False and gl.started == []
         assert wait_until(lambda: rx.state == "playing" and rx.metrics()["frames_decoded"] > 3, 5), rx.state
@@ -275,3 +272,16 @@ def test_configure_service_same_args_does_not_restart(qapp, monkeypatch, tmp_pat
         assert rx.glActive is True
     finally:
         rx.stop()
+
+
+def test_service_rgbx_args_take_dmabuf(monkeypatch):
+    """Кадры службы — dmabuf (DMA_DRM): без программного videoscale; v4l2convert (ISP), иначе GL без окна."""
+    monkeypatch.setattr(gst, "has_element", lambda name: name == "v4l2convert")
+    isp = V.service_rgbx_args("/run/x.sock", 640, 360)
+    assert "v4l2convert" in isp and "output-io-mode=dmabuf-import" in isp and "videoscale" not in isp
+    assert "video/x-raw,format=RGBx,width=640,height=360" in isp and isp[-3:] == ["fdsink", "fd=1", "sync=false"]
+    monkeypatch.setattr(gst, "has_element", lambda name: False)
+    gl = V.service_rgbx_args("/run/x.sock", 640, 360)
+    assert gl[:3] == ["env", "GST_GL_WINDOW=surfaceless", "GST_GL_PLATFORM=egl"] and "glupload" in gl
+    assert "videoscale" not in gl and "video/x-raw,format=RGBx,width=640,height=360" in gl
+
