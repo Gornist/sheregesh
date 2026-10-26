@@ -32,6 +32,13 @@ no-link | unsupported | timeout | busy | bad-request | failed.
   {"cmd": "sticks", "op": "disable"}                    → то же (выключение — без подтверждения)
 S = SticksView.snapshot(); result: ok | not-confirmed (enable без "confirmed": true) | no-device | no-link | old-remote |
 bad-request | busy | failed. Включение из локального канала — только с явным флагом confirmed (для QA, ST-03).
+
+Интерфейс (Minimal, испытания GUI-12 и снимки на плате):
+  {"cmd": "ui", "op": "state"}                          → {"result": "ok", "detail": "", "ui": P}
+  {"cmd": "ui", "op": "open", "section": "video"}       → то же (video | control | module | diagnostics | system | "")
+  {"cmd": "ui", "op": "grab"}                           → {"result": "ok", "detail": путь PNG рядом с сокетом, "ui": P}
+P = Ui.perf(): макет, отрисованные кадры за 5 с, открытый раздел, время открытия раздела. Снимок пишется только
+в каталог сокета (ui-grab.png), путь из запроса не принимается; без дисплея (окно не на экране) — unsupported.
 """
 import json
 import os
@@ -67,9 +74,9 @@ def server_path(env=None):
 class ControlServer(QObject):
     _call = Signal(object)          # (fn, box, event): из потока соединения — в поток интерфейса
 
-    def __init__(self, backend, path, parent=None):
+    def __init__(self, backend, path, parent=None, ui=None):
         super().__init__(parent)
-        self.backend, self.path = backend, str(path)
+        self.backend, self.path, self.ui = backend, str(path), ui
         self._sock = None
         self._busy = threading.Lock()   # один запрос за раз: выбор источника и так один (videoSelection)
         self._call.connect(self._run_call, Qt.QueuedConnection)
@@ -152,8 +159,8 @@ class ControlServer(QObject):
             req = json.loads(raw.decode("utf-8").strip() or "null")
         except (UnicodeDecodeError, ValueError):
             return self._fail("bad-request", "not a JSON line")
-        if not isinstance(req, dict) or req.get("cmd") not in ("list", "select", "module", "sticks"):
-            return self._fail("bad-request", "cmd: list | select | module | sticks")
+        if not isinstance(req, dict) or req.get("cmd") not in ("list", "select", "module", "sticks", "ui"):
+            return self._fail("bad-request", "cmd: list | select | module | sticks | ui")
         if not self._busy.acquire(blocking=False):
             return self._fail("busy", "another request is in progress")
         try:
@@ -161,6 +168,8 @@ class ControlServer(QObject):
                 return self._module(req)
             if req["cmd"] == "sticks":
                 return self._sticks(req)
+            if req["cmd"] == "ui":
+                return self._ui(req)
             snap = self._invoke(self._snapshot)
             if req["cmd"] == "list":
                 return self._reply("ok", "", snap)
@@ -279,6 +288,42 @@ class ControlServer(QObject):
                 "source": tel.get("source"), "selection": dict(b.videoSelection), "display": b.videoSource["display"]}
 
     # ---------- вызов в потоке интерфейса ----------
+    SECTIONS = ("video", "control", "module", "diagnostics", "system", "")
+
+    def _ui(self, req):
+        ui, op = self.ui, req.get("op")
+        if ui is None:
+            return self._fail("unsupported", "no interface in this process")
+        if op == "state":
+            return {"result": "ok", "detail": "", "ui": self._invoke(ui.perf)}
+        if op == "open":
+            sec = req.get("section")
+            if ui.layout != "minimal" or sec not in self.SECTIONS:
+                return self._fail("bad-request", "section: video | control | module | diagnostics | system | \"\" "
+                                                 "(layout minimal)")
+
+            def go():                                 # как нажатие кнопки меню: замер открытия — тем же полем
+                w = ui.window
+                w.setProperty("details", "")
+                if sec and w.property("section") != sec:
+                    w.setProperty("openLoaded", False)
+                    w.setProperty("openStartedMs", time.time() * 1000.0)
+                w.setProperty("section", sec)
+                return ui.perf()
+            return {"result": "ok", "detail": "", "ui": self._invoke(go)}
+        if op == "grab":
+            out = os.path.join(os.path.dirname(os.path.abspath(self.path)), "ui-grab.png")
+            # Окно не на экране (нет дисплея — cage без выхода): grabWindow ждёт кадр, которого не будет, и поток
+            # интерфейса встаёт до сторожевого таймера systemd. Снимок — только с отображаемого окна.
+            if not self._invoke(ui.window.isExposed):
+                return self._fail("unsupported", "window is not exposed (no display output)")
+
+            def grab():
+                ui.grab(out)
+                return ui.perf()
+            return {"result": "ok", "detail": out, "ui": self._invoke(grab)}
+        return self._fail("bad-request", "op: state | open | grab")
+
     def _invoke(self, fn):
         box, done = {}, threading.Event()
         self._call.emit((fn, box, done))

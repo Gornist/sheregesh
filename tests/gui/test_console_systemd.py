@@ -33,6 +33,7 @@ def test_console_sends_ready_then_watchdog(tmp_path):
     s.settimeout(30)
     env = {**os.environ, "NOTIFY_SOCKET": path, "WATCHDOG_USEC": "2000000", "QT_QPA_PLATFORM": "offscreen",
            "QT_QUICK_BACKEND": "software", "SHEREGESH_UI_STATE": str(tmp_path / "ui.json"),
+           "SHEREGESH_UI": "classic",                     # peerValueText — плитка связи интерфейса вкладок
            "PYTHONPATH": os.pathsep.join(str(ROOT / p) for p in ("software", "software/emulators", "software/console"))}
     p = subprocess.Popen([sys.executable, "-m", "sheregesh_console", "--data-dir", str(tmp_path),
                           "--link-config", str(tmp_path / "absent.json")], env=env,

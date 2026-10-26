@@ -27,6 +27,7 @@ from sheregesh.notify_relay import adopt_pdeathsig
 
 from .backend import Backend
 from .control import ControlServer, server_path
+from .sysinfo import SystemInfo
 from .video import VideoView
 
 qmlRegisterType(VideoView, "Sheregesh", 1, 0, "VideoView")
@@ -35,6 +36,7 @@ PKG = Path(__file__).resolve().parent
 QML = PKG / "qml"
 I18N = PKG / "i18n"
 LANGS = ("ru",)
+LAYOUTS = {"minimal": "MainMinimal.qml", "classic": "Main.qml"}   # SHEREGESH_UI; служба — minimal
 PAGE_NAMES = ["dashboard", "video", "diagnostics", "power", "logs", "settings", "about", "module", "sticks"]   # порядок вкладок Main.qml   # исходные строки QML — английские; переводы — файлы .ts/.qm
 
 
@@ -68,6 +70,15 @@ def compile_translations(out_dir: Path = I18N) -> list[Path]:
             print(f"перевод {qm.name}: lrelease нет, используется готовый .qm", file=sys.stderr, flush=True)
             out.append(qm)
     return out
+
+
+def ui_layout_file():
+    """Выбор интерфейса на плате без правки юнита: первое слово ~/.config/sheregesh/ui-layout (minimal | classic)."""
+    base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    try:
+        return (base / "sheregesh" / "ui-layout").read_text().split()[0]
+    except (OSError, IndexError):
+        return ""
 
 
 def module_ui_state(ui):
@@ -132,20 +143,57 @@ def sticks_ui_state(ui):
 
 
 class Ui:
-    """Движок QML + переводчик, следящий за языком из конфигурации."""
+    """Движок QML + переводчик, следящий за языком из конфигурации.
 
-    def __init__(self, backend: Backend):
+    layout: classic — вкладки (Main.qml, по умолчанию для испытаний), minimal — видео на весь экран (MainMinimal.qml)."""
+
+    def __init__(self, backend: Backend, layout="classic"):
         self.backend = backend
+        self.layout = layout
         self.engine = QQmlApplicationEngine()
         self.translator = QTranslator()
         self._lang = None
+        self.system_info = SystemInfo()
         self.engine.rootContext().setContextProperty("backend", backend)
+        self.engine.rootContext().setContextProperty("systemInfo", self.system_info)
         self._apply_language()
         backend.appearanceChanged.connect(self._apply_language)
-        self.engine.load(QUrl.fromLocalFile(str(QML / "Main.qml")))
+        self.engine.load(QUrl.fromLocalFile(str(QML / LAYOUTS[layout])))
         if not self.engine.rootObjects():
-            raise RuntimeError("не удалось загрузить Main.qml")
+            raise RuntimeError(f"не удалось загрузить {LAYOUTS[layout]}")
         self.window = self.engine.rootObjects()[0]
+        self._swaps = []                          # моменты frameSwapped за 5 с (rendered_fps_5s), только по запросу
+        self._count_swaps = False
+
+    def count_frames(self):
+        """Считать отрисованные кадры окна (замер нагрузки, ui-state perf)."""
+        if not self._count_swaps:
+            self._count_swaps = True
+            self.window.frameSwapped.connect(self._on_swap)
+
+    def _on_swap(self):
+        now = time.monotonic()
+        self._swaps.append(now)
+        if len(self._swaps) > 400:
+            del self._swaps[:200]
+
+    def perf(self):
+        """Отрисовка окна: кадров за 5 с, раздел, время открытия раздела до первого кадра с панелью."""
+        now = time.monotonic()
+        n = sum(1 for t in self._swaps if now - t < 5.0)
+        w = self.window
+        out = {"layout": self.layout, "rendered_fps_5s": round(n / 5.0, 1) if self._count_swaps else None,
+               "exposed": w.isExposed()}
+        if self.layout == "minimal":
+            def value(name):
+                o = self.find(name)
+                return o.property("value") if o is not None else None
+            msg = self.find("videoMessage")
+            out.update(section=w.property("section"), details=w.property("details"), last_open_ms=w.property("lastOpenMs"),
+                       status={k: value("status" + k.capitalize()) for k in ("control", "link", "video", "input", "module")},
+                       videoMessage=self.find("videoMessageTitle").property("text")
+                       if msg is not None and msg.property("visible") else "")
+        return out
 
     def _apply_language(self):
         lang = self.backend.language
@@ -251,13 +299,18 @@ def main(argv=None):
     backend = Backend(data_dir, demo=args.demo or bool(args.screenshots), speed=args.speed,
                       autostart=not args.screenshots, peer=peer, local_video=args.local_video, link_cfg=link_cfg,
                       link_status_file=args.link_status)
-    ui = Ui(backend)
+    # Снимки --screenshots — сценарий вкладок; служба и ручной запуск — Minimal, если не выбран classic:
+    # SHEREGESH_UI или файл ~/.config/sheregesh/ui-layout (приёмка S6–S8 читает тексты страниц вкладок)
+    layout = "classic" if args.screenshots else os.environ.get("SHEREGESH_UI") or ui_layout_file() or "minimal"
+    layout = layout if layout in LAYOUTS else "minimal"
+    ui = Ui(backend, layout)
+    print(f"Интерфейс: {layout}", flush=True)
     print(f"Данные эмулятора: {data_dir}", flush=True)
     control = None
     ctl_path = args.control_socket if args.control_socket is not None else server_path()
     if ctl_path and not args.screenshots:
         try:
-            control = ControlServer(backend, ctl_path).start()
+            control = ControlServer(backend, ctl_path, ui=ui).start()
             print(f"Локальный канал управления: {ctl_path}", flush=True)
         except OSError as e:                      # без канала пульт работает; videoselect — прямым сеансом
             print(f"Локальный канал управления не открыт: {e}", flush=True)
@@ -290,6 +343,8 @@ def main(argv=None):
     ui_state = os.environ.get("SHEREGESH_UI_STATE")
     ui_timer = QTimer()
     if ui_state:
+        ui.count_frames()
+
         def dump_ui():
             st = backend.status
             label = ui.find("peerValue")
@@ -304,7 +359,8 @@ def main(argv=None):
                     "video": backend.video.metrics(),   # фактически декодированные кадры и видеоканал (S3.1-VIDEO)
                     "videoSource": backend.videoSource,  # вход/состояние источника и решение для кадра (display, live)
                     "module": module_ui_state(ui),       # страница «Модуль» (ADR-0012, S6)
-                    "sticks": sticks_ui_state(ui)}       # страница «Управление» (ADR-0013, S7)
+                    "sticks": sticks_ui_state(ui),       # страница «Управление» (ADR-0013, S7)
+                    "perf": ui.perf()}                   # отрисовка окна и разделы Minimal (замер нагрузки)
             try:
                 tmp = Path(ui_state + ".tmp")
                 tmp.write_text(json.dumps(data, ensure_ascii=False))

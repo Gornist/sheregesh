@@ -116,6 +116,109 @@
     </message>
 </context>
 <context>
+    <name>ConsoleWindow</name>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="14" />
+        <source>Sheregesh — console (laboratory emulation)</source>
+        <translation>Шерегеш — пульт (лабораторная эмуляция)</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="32" />
+        <source>Remote unit: connected</source>
+        <translation>Удалённый блок: связь есть</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="32" />
+        <source>Remote unit: link error</source>
+        <translation>Удалённый блок: ошибка связи</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="33" />
+        <source>Remote unit: connecting…</source>
+        <translation>Удалённый блок: подключение…</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="33" />
+        <source>Remote unit: no link</source>
+        <translation>Удалённый блок: нет связи</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="37" />
+        <source>Synthetic</source>
+        <translation>Синтетический</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="38" />
+        <source>USB (UVC)</source>
+        <translation>USB (UVC)</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="39" />
+        <source>unknown</source>
+        <translation>неизвестно</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="42" />
+        <source>streaming</source>
+        <translation>поток</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="42" />
+        <source>no signal</source>
+        <translation>нет сигнала</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="43" />
+        <source>no device</source>
+        <translation>нет устройства</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="43" />
+        <source>starting</source>
+        <translation>запуск</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="44" />
+        <source>connection error</source>
+        <translation>ошибка подключения</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="44" />
+        <source>error</source>
+        <translation>ошибка</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="45" />
+        <source>reconnecting</source>
+        <translation>переподключение</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="45" />
+        <source>not reported</source>
+        <translation>не сообщается</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="48" />
+        <source>Fault</source>
+        <translation>Неисправность</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="48" />
+        <source>Warning</source>
+        <translation>Предупреждение</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="49" />
+        <source>Starting</source>
+        <translation>Запуск</translation>
+    </message>
+    <message>
+        <location filename="../qml/ConsoleWindow.qml" line="49" />
+        <source>Normal</source>
+        <translation>Норма</translation>
+    </message>
+</context>
+<context>
     <name>DashboardPage</name>
     <message>
         <location filename="../qml/DashboardPage.qml" line="41" />
@@ -508,174 +611,890 @@
 <context>
     <name>Main</name>
     <message>
-        <location filename="../qml/Main.qml" line="13" />
-        <source>Sheregesh — console (laboratory emulation)</source>
-        <translation>Шерегеш — пульт (лабораторная эмуляция)</translation>
-    </message>
-    <message>
-        <location filename="../qml/Main.qml" line="48" />
-        <source>Fault</source>
-        <translation>Неисправность</translation>
-    </message>
-    <message>
-        <location filename="../qml/Main.qml" line="48" />
-        <source>Warning</source>
-        <translation>Предупреждение</translation>
-    </message>
-    <message>
-        <location filename="../qml/Main.qml" line="49" />
-        <source>Starting</source>
-        <translation>Запуск</translation>
-    </message>
-    <message>
-        <location filename="../qml/Main.qml" line="49" />
-        <source>Normal</source>
-        <translation>Норма</translation>
-    </message>
-    <message>
-        <location filename="../qml/Main.qml" line="90" />
+        <location filename="../qml/Main.qml" line="33" />
         <source>Sheregesh console</source>
         <translation>Пульт «Шерегеш»</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="96" />
+        <location filename="../qml/Main.qml" line="39" />
         <source>Emulation · synthetic data only</source>
         <translation>Эмуляция · только синтетические данные</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="141" />
+        <location filename="../qml/Main.qml" line="93" />
         <source>Dashboard</source>
         <translation>Главная панель</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="142" />
+        <location filename="../qml/Main.qml" line="94" />
         <source>Video</source>
         <translation>Видео</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="143" />
+        <location filename="../qml/Main.qml" line="95" />
         <source>Diagnostics</source>
         <translation>Диагностика</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="144" />
+        <location filename="../qml/Main.qml" line="96" />
         <source>Power</source>
         <translation>Питание</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="145" />
+        <location filename="../qml/Main.qml" line="97" />
         <source>Logs</source>
         <translation>Журналы</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="146" />
+        <location filename="../qml/Main.qml" line="98" />
         <source>Settings</source>
         <translation>Настройки</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="147" />
+        <location filename="../qml/Main.qml" line="99" />
         <source>About</source>
         <translation>О системе</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="148" />
+        <location filename="../qml/Main.qml" line="100" />
         <source>Module</source>
         <translation>Модуль</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="149" />
+        <location filename="../qml/Main.qml" line="101" />
         <source>Control</source>
         <translation>Управление</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="181" />
+        <location filename="../qml/Main.qml" line="133" />
         <source>Model time %1 s</source>
         <translation>Модельное время %1 с</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="186" />
+        <location filename="../qml/Main.qml" line="138" />
         <source>Scenario: %1</source>
         <translation>Сценарий: %1</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="193" />
+        <location filename="../qml/Main.qml" line="145" />
         <source>Software %1 · protocol %2</source>
         <translation>ПО %1 · протокол %2</translation>
     </message>
+</context>
+<context>
+    <name>MainMinimal</name>
     <message>
-        <location filename="../qml/Main.qml" line="32" />
-        <source>Remote unit: connected</source>
-        <translation>Удалённый блок: связь есть</translation>
+        <location filename="../qml/MainMinimal.qml" line="24" />
+        <source>Video</source>
+        <translation>Видео</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="32" />
-        <source>Remote unit: link error</source>
-        <translation>Удалённый блок: ошибка связи</translation>
+        <location filename="../qml/MainMinimal.qml" line="24" />
+        <source>Control</source>
+        <translation>Управление</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="33" />
-        <source>Remote unit: connecting…</source>
-        <translation>Удалённый блок: подключение…</translation>
+        <location filename="../qml/MainMinimal.qml" line="25" />
+        <source>Module</source>
+        <translation>Модуль</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="33" />
-        <source>Remote unit: no link</source>
-        <translation>Удалённый блок: нет связи</translation>
+        <location filename="../qml/MainMinimal.qml" line="25" />
+        <source>Diagnostics</source>
+        <translation>Диагностика</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="37" />
-        <source>Synthetic</source>
-        <translation>Синтетический</translation>
+        <location filename="../qml/MainMinimal.qml" line="26" />
+        <source>System</source>
+        <translation>Система</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="38" />
-        <source>USB (UVC)</source>
-        <translation>USB (UVC)</translation>
+        <location filename="../qml/MainMinimal.qml" line="62" />
+        <location filename="../qml/MainMinimal.qml" line="76" />
+        <source>no link</source>
+        <translation>нет связи</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="39" />
-        <source>unknown</source>
-        <translation>неизвестно</translation>
+        <location filename="../qml/MainMinimal.qml" line="63" />
+        <source>not supported</source>
+        <translation>не поддерживается</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="42" />
-        <source>streaming</source>
-        <translation>поток</translation>
+        <location filename="../qml/MainMinimal.qml" line="65" />
+        <source>output: commands</source>
+        <translation>выход: команды</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="42" />
-        <source>no signal</source>
-        <translation>нет сигнала</translation>
+        <location filename="../qml/MainMinimal.qml" line="65" />
+        <source>output: neutral</source>
+        <translation>выход: нейтраль</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="43" />
-        <source>no device</source>
-        <translation>нет устройства</translation>
+        <location filename="../qml/MainMinimal.qml" line="66" />
+        <source>no output</source>
+        <translation>нет выхода</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="43" />
-        <source>starting</source>
-        <translation>запуск</translation>
+        <location filename="../qml/MainMinimal.qml" line="67" />
+        <location filename="../qml/MainMinimal.qml" line="96" />
+        <source>off</source>
+        <translation>выкл.</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="44" />
-        <source>connection error</source>
-        <translation>ошибка подключения</translation>
+        <location filename="../qml/MainMinimal.qml" line="75" />
+        <source>connected</source>
+        <translation>на связи</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="44" />
+        <location filename="../qml/MainMinimal.qml" line="75" />
+        <source>no link · reconnecting</source>
+        <translation>нет связи · переподключение</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="76" />
+        <source>connecting</source>
+        <translation>подключение</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="76" />
         <source>error</source>
         <translation>ошибка</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="45" />
-        <source>not reported</source>
-        <translation>не сообщается</translation>
+        <location filename="../qml/MainMinimal.qml" line="84" />
+        <source>FPS</source>
+        <translation>к/с</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="45" />
-        <source>reconnecting</source>
-        <translation>переподключение</translation>
+        <location filename="../qml/MainMinimal.qml" line="85" />
+        <source>no video</source>
+        <translation>нет видео</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="93" />
+        <source>no data</source>
+        <translation>нет данных</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="94" />
+        <source>module</source>
+        <translation>модуль</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="95" />
+        <source>ready</source>
+        <translation>готов</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="95" />
+        <source>fault</source>
+        <translation>неисправность</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="96" />
+        <source>absent</source>
+        <translation>отсутствует</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="166" />
+        <source>NO LINK TO THE REMOTE UNIT</source>
+        <translation>НЕТ СВЯЗИ С БЛОКОМ</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="174" />
+        <source>The link to the remote unit is lost; reconnecting automatically.</source>
+        <translation>Связь с удалённым блоком потеряна; переподключение автоматически.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="202" />
+        <source>← Back</source>
+        <translation>← Назад</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="230" />
+        <source>CONTROL</source>
+        <translation>УПРАВЛЕНИЕ</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="234" />
+        <source>UNIT</source>
+        <translation>БЛОК</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="238" />
+        <source>VIDEO</source>
+        <translation>ВИДЕО</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="243" />
+        <source>INPUT</source>
+        <translation>ВВОД</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="244" />
+        <source>no device</source>
+        <translation>нет устройства</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="249" />
+        <source>MODULE</source>
+        <translation>МОДУЛЬ</translation>
+    </message>
+</context>
+<context>
+    <name>MiniControlPanel</name>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="17" />
+        <source>No link to the remote unit</source>
+        <translation>Нет связи с удалённым блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="18" />
+        <source>Not supported by the remote unit</source>
+        <translation>Не поддерживается блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="21" />
+        <source>No commands</source>
+        <translation>Нет команд</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="22" />
+        <source>Commands are arriving</source>
+        <translation>Команды идут</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="23" />
+        <source>FAILSAFE: no fresh commands</source>
+        <translation>FAILSAFE: нет свежих команд</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="24" />
+        <source>No data from the remote unit</source>
+        <translation>Нет данных от блока</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="29" />
+        <source>No commands since the remote unit started</source>
+        <translation>Команд не было с запуска блока</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="30" />
+        <source>Fresh commands from the console</source>
+        <translation>Свежие команды с пульта</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="31" />
+        <source>Transmission disabled by the operator</source>
+        <translation>Передача выключена оператором</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="32" />
+        <source>No commands for longer than %1 ms: channels centered, buttons released</source>
+        <translation>Нет команд дольше %1 мс: каналы в центре, кнопки отпущены</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="33" />
+        <source>Link session lost: channels centered, buttons released</source>
+        <translation>Сеанс связи потерян: каналы в центре, кнопки отпущены</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="34" />
+        <source>Control device disconnected: channels centered, buttons released</source>
+        <translation>Аппаратура отключена: каналы в центре, кнопки отпущены</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="40" />
+        <source>no data</source>
+        <translation>нет данных</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="42" />
+        <source>CRSF output: neutral</source>
+        <translation>Выход CRSF: нейтраль</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="43" />
+        <source>CRSF output: commands go to the module</source>
+        <translation>Выход CRSF: команды идут на модуль</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="44" />
+        <source>no radio output</source>
+        <translation>нет радиовыхода</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="50" />
+        <source>Device</source>
+        <translation>Устройство</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="51" />
+        <source>not connected</source>
+        <translation>не подключено</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="56" />
+        <source>connected · %1 axes, %2 buttons</source>
+        <translation>подключено · осей %1, кнопок %2</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="56" />
+        <source>no device</source>
+        <translation>нет устройства</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="61" />
+        <source>The control device was disconnected: transmission is off. Enable it again after reconnecting.</source>
+        <translation>Аппаратура была отключена: передача выключена. После подключения включите её снова.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="69" />
+        <source>Turn transmission off</source>
+        <translation>Выключить передачу</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="69" />
+        <source>Turn transmission on…</source>
+        <translation>Включить передачу…</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="85" />
+        <source>Axes and buttons are sent to the remote unit 50 times per second; without fresh commands for %1 ms it goes to FAILSAFE.</source>
+        <translation>Оси и кнопки уходят на блок 50 раз в секунду; без свежих команд дольше %1 мс блок переходит в FAILSAFE.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="92" />
+        <source>Confirm: enable transmission</source>
+        <translation>Подтвердить: включить передачу</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="102" />
+        <source>Remote unit</source>
+        <translation>Удалённый блок</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="106" />
+        <source>Reason</source>
+        <translation>Причина</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="107" />
+        <source>Output</source>
+        <translation>Выход</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="109" />
+        <source>Rate · latency</source>
+        <translation>Частота · задержка</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="112" />
+        <source>Sticks</source>
+        <translation>Стики</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="155" />
+        <source>Control page</source>
+        <translation>Страница «Управление»</translation>
+    </message>
+</context>
+<context>
+    <name>MiniDetails</name>
+    <message>
+        <location filename="../qml/MiniDetails.qml" line="28" />
+        <source>Full pages cover the video: unavailable while commands go to the module.</source>
+        <translation>Полные страницы закрывают видео: недоступны, пока команды идут на модуль.</translation>
+    </message>
+</context>
+<context>
+    <name>MiniDiagPanel</name>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="17" />
+        <source>Overall</source>
+        <translation>Общее состояние</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="18" />
+        <source>active events: %1</source>
+        <translation>активных событий: %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="23" />
+        <source>Remote unit (Ethernet)</source>
+        <translation>Удалённый блок (Ethernet)</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="27" />
+        <source>Link security</source>
+        <translation>Защита канала</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="29" />
+        <source>Video</source>
+        <translation>Видео</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="30" />
+        <source>%1 · %2 fps shown · restarts %3</source>
+        <translation>%1 · показано %2 к/с · перезапусков %3</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="30" />
+        <source>playing</source>
+        <translation>воспроизведение</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="34" />
+        <source>USB input</source>
+        <translation>USB-ввод</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="35" />
+        <source>no device</source>
+        <translation>нет устройства</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="38" />
+        <source>Remote unit software</source>
+        <translation>ПО блока</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="39" />
+        <source>Console software</source>
+        <translation>ПО пульта</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="39" />
+        <source>protocol</source>
+        <translation>протокол</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="42" />
+        <source>Export logs</source>
+        <translation>Выгрузить журнал</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="50" />
+        <source>Saved: %1</source>
+        <translation>Сохранено: %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="57" />
+        <source>Events</source>
+        <translation>События</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="57" />
+        <source>Units overview</source>
+        <translation>Обзор блоков</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="58" />
+        <source>Logs</source>
+        <translation>Журналы</translation>
+    </message>
+</context>
+<context>
+    <name>MiniModulePanel</name>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="18" />
+        <source>Module absent</source>
+        <translation>Модуль отсутствует</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="19" />
+        <source>Module detected</source>
+        <translation>Модуль обнаружен</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="20" />
+        <source>Initializing</source>
+        <translation>Инициализация</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="21" />
+        <source>Ready</source>
+        <translation>Готов</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="22" />
+        <source>Fault</source>
+        <translation>Неисправность</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="23" />
+        <source>Recovering</source>
+        <translation>Восстановление</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="24" />
+        <source>Disabled</source>
+        <translation>Отключён</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="30" />
+        <source>No data: no link to the remote unit</source>
+        <translation>Нет данных: нет связи с удалённым блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="31" />
+        <source>The remote unit does not support the external module (protocol %1)</source>
+        <translation>Удалённый блок не поддерживает внешний модуль (протокол %1)</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="32" />
+        <source>The remote unit does not report the module state</source>
+        <translation>Удалённый блок не сообщает состояние модуля</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="33" />
+        <source>The external module is available only with a remote unit</source>
+        <translation>Внешний модуль доступен только с удалённым блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="39" />
+        <source>laboratory emulator</source>
+        <translation>лабораторный эмулятор</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="40" />
+        <source>CRSF to the ELRS emulator</source>
+        <translation>CRSF в эмулятор ELRS</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="41" />
+        <source>CRSF over UART</source>
+        <translation>CRSF по UART</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="58" />
+        <source>SIM — the module is emulated; there is no radio and no real telemetry.</source>
+        <translation>SIM — модуль эмулируется: радио нет, телеметрия не настоящая.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="71" />
+        <source>Profile</source>
+        <translation>Профиль</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="72" />
+        <source>Backend</source>
+        <translation>Backend</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="75" />
+        <source>State</source>
+        <translation>Состояние</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="79" />
+        <source>Interface</source>
+        <translation>Интерфейс</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="81" />
+        <source>Output</source>
+        <translation>Выход</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="82" />
+        <source>commands</source>
+        <translation>команды</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="82" />
+        <source>neutral</source>
+        <translation>нейтраль</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="82" />
+        <source>none</source>
+        <translation>нет</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="96" />
+        <source>not available on this board (new image required)</source>
+        <translation>на этой плате нет (нужен новый образ)</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="101" />
+        <source>Error</source>
+        <translation>Ошибка</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniModulePanel.qml" line="105" />
+        <source>Module page</source>
+        <translation>Страница «Модуль»</translation>
+    </message>
+</context>
+<context>
+    <name>MiniSystemPanel</name>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="16" />
+        <source>Console software</source>
+        <translation>ПО пульта</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="16" />
+        <source>protocol</source>
+        <translation>протокол</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="17" />
+        <source>Release</source>
+        <translation>Выпуск</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="18" />
+        <source>Previous release</source>
+        <translation>Предыдущий выпуск</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="26" />
+        <source>Slots</source>
+        <translation>Слоты</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="27" />
+        <source>active %1 · other %2</source>
+        <translation>активный %1 · второй %2</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="29" />
+        <source>System image</source>
+        <translation>Образ системы</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="30" />
+        <source>Display</source>
+        <translation>Дисплей</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="30" />
+        <source>scale</source>
+        <translation>масштаб</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="31" />
+        <source>Language · theme</source>
+        <translation>Язык · тема</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="41" />
+        <source>Settings</source>
+        <translation>Настройки</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="41" />
+        <source>Power</source>
+        <translation>Питание</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="42" />
+        <source>About</source>
+        <translation>О системе</translation>
+    </message>
+</context>
+<context>
+    <name>MiniVideoPanel</name>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="18" />
+        <source>Video source</source>
+        <translation>Видеоисточник</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="49" />
+        <source>active</source>
+        <translation>активный</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="50" />
+        <source>switching…</source>
+        <translation>переключение…</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="50" />
+        <source>available</source>
+        <translation>доступен</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="50" />
+        <source>unavailable</source>
+        <translation>недоступен</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="61" />
+        <source>Switch to «%1»</source>
+        <translation>Переключить на «%1»</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="70" />
+        <source>The remote unit does not report a list of sources.</source>
+        <translation>Блок не сообщает список источников.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="78" />
+        <source>Switching to «%1» failed.</source>
+        <translation>Переключение на «%1» не выполнено.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="87" />
+        <source>State</source>
+        <translation>Состояние</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="88" />
+        <source>Playing</source>
+        <translation>Воспроизведение</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="92" />
+        <source>Source mode</source>
+        <translation>Режим источника</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="96" />
+        <source>Shown</source>
+        <translation>Показано</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="97" />
+        <source>%1 fps · %2 · decoder restarts %3</source>
+        <translation>%1 к/с · %2 · перезапусков декодера %3</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="102" />
+        <source>Signal</source>
+        <translation>Сигнал</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="103" />
+        <source>SIM · synthetic test pattern</source>
+        <translation>SIM · синтетическая испытательная таблица</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="108" />
+        <source>Error</source>
+        <translation>Ошибка</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="113" />
+        <source>Video page</source>
+        <translation>Страница «Видео»</translation>
+    </message>
+</context>
+<context>
+    <name>MiniVideoText</name>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="12" />
+        <source>No signal</source>
+        <translation>Нет сигнала</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="13" />
+        <source>No video device</source>
+        <translation>Нет видеоустройства</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="14" />
+        <source>Connection error</source>
+        <translation>Ошибка подключения</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="15" />
+        <source>Video source error</source>
+        <translation>Ошибка видеоисточника</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="16" />
+        <source>Source starting</source>
+        <translation>Запуск источника</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="17" />
+        <source>Connecting…</source>
+        <translation>Соединение…</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="18" />
+        <source>Switching…</source>
+        <translation>Переключение…</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="19" />
+        <source>Video mode not supported</source>
+        <translation>Режим не поддерживается</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="20" />
+        <source>Video unavailable</source>
+        <translation>Видео недоступно</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="21" />
+        <source>Waiting for stream</source>
+        <translation>Ожидание потока</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="22" />
+        <source>No video</source>
+        <translation>Нет видео</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="28" />
+        <source>No signal on the %1 input. The last frame is not shown; video returns automatically when the signal is back.</source>
+        <translation>Нет сигнала на входе %1. Последний кадр не показывается; видео вернётся автоматически, когда появится сигнал.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="29" />
+        <source>No capture device for the %1 input.</source>
+        <translation>Нет устройства захвата для входа %1.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="30" />
+        <source>Cannot connect to the %1 stream; retrying automatically.</source>
+        <translation>Не удаётся подключиться к потоку %1; повтор выполняется автоматически.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="31" />
+        <source>The %1 video source reports an error.</source>
+        <translation>Видеоисточник %1 сообщает об ошибке.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="32" />
+        <source>The %1 video source is starting.</source>
+        <translation>Видеоисточник %1 запускается.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="33" />
+        <source>Connecting to the %1 source: waiting for its first frames. Frames of the previous source are not shown.</source>
+        <translation>Подключение к источнику %1: ожидаются его первые кадры. Кадры прежнего источника не показываются.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="34" />
+        <source>Switching to «%1»…</source>
+        <translation>Переключение на «%1»…</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="35" />
+        <source>Reconnecting to the remote unit: the link is being restored. The last frame is not shown; video returns automatically.</source>
+        <translation>Переподключение к удалённому блоку: связь восстанавливается. Последний кадр не показывается; видео вернётся автоматически.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="36" />
+        <source>GStreamer is not installed; the rest of the interface works normally.</source>
+        <translation>GStreamer не установлен; остальной интерфейс работает штатно.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="37" />
+        <source>The remote unit does not report a video stream.</source>
+        <translation>Удалённый блок не сообщает о видеопотоке.</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoText.qml" line="38" />
+        <source>The interface keeps working; the stream is restored automatically when frames arrive.</source>
+        <translation>Интерфейс продолжает работать; поток восстановится автоматически, когда придут кадры.</translation>
     </message>
 </context>
 <context>

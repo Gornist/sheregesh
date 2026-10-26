@@ -131,7 +131,9 @@ class Loop:
             p.wait()
 
     def start_console(self):
-        env = {**CENV, "SHEREGESH_UI_STATE": str(self.ui_path), "SHEREGESH_CONSOLE_CONTROL": self.sock}
+        # тексты страниц «Модуль»/«Управление» в ui-state — у интерфейса вкладок (Minimal их не создаёт)
+        env = {**CENV, "SHEREGESH_UI_STATE": str(self.ui_path), "SHEREGESH_CONSOLE_CONTROL": self.sock,
+               "SHEREGESH_UI": "classic"}
         log = open(self.tmp / "console.log", "a")
         self.files.append(log)
         self.console = subprocess.Popen(
