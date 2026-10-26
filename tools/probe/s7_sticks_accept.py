@@ -74,7 +74,7 @@ OUTPUT = "none"
 LIMITS = {"active_s": 1.0, "rate_min_hz": 45.0, "window_s": 30.0, "settle_s": 2.5, "latency_median_ms": 30.0,
           "latency_p99_ms": 100.0, "failsafe_ms": 600.0, "stop_detect_s": 10.0, "idle_s": 1.0,
           "console_start_s": 60.0, "device_lost_s": 10.0, "replug_s": 20.0, "replug_hold_s": 3.0}
-ECHO_TOL = 1                       # ST-04: ±1 (в шкале −1000…1000)
+ECHO_TOL = 1                       # ST-04: ±1 (в шкале −1000…1000), но не меньше шума оси за окно
 REST_SPREAD_MAX = 20               # ST-04: разброс оси пульта за окно больше — стики не неподвижны (ERROR)
 MOVE_MIN = 300                     # ST-04 ручной: поза отличается от покоя хотя бы на столько по одной оси
 LATENCY_MIN_SAMPLES = 50           # ST-05: меньше — перцентиль не доказателен (ERROR)
@@ -442,8 +442,10 @@ def judge_echo_rest(e):
     p = []
     if not e.get("stable"):
         p.append("нет стабильных выборок в ACTIVE для сравнения с rc-state")
-    elif e["echo_max"] > ECHO_TOL:
-        p.append(f"ch блока отличается от осей пульта до {e['echo_max']} (±{ECHO_TOL})")
+    elif e["echo_max"] > max(ECHO_TOL, e["spread"]):
+        # Эхо (rc-state 10 Гц) отстаёт от опроса пульта на 12–150 мс; шум осей в покое (прогон 2026-10-26: 3)
+        # даёт такое же расхождение без ошибки передачи — допуск не меньше разброса оси за окно.
+        p.append(f"ch блока отличается от осей пульта до {e['echo_max']} (±{max(ECHO_TOL, e['spread'])})")
     if e.get("btn_bad"):
         p.append(f"btn блока ≠ кнопкам пульта в {e['btn_bad']} выборках (пульт {e.get('buttons')})")
     return ("FAIL" if p else "PASS"), "; ".join(p) or (

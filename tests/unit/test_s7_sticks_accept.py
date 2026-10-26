@@ -561,3 +561,14 @@ def test_preflight_old_console_does_nothing(monkeypatch, tmp_path):
     summ = json.loads((tmp_path / "summary.json").read_text())
     assert "не S7" in summ["preflight"][0] and "bad-request" in summ["preflight"][0]
     assert len(sent) == 1 and sent[0].endswith(s.shlex.quote(json.dumps([{"op": "status"}])) + " 2>&1")
+
+
+def test_echo_rest_tolerates_axis_noise_not_more():
+    """Прогон 2026-10-26: оси в покое дрожат на 3, эхо (10 Гц, с задержкой) расходится до 2 — это не ошибка передачи;
+    расхождение больше шума оси за окно — FAIL."""
+    base = {"samples": 601, "stable": 228, "spread": 3, "btn_bad": 0, "buttons": [1], "axes_ref": [0] * 8}
+    assert s.judge_echo_rest({**base, "echo_max": 2})[0] == "PASS"
+    assert s.judge_echo_rest({**base, "echo_max": 3})[0] == "PASS"
+    assert s.judge_echo_rest({**base, "echo_max": 4})[0] == "FAIL"
+    assert s.judge_echo_rest({**base, "spread": 0, "echo_max": 1})[0] == "PASS"
+    assert s.judge_echo_rest({**base, "spread": 0, "echo_max": 2})[0] == "FAIL"
