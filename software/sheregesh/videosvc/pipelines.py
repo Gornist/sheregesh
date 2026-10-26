@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import itertools
 import json
+import os
 import re
 import sys
 import threading
@@ -356,12 +357,15 @@ class _Base:
             if ssrc not in accept_ssrcs:  # чужой SSRC: ключа нет, srtpdec сбрасывает пакеты
                 self.counters["unknown_ssrc"] += 1
                 return None
-            caps = Gst.Caps.new_empty_simple("application/x-srtp-key")
-            s = caps.get_structure(0)
+            # Структура собирается до caps: в привязках GStreamer 1.26 (платы) caps.get_structure() отдаёт копию, и поля,
+            # заданные через неё, в caps не попадали (srtpdec: «Could not set stream with SSRC», все пакеты сброшены).
+            s = Gst.Structure.new_empty("application/x-srtp-key")
             s.set_value("srtp-key", key)
             for name, val in (("srtp-cipher", p.cipher), ("srtp-auth", auth),
                               ("srtcp-cipher", p.cipher), ("srtcp-auth", auth)):
                 s.set_value(name, val)
+            caps = Gst.Caps.new_empty()
+            caps.append_structure(s)
             return caps
 
         dec.connect("request-key", request_key)
@@ -654,15 +658,22 @@ class SrtpRx(_Base):
 _TEST_MEDIA = ("videotestsrc is-live=true pattern=ball ! video/x-raw,width=640,height=360,framerate=30/1 ! "
                "x264enc tune=zerolatency speed-preset=ultrafast bitrate=2000 key-int-max={kimax} ! "
                "identity name=kfwatch ! video/x-h264,stream-format=byte-stream,alignment=au")
+# Плата (Pi 4, аппаратные кодер и декодер): SHEREGESH_SELFTEST_MEDIA — свой фрагмент источника с {kimax} и identity
+# name=kfwatch, SHEREGESH_SELFTEST_DECODER — v4l2h264dec. Пример фрагмента — _BOARD_MEDIA.
+_BOARD_MEDIA = ("videotestsrc is-live=true pattern=ball ! video/x-raw,format=YUY2,width=1280,height=720,framerate=30/1 ! "
+                "v4l2h264enc extra-controls=controls,repeat_sequence_header=1,video_bitrate=6000000,"
+                "h264_i_frame_period={kimax} ! video/x-h264,level=(string)4 ! h264parse ! identity name=kfwatch ! "
+                "video/x-h264,stream-format=byte-stream,alignment=au")
 
 
 def _selftest_pair(tx_key, rx_key, tx_ssrc, rx_ssrc, base_port, cipher="aes-128-gcm", kimax=300, via_port=None):
     ke = KEY_LENGTHS[cipher]
     tx = SrtpTx(TxConfig(stream="main", ssrc=tx_ssrc, peer_ip="127.0.0.1", peer_port=via_port or base_port,
                          rtcp_local_port=base_port + 3, rtcp_peer_port=base_port + 2,
-                         media=_TEST_MEDIA.format(kimax=kimax), srtp=SrtpParams(cipher, tx_key[:ke].ljust(ke, b"\0"))))
+                         media=os.environ.get("SHEREGESH_SELFTEST_MEDIA", _TEST_MEDIA).format(kimax=kimax), srtp=SrtpParams(cipher, tx_key[:ke].ljust(ke, b"\0"))))
     rx = SrtpRx(RxConfig(stream="main", ssrc=rx_ssrc, peer_ip="127.0.0.1", local_port=base_port,
-                         rtcp_local_port=base_port + 2, rtcp_peer_port=base_port + 3, decoder="avdec_h264",
+                         rtcp_local_port=base_port + 2, rtcp_peer_port=base_port + 3,
+                         decoder=os.environ.get("SHEREGESH_SELFTEST_DECODER", "avdec_h264"),
                          sink="fakesink sync=false", srtp=SrtpParams(cipher, rx_key[:ke].ljust(ke, b"\0"))))
     return tx, rx
 
