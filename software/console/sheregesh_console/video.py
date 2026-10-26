@@ -18,13 +18,15 @@ import subprocess
 import threading
 import time
 
-from PySide6.QtCore import Property, QObject, QRectF, QSize, QTimer, Signal, Slot
+from PySide6.QtCore import Property, QObject, QRectF, QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtQuick import QQuickPaintedItem
 
 from sheregesh import video as gst
 
 FRAME_W, FRAME_H = 640, 360
+FRAME_FORMAT = QImage.Format_RGBX8888    # раскладка байтов кадра из gst (RGBx); BGRx — Format_RGB32
+FRAME_WAKE = False                       # показывать кадр сразу по приходу (сигнал потока чтения), а не по таймеру 33 мс
 NO_VIDEO_AFTER_S = 1.5
 RESTART_BACKOFF_S = (1.0, 2.0, 4.0)
 RESCAN_S = 2.0               # локальный вход: повторный поиск устройства (нет устройства / режим не поддерживается)
@@ -35,6 +37,7 @@ STALL_RESTART_S = 5.0       # локальный вход: нет кадров �
 class VideoReceiver(QObject):
     frameChanged = Signal()
     stateChanged = Signal()
+    _arrived = Signal()                  # из потока чтения: пришёл кадр (FRAME_WAKE)
 
     def __init__(self, parent=None, command=None):
         super().__init__(parent)
@@ -72,6 +75,7 @@ class VideoReceiver(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._poll)
+        self._arrived.connect(self._poll, Qt.QueuedConnection)
         self._timer.start()
 
     # ---------- свойства для QML ----------
@@ -337,6 +341,8 @@ class VideoReceiver(QObject):
                     self._last_frame_t = now
                     self._decoded.append(now)
                 frame, got = bytearray(size), 0
+                if FRAME_WAKE:
+                    self._arrived.emit()
                 client = self._client
                 if client is not None:
                     client.frame_decoded(now)
@@ -377,7 +383,7 @@ class VideoReceiver(QObject):
         with self._lock:
             frame, seq, last = self._latest, self._seq, self._last_frame_t
         if frame is not None and seq != self._shown_seq:
-            self.image = QImage(frame, FRAME_W, FRAME_H, QImage.Format_RGBX8888)   # на буфере кадра, без копии
+            self.image = QImage(frame, FRAME_W, FRAME_H, FRAME_FORMAT)              # на буфере кадра, без копии
             self._image_buf = frame                                                 # буфер живёт вместе с QImage
             self._fps_window = [t for t in self._fps_window if now - t < 1.0] + [now]
             self._fps = float(len(self._fps_window))         # показанных кадров за последнюю секунду
