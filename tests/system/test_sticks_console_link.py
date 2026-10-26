@@ -11,6 +11,7 @@ import time
 import pytest
 
 from procs import Agent, wait_for
+from sheregesh import PROTOCOL_VERSION
 from sheregesh.link.client import PeerClient
 from sheregesh_console import sticks as s
 
@@ -53,7 +54,7 @@ def remote(pc):
 
 def test_end_to_end_enable_disable_and_device_loss(rig):
     agent, pc, src, snd = rig
-    assert pc.snapshot()["session"] == "1.4"
+    assert pc.snapshot()["session"] == PROTOCOL_VERSION
     assert wait_for(lambda: remote(pc).get("state") == "IDLE", 3)       # ST-02: после старта пульта — IDLE
     time.sleep(0.3)
     assert snd.status()["sent"] == 0 and snd.enabled is False

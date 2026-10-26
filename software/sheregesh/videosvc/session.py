@@ -171,6 +171,18 @@ def validate_stop(body) -> None:
         raise SchemaError("video-stop: неверный reason")
 
 
+def fallback_body(stream: str, session: str, gen: int, reason: str) -> dict:
+    """video-fallback (пульт → блок, контракт v5 §6): пульт переходит на TLS до конца сеанса управления."""
+    return {"stream": stream, "session": session, "gen": gen, "reason": reason}
+
+
+def validate_fallback(body) -> None:
+    _exact(body, {"stream", "session", "gen", "reason"}, "video-fallback")
+    _check_ident(body, "video-fallback")
+    if not isinstance(body["reason"], str) or not _REASON_RE.fullmatch(body["reason"]):
+        raise SchemaError("video-fallback: неверный reason")
+
+
 # --- сторона блока ---------------------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -245,6 +257,15 @@ class TxSessions:
     def current_gen(self, stream: str) -> int | None:
         cur = self._cur.get(stream)
         return cur[0] if cur else None
+
+    def fallback_matches(self, body) -> bool:
+        """video-fallback относится к текущему поколению (stream, session, gen); иначе его игнорируют (контракт v5)."""
+        try:
+            validate_fallback(body)
+        except SchemaError:
+            return False
+        cur = self._cur.get(body["stream"])
+        return cur is not None and body["session"] == self.session and body["gen"] == cur[0]
 
     def stop(self, stream: str, reason: str) -> dict:
         cur = self._cur.get(stream)

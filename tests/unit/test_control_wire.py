@@ -20,8 +20,9 @@ STATE = {"v": 1, "state": "ACTIVE", "reason": "fresh", "since_s": 12.3, "n": 123
 
 
 def test_protocol_14_types():
-    assert PROTOCOL_VERSION == "1.4"
+    assert PROTOCOL_VERSION == "1.5"                   # 1.5 (ADR-0016) — видеосеанс SRTP; rc и rc-state с 1.4
     assert TYPES["1.4"] == TYPES["1.3"] | {"rc", "rc-state"}
+    assert TYPES["1.5"] == TYPES["1.4"] | {"video-key", "video-key-ack", "video-stop", "video-fallback"}
     for old in ("1.0", "1.1", "1.2", "1.3"):
         assert not {"rc", "rc-state"} & TYPES[old]
 

@@ -118,7 +118,7 @@ def test_incompatible_peer_is_shown_and_data_not_accepted(agents, client, args, 
 
 @pytest.mark.test_id("TEST-SW-003")
 def test_newer_minor_peer_negotiates_lower_session(agents, client):
-    a = agents("--protocol", "1.4")
+    a = agents("--protocol", "1.6")                 # вторая сторона новее текущей (1.5)
     c = client(a.port)
     assert wait_for(lambda: phase(c) == "connected", 5)
     assert c.snapshot()["session"] == PROTOCOL_VERSION

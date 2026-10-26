@@ -121,7 +121,7 @@ def test_50hz_active_echo_latency_then_disable(agent):
     a = agent()
     pc = PeerClient("127.0.0.1", a.port).start()
     try:
-        assert connected(pc) and pc.snapshot()["session"] == PROTOCOL_VERSION == "1.4"
+        assert connected(pc) and pc.snapshot()["session"] == PROTOCOL_VERSION == "1.5"
         assert wait_for(lambda: (pc.snapshot()["rc_state"] or {}).get("state") == "IDLE", 3)   # сразу после hello
         assert pc.snapshot()["rc_state"]["reason"] == "start"
         s = Sender(pc)

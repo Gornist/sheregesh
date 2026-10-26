@@ -665,3 +665,24 @@ def test_stop_invalid_reason_keeps_active_generation():
     with pytest.raises(S.SchemaError):
         tx.stop("main", "")
     assert tx.current_gen("main") == 1
+
+
+# --- video-fallback (контракт v5) ----------------------------------------------------------------------------
+
+def test_fallback_matches_only_current_generation():
+    tx = S.TxSessions()
+    tx.new_control_session()
+    first = tx.begin("main", "aes-128-gcm")
+    second = tx.begin("main", "aes-128-gcm")
+    assert tx.fallback_matches(S.fallback_body("main", second.session, second.gen, "no first frame"))
+    assert not tx.fallback_matches(S.fallback_body("main", first.session, first.gen, "no first frame"))
+    assert not tx.fallback_matches(S.fallback_body("main", "0" * 32, second.gen, "no first frame"))
+    assert not tx.fallback_matches(S.fallback_body("aux", second.session, second.gen, "no first frame"))
+
+
+def test_validate_fallback_schema():
+    body = S.fallback_body("main", "a" * 32, 1, "rx start failed")
+    S.validate_fallback(body)
+    for bad in ({**body, "extra": 1}, {**body, "reason": ""}, {**body, "gen": 0}, {k: v for k, v in body.items() if k != "reason"}):
+        with pytest.raises(S.SchemaError):
+            S.validate_fallback(bad)
