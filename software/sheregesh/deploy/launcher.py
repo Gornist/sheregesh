@@ -25,7 +25,9 @@ DEPLOY_DIR = "/var/lib/sheregesh-deploy"
 PYTHON = "/usr/bin/python3"
 # Совпадает с sheregesh.deploy.bundle.PYTHON_PATHS и PYTHONPATH обёрток build_deb (проверяют тесты).
 PYTHON_PATHS = ("software", "software/emulators", "software/console", "software/remote")
-MODULES = ("sheregesh_console", "sheregesh_remote")      # только службы приложения; системные — всегда из /usr
+# Только службы приложения (системные — всегда из /usr). Службы видео (ADR-0016) — тоже приложение: их код
+# обновляется DEV deploy так же, как пульт и блок.
+MODULES = ("sheregesh_console", "sheregesh_remote", "sheregesh.videosvc.tx", "sheregesh.videosvc.rx")
 _ID_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+~_-]{0,79}$")
 _PATH_RE = re.compile(r"^[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*(/[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*)*$")
 

@@ -397,6 +397,13 @@ def test_launcher_exec_uses_selected_root_and_refuses_system_modules(tmp_path, m
             launcher.main([mod])
 
 
+
+def test_launcher_runs_video_services(tmp_path):
+    """Службы видео ADR-0016 запускаются через выпуск, как пульт и блок (обёртки build_deb ведут через launcher)."""
+    for module in ("sheregesh.videosvc.tx", "sheregesh.videosvc.rx"):
+        argv, env = launcher.exec_args(module, str(tmp_path), ["--runtime-dir", "/run/x"])
+        assert argv[-3:] == [module, "--runtime-dir", "/run/x"] and env["SHEREGESH_CODE_ROOT"] == str(tmp_path)
+
 def test_launcher_without_release_uses_factory(tmp_path):
     assert launcher.select(str(tmp_path), "/usr/lib/sheregesh", "b")[0] == "/usr/lib/sheregesh"
     os.symlink("/etc", tmp_path / "current")
