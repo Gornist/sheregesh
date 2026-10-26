@@ -33,7 +33,6 @@
 """
 import argparse
 import json
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -781,7 +780,7 @@ def plan(a):
         "S5 pi2 — фаза committed (после ota-confirm), ≈ 5,5 мин + загрузка pi2 (~1,5–2 мин):",
         "  P2-01 слот B, COMMITTED, autoboot [all]=3, образ bd74c8c, failed 0, health PASS            ~0,5 мин",
         f"  P2-05 start {USBIP} → {a.hdmi_id} как hdmi → выбор → stop/start (no-device ≤ 3 с, возврат ≤ 10 с),",
-        f"        enable отклонён polkit; start vivid + feed@cvbs → выбор → nosignal/ok; synthetic; stop всех ~3 мин",
+        "        enable отклонён polkit; start vivid + feed@cvbs → выбор → nosignal/ok; synthetic; stop всех ~3 мин",
         "  P2-06 выбор GUI-путём → video-input.json → systemctl reboot (только при COMMITTED/B/[all]=3) →",
         f"        SSH ≤ {LIMITS['boot_s']:.0f} с → тот же источник live ≤ {LIMITS['ready_s']:.0f} с, "
         "файл прежний                                                                ~1 мин",

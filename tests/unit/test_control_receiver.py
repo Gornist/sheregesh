@@ -114,7 +114,7 @@ def test_resume_after_timeout_back_to_active():
     s = rig.r.snapshot()
     assert (s["state"], s["reason"]) == ("ACTIVE", "fresh") and s["ch"] == list(CH)
     assert s["late_max_ms"] >= 1000 and s["failsafes"] == 1 and s["gaps"] == 0
-    assert [l.split(" n=")[0] for l in rig.logs] == ["IDLE -> ACTIVE (fresh)", "ACTIVE -> FAILSAFE (timeout)",
+    assert [ln.split(" n=")[0] for ln in rig.logs] == ["IDLE -> ACTIVE (fresh)", "ACTIVE -> FAILSAFE (timeout)",
                                                      "FAILSAFE -> ACTIVE (fresh)"]
 
 
@@ -198,7 +198,7 @@ def test_bad_counter_and_log_rate_limit():
         rig.r.on_bad("n must be an integer 1…2^31-1")
         rig.clock.advance(0.5)
     assert rig.r.snapshot()["bad"] == 30
-    bad = [l for l in rig.logs if l.startswith("bad rc frame")]
+    bad = [ln for ln in rig.logs if ln.startswith("bad rc frame")]
     assert len(bad) == 2 and bad[0] == "bad rc frame: n must be an integer 1…2^31-1 (bad=1)" and "(bad=21)" in bad[1]
     assert rig.r.state() == "IDLE"
 

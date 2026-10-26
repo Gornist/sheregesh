@@ -611,7 +611,7 @@ def test_view_refusal_reason_and_device_lost_notice(view):
 
 
 def test_view_remote_echo_and_staleness(view):
-    client, clock = view.t.client, view.t.clock
+    client = view.t.client
     client.rc_state = {"v": 1, "state": "ACTIVE", "reason": "fresh", "n": 10, "rate_hz": 49.8, "gaps": 1,
                        "failsafes": 2, "timeout_ms": 500, "ch": [0, -12, 1000, 3, -1000, 0, 0, 1000], "btn": 5,
                        "dev": {"name": BOXER_NAME, "ok": True}, "output": "none", "rx_at": 1.0, "rx_age_s": 0.01}

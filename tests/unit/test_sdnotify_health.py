@@ -7,7 +7,6 @@ import shutil
 import socket
 import tempfile
 import time
-from pathlib import Path
 
 import pytest
 

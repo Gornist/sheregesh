@@ -1535,8 +1535,8 @@
     </message>
     <message>
         <location filename="../qml/ModulePage.qml" line="615" />
-        <source>The state comes from the remote unit; the console only shows it and sends commands after confirmation. There is no control output in any state.</source>
-        <translation>Состояние сообщает удалённый блок; пульт только показывает его и передаёт команды после подтверждения. Выхода управления нет ни в одном состоянии.</translation>
+        <source>The state comes from the remote unit; the console only shows it and sends commands after confirmation. Control output depends on the channel and the module state (see «Output»).</source>
+        <translation>Состояние сообщает удалённый блок; пульт только показывает его и передаёт команды после подтверждения. Выход управления зависит от канала и состояния модуля (см. «Выход»).</translation>
     </message>
     <message>
         <location filename="../qml/ModulePage.qml" line="640" />

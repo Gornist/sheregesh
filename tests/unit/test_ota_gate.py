@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 import test_ota
-from deploy_helpers import keypair, needs_ssh_keygen
+from deploy_helpers import needs_ssh_keygen
 from test_ota import PARTS, Board, image
 
 from sheregesh.deploy import sig

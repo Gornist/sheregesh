@@ -10,12 +10,11 @@ import subprocess
 import xml.etree.ElementTree as ET
 
 import pytest
-from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt
-from PySide6.QtQuick import QQuickItem
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtTest import QTest
 
-from sheregesh_console.qtwait import pump, wait_until
+from sheregesh_console.qtwait import pump
 from sheregesh_console.app import I18N, PAGE_NAMES, QML, Ui, compile_translations, qt_tool
 from sheregesh_console.backend import Backend
 from sheregesh_emulators.demo import DEMO

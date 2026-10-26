@@ -8,7 +8,6 @@ GStreamer не нужен: генератор — подставной скри�
 """
 import os
 import shutil
-import signal
 import socket
 import ssl
 import sys
@@ -20,7 +19,7 @@ import pytest
 
 from procs import Agent, free_port, wait_for
 from sheregesh import videolink
-from sheregesh.link import pki, tls
+from sheregesh.link import pki
 from sheregesh.link.client import PeerClient
 
 pytestmark = pytest.mark.skipif(not shutil.which("openssl"), reason="нет openssl")

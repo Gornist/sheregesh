@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from procs import Agent, free_port, wait_for
+from procs import Agent, wait_for
 from sheregesh import PROTOCOL_VERSION
 from sheregesh.link import pki, tls
 from sheregesh.link.client import PeerClient

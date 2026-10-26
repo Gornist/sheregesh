@@ -22,7 +22,7 @@ import pytest
 from sheregesh.link import videoselect
 from sheregesh_console import control
 from sheregesh_console.control import ControlServer
-from sheregesh_console.qtwait import pump, wait_until
+from sheregesh_console.qtwait import wait_until
 from test_gui_tile_geometry import wide_font  # noqa: F401 — фикстура шрифта (общая для экранов)
 from test_gui_video_select import SOURCES, ui  # noqa: F401 — фикстура пульта с подменным блоком
 

@@ -18,7 +18,7 @@ import subprocess
 import threading
 import time
 
-from PySide6.QtCore import Property, QObject, QRectF, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import Property, QObject, QRectF, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtQuick import QQuickPaintedItem
 

@@ -40,7 +40,7 @@ ui-state.json pi1 (ключ module: support, state, stateText, errorText, faultE
 Не трогает OTA, слоты, видео, образ, юниты, polkit. systemctl — только start/stop/restart sheregesh-remote-net и
 sheregesh-console (правило 50-sheregesh-dev.rules), reboot pi2 — только с --reboot и только при COMMITTED и
 tryboot_now=false. Каталог настроек модуля (~/.config/sheregesh/remote-config) в F-03 переносится, а не удаляется;
-исходный возвращается в finally, остатки — в ~/.config/sheregesh/s6-jr-<время>/. Вердикты PASS | FAIL | ERROR |
+исходный возвращается в finally, остатки — в ~/.cache/sheregesh-acceptance/s6-jr-<время>/ (не в каталоге настроек). Вердикты PASS | FAIL | ERROR |
 BLOCKED | SKIP; итог FAIL > ERROR > BLOCKED > PASS > SKIP (s5_accept.verdict_of). Коды выхода: 0 PASS, 1 FAIL,
 2 ERROR, 3 BLOCKED.
 """
@@ -67,6 +67,7 @@ EMU_MARK = "sheregesh_emulators.jrmodule"
 PROFILE_ID, PROFILE_NAME = "radiomaster-nomad", "RadioMaster Nomad"
 RCDIR = "$HOME/.config/sheregesh/remote-config"           # ADR §8: dirname(link.json)/remote-config
 CFG_PARENT = "$HOME/.config/sheregesh"
+STASH_PARENT = "$HOME/.cache/sheregesh-acceptance"   # следы F-03 — вне каталога настроек
 # ADR §11 (LIMITS) + свои: gui_lag_s (JR-04), console_start_s (F-02: QML на Pi 4), eth_* (REQ-SYS-002: 5 с / 10 с +
 # первый status блока после переподключения).
 LIMITS = {"ready_s": 15.0, "detect_s": 5.0, "fault_s": 6.0, "recover_s": 20.0, "crash_recover_s": 15.0,
@@ -853,7 +854,7 @@ def step_crash(a, stand, how):
     if how == "crash":
         m["result"] = stand.lab("crash")
     else:
-        code, text = ssh(a.remote, f"pkill -KILL -u sheregesh-ui -f '[s]heregesh_emulators[.]jrmodule'; echo rc=$?")
+        code, text = ssh(a.remote, "pkill -KILL -u sheregesh-ui -f '[s]heregesh_emulators[.]jrmodule'; echo rc=$?")
         m["result"] = text.strip()
         if "rc=0" not in text:
             return judge_crash({**m, "error": f"pkill не нашёл процесс эмулятора: {text!r}"}), m
@@ -1177,7 +1178,7 @@ def plan(a):
         ("F-01", f"stop блока на {a.gap:.0f} с: no-link ≤ 5 с, «Готов» по старым данным нет → start → READY", "0,5"),
         ("F-02", "stop пульта, restart блока (READY без пульта ≤ 15 с), start пульта → READY", "1"),
         ("F-03", "настройки: нет каталога → factory; state.json испорчен → recovered; ревизии → reset; "
-                 "исходный каталог обратно (остатки — ~/.config/sheregesh/s6-jr-<время>/, без удалений)", "1,5"),
+                 "исходный каталог обратно (остатки — ~/.cache/sheregesh-acceptance/s6-jr-<время>/, без удалений)", "1,5"),
         ("F-04", f"Ethernet pi2 вручную: {eth}", ""),
         ("OUT", "output = none во всех ответах modulectl", ""),
         ("JR-10 после", "то же, что «до», должно совпасть (boot_id pi2 — кроме перезагрузки JR-09)", "0,2"),
@@ -1299,7 +1300,7 @@ def main(argv=None, prompt=None):
                 log(f"  JR-08 ({key}): {v} — {dd}")
             return {"JR-08": ((agg(vs), "; ".join(parts)), ms)}
 
-        stash = f"{CFG_PARENT}/s6-jr-{time.strftime('%Y%m%d-%H%M%S')}"
+        stash = f"{STASH_PARENT}/s6-jr-{time.strftime('%Y%m%d-%H%M%S')}"
         run(("JR-03", "JR-04"), s34)
         run(("JR-05",), lambda: {"JR-05": step_detach(a, stand)})
         run(("JR-06", "JR-07"), s67)

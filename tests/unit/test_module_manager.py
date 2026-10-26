@@ -245,7 +245,7 @@ def test_backoff_sequence_and_reset_on_ready():
     attempts = []
     t_fault = r.clock()
     for _ in range(5):
-        dt = r.until(S.RECOVERING, 40)
+        r.until(S.RECOVERING, 40)
         attempts.append(round(r.clock() - t_fault, 1))
         r.until(S.FAULT, 5)
         t_fault = r.clock()

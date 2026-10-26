@@ -13,7 +13,6 @@ import time
 import pytest
 from PySide6.QtCore import QElapsedTimer, QRectF, QTimer
 from PySide6.QtQuickControls2 import QQuickStyle
-from PySide6.QtTest import QTest
 
 from procs import Agent, free_port
 from sheregesh import video as gst

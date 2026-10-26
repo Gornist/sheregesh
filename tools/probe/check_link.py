@@ -21,7 +21,6 @@
 """
 import argparse
 import json
-import shutil
 import socket
 import ssl
 import subprocess

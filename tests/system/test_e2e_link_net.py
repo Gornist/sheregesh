@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from procs import ENV, ROOT, Agent, free_port, wait_for
+from procs import ENV, ROOT, Agent, wait_for
 from sheregesh import PROTOCOL_VERSION
 from sheregesh.link import pki
 

@@ -612,7 +612,7 @@ Item {
                     objectName: "moduleNote"
                     visible: moduleTile.optionalFits
                     text: mv.isCrsf ? qsTr("The state comes from the remote unit; the console only shows it and sends commands after confirmation. The remote unit sends neutral channels to the module while transmission is off or in FAILSAFE, and console commands while transmission is on.")
-                                    : qsTr("The state comes from the remote unit; the console only shows it and sends commands after confirmation. There is no control output in any state.")
+                                    : qsTr("The state comes from the remote unit; the console only shows it and sends commands after confirmation. Control output depends on the channel and the module state (see «Output»).")
                     color: win.p.muted
                     font.pixelSize: 16 * win.s
                     wrapMode: Text.WordWrap
