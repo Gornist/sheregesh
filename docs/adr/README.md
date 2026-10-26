@@ -17,5 +17,6 @@
 | [ADR-0013](ADR-0013-stick-input-link.md) | Передача стиков и кнопок с пульта на удалённый блок, сторож свежести (SHRG-LAB 1.4) | Предложено (S7) |
 | [ADR-0014](ADR-0014-crsf-output.md) | Выход CRSF удалённого блока на JR-модуль: протокол, UART3, эмулятор ELRS | Предложено (S8) |
 | [ADR-0015](ADR-0015-video-frames-gpu-path.md) | Кадр видео пульта мимо Python: dmabuf по unixfd → qml6glsink | Принято (pi1, образ db36670; дисплей не проверен) |
+| [ADR-0016](ADR-0016-srtp-video-udp.md) | Видео блок → пульт: SRTP по UDP внутри GStreamer, ключи по SHRG-LAB (mTLS) | Предложено (кода нет) |
 
 ADR не меняет требования. Если решение затрагивает требование, оно оформляется записью CHG в `docs/requirements/requirements.json`.
