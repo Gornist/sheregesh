@@ -256,7 +256,7 @@ def test_cr05_rate():
     assert s.judge_rate({**m, "emu_rates": [48.5, 50.0]})[0] == "FAIL"
     assert s.judge_rate({**m, "emu_rates": [51.2]})[0] == "FAIL"
     assert s.judge_rate({**m, "out_jitter": [2500]})[0] == "FAIL"
-    assert s.judge_rate({**m, "emu_jitter": [2100]})[0] == "FAIL"
+    assert s.judge_rate({**m, "emu_jitter": [5100]})[0] == "FAIL"
     assert s.judge_rate({**m, "out_crc": 2})[0] == "FAIL"
     assert s.judge_rate({**m, "emu_crc": 1})[0] == "FAIL"
     assert s.judge_rate({**m, "emu_rates": []})[0] == "ERROR"
@@ -705,3 +705,13 @@ def test_bringup_steps_on_emulator(monkeypatch, tmp_path):
     monkeypatch.setattr(port_mod, "find_uart3", lambda: None)
     r = nb.step1(a)
     assert not r["ok"] and "dtoverlay=uart3" in r["text"]
+
+
+def test_rate_jitter_sender_vs_emulator_limits():
+    """Прогон 2026-10-26: отправитель p99 ≤ 1,3 мс, эмулятор до 3,6 мс — PASS (норма 2 мс для отправителя, 5 мс —
+    для эмулятора); отправитель выше 2 мс или эмулятор выше 5 мс — FAIL."""
+    m = {"emu_rates": [50.0] * 5, "emu_jitter": [3595, 1372], "out_jitter": [1289, 737], "out_crc": 0, "emu_crc": 0,
+         "frames_sent": 505}
+    assert s.judge_rate(m)[0] == "PASS"
+    assert s.judge_rate({**m, "out_jitter": [2100]})[0] == "FAIL"
+    assert s.judge_rate({**m, "emu_jitter": [5100]})[0] == "FAIL"
