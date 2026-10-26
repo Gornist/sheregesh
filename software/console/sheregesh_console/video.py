@@ -77,6 +77,7 @@ class VideoReceiver(QObject):
         self._gl_on = False                # текущий конвейер — через GL
         self._gl_codec = {}                # кодек → годится ли для GL (аппаратный декодер, unixfdsink); проверка — раз
         self._gl_sock = None
+        self._gl_check_at = 0.0
         self._timer = QTimer(self)
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._poll)
@@ -434,8 +435,23 @@ class VideoReceiver(QObject):
         self._next_start = time.monotonic() + RESTART_BACKOFF_S[min(self._backoff - 1, len(RESTART_BACKOFF_S) - 1)]
         self._set_state("restarting")
 
+    def _gl_reconcile(self, now):
+        """Раз в секунду: путь конвейера соответствует готовности GL? Окно появляется на экране позже старта
+        приёмника (cage, подключение дисплея), а дисплей можно отключить — тогда конвейер перезапускается на нужный
+        путь (ADR-0015). Только для работающего конвейера H.264 с блока или UDP."""
+        if self.gl is None or self._proc is None or self._local is not None or now < self._gl_check_at:
+            return False
+        self._gl_check_at = now + 1.0
+        if self._use_gl() == self._gl_on:
+            return False
+        self.stop()
+        self._start()
+        return True
+
     def _poll(self):
         now = time.monotonic()
+        if self._gl_reconcile(now):
+            return
         if self._state in ("restarting", "no-device", "unsupported") and now >= self._next_start and \
                 (self._codec or self._local):
             self._start()

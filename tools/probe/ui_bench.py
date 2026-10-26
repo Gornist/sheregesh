@@ -179,6 +179,7 @@ def main():
     ap.add_argument("--fmt", choices=("RGBx", "BGRx"), default="RGBx")
     ap.add_argument("--conv", choices=("sw", "hw"), default="sw", help="масштаб/конвертация: videoconvert или v4l2convert")
     ap.add_argument("--wake", action="store_true", help="показ кадра по приходу, а не по таймеру 33 мс")
+    ap.add_argument("--debug", action="store_true", help="вывести журнал экземпляра пульта (stdout/stderr)")
     ap.add_argument("--gl", action="store_true", help="путь GL (ADR-0015): unixfdsink → qml6glsink, без пикселей в Python")
     ap.add_argument("--rtsp", default="", help="видео — RTSP камеры напрямую на pi1 (rtsp://…), а не локальная синтетика")
     ap.add_argument("--grab", metavar="DIR", help="в конце снять окно с каждым разделом (PNG с GPU платы) в DIR")
@@ -194,12 +195,16 @@ def main():
               f"printf %s {shlex.quote(code)} | sed \"s#CODE_ROOT#'$R'#\" > bench.py; "
               f"XDG_RUNTIME_DIR=$D WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_HEADLESS_OUTPUTS=1 "
               f"QT_QPA_PLATFORM=wayland SHEREGESH_HEADLESS_SIZE={w}x{h} "
-              f"timeout {a.seconds + a.warmup + 60} cage -- sh -c 'wlr-randr >/dev/null 2>&1; python3 bench.py' 2>$D/err.log "
-              f"| grep -E '^(RESULT|PROFILE)' || tail -20 $D/err.log; "
+              f"timeout {a.seconds + a.warmup + 60} cage -- sh -c 'wlr-randr >/dev/null 2>&1; python3 bench.py' "
+              f">$D/out.log 2>$D/err.log; grep -E '^(RESULT|PROFILE)' $D/out.log || tail -20 $D/err.log; "
+              + ("echo '== out'; grep -v '^RESULT' $D/out.log | tail -40; echo '== err'; grep -vE 'GL_|EGL|cage.c|backend|wlr_' "
+                 "$D/err.log | tail -40; " if a.debug else "")
               + ("tar -C $D -cf - $(cd $D && ls pi1-*.png 2>/dev/null) | base64 -w0 | sed 's/^/GRABS /'; echo; " if a.grab else "")
               + "rm -rf $D")
     r = subprocess.run(["ssh", "-o", "ConnectTimeout=8", f"{a.user}@{a.host}", remote], capture_output=True, text=True,
                        timeout=a.seconds + a.warmup + 120)
+    if a.debug:
+        print(r.stdout[r.stdout.find("== out"):], file=sys.stderr)
     line = next((x for x in r.stdout.splitlines() if x.startswith("RESULT ")), None)
     if line is None:
         print(r.stdout[-3000:], r.stderr[-2000:], file=sys.stderr)

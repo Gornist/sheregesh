@@ -108,3 +108,15 @@ def test_gl_error_kills_decoder_for_restart(qapp, monkeypatch, tmp_path):
         assert wait_until(lambda: rx.state == "restarting", 3), rx.state
     finally:
         rx.stop()
+
+
+def test_switches_to_gl_when_window_becomes_ready_and_back(qapp, monkeypatch, tmp_path):
+    """Окно появилось на экране после старта приёмника → перезапуск на путь GL; дисплей пропал → прежний путь."""
+    gl = FakeGl(ready=False)
+    rx, spawned = _receiver(monkeypatch, tmp_path, gl)
+    rx.configure("h264", 5600)
+    assert not rx.glActive and "unixfdsink" not in spawned[-1][0]
+    gl.is_ready = True
+    assert wait_until(lambda: rx.glActive, 3) and spawned[-1][0][-3] == "unixfdsink"
+    gl.is_ready = False
+    assert wait_until(lambda: not rx.glActive, 3) and "unixfdsink" not in spawned[-1][0]
