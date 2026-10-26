@@ -410,3 +410,39 @@ def test_plan_without_ssh(capsys):
         s.main([])                                                  # без --out — ошибка аргументов, не прогон
     with pytest.raises(SystemExit):
         s.main(["--out", "/nonexistent-x", "--only", "VID-01"])
+
+
+def test_start_guard_keeps_within_unit_start_limit(monkeypatch):
+    """Прогон 2026-10-26: шестой запуск блока за 300 с дал start-limit-hit. Пятый запуск в окне (с учётом запусков из
+    журнала платы) ждёт выхода старейшего из окна; stop ждёт так же, но запуском не считается; другие службы и платы
+    считаются отдельно."""
+    t, slept = [1000.0], []
+    now = lambda: t[0]                                               # noqa: E731
+
+    def sleep(d):
+        slept.append(d)
+        t[0] += d
+
+    def guard(host, unit, record=True):
+        s.start_guard(host, unit, record, now, sleep, seed=lambda h, u: [100.0] if (h, u) == ("pi2", "u") else [])
+
+    monkeypatch.setattr(s, "_starts", {})
+    for _ in range(s.START_BUDGET - 1):                              # + один запуск из журнала 100 с назад
+        guard("pi2", "u")
+        t[0] += 10
+    guard("pi1", "u")
+    guard("pi2", "other")
+    assert slept == []
+    guard("pi2", "u", record=False)                                  # stop перед пятым запуском — ждёт
+    assert slept == [pytest.approx(s.START_WINDOW_S - 130 + 2)]
+    guard("pi2", "u")                                                # сам запуск после паузы — без ожидания
+    assert len(slept) == 1
+    assert len([x for x in s._starts[("pi2", "u")] if t[0] - x < s.START_WINDOW_S]) == s.START_BUDGET
+
+
+def test_board_starts_parses_journal(monkeypatch):
+    out = ("1000.5\n990.5 host systemd[1]: Starting x.service - X...\n700.0 host systemd[1]: Starting x.service\n")
+    monkeypatch.setattr(s, "ssh", lambda host, cmd, timeout=60: (0, out))
+    assert s.board_starts("pi2", "x.service") == [pytest.approx(10.0), pytest.approx(300.5)]
+    monkeypatch.setattr(s, "ssh", lambda host, cmd, timeout=60: (255, ""))
+    assert s.board_starts("pi2", "x.service") == []

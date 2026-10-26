@@ -643,11 +643,55 @@ def unit_show(host, unit):
 
 def safety_start(host, unit, after_s):
     """Страховка на самой плате (как e2e_run stop-start): start службы через after_s, даже если Mac или SSH пропадут.
-    start активной службы ничего не делает."""
+    start активной службы ничего не делает. Пауза по лимиту запусков — до страховки: за долгую паузу она сработала
+    бы на ещё работающей службе и после stop не осталась бы."""
+    start_guard(host, unit, record=False)
     ssh(host, f"nohup sh -c 'sleep {after_s:.0f}; systemctl --no-ask-password start {unit}' >/dev/null 2>&1 &")
 
 
+# Юниты блока и пульта: StartLimitBurst=5 за StartLimitIntervalSec=300 (tools/image/units). Шестой запуск в окне
+# systemd отвергает (start-limit-hit, служба остаётся failed до конца окна) — так прогон 2026-10-26 потерял блок на F-03.
+# Скрипт сам выдерживает паузу: не больше START_BUDGET запусков в окне, один запас — на запуск вне скрипта
+# (страховочный start). Начальная история — запуски из журнала юнита на плате (предыдущий прогон, DEV deploy).
+# Пауза берётся и перед stop: иначе служба простаивает остановленной всю паузу и её поднимает страховочный start.
+START_WINDOW_S, START_BUDGET = 300.0, 4
+_starts = {}
+
+
+def board_starts(host, unit):
+    """Возраст (с) запусков юнита за окно по журналу платы; [] — журнал недоступен."""
+    rc, out = ssh(host, f"date +%s.%N; journalctl -u {unit} --since=-{START_WINDOW_S:.0f}s -o short-unix "
+                        f"--no-pager 2>/dev/null | grep -F 'systemd[1]: Starting {unit}'", 20)
+    lines = out.split()
+    try:
+        board_now = float(lines[0])
+        return [board_now - float(w) for w in lines[1:] if w.replace(".", "", 1).isdigit()]
+    except (IndexError, ValueError):
+        return []
+
+
+def start_guard(host, unit, record=True, now=time.monotonic, sleep=time.sleep, seed=board_starts):
+    """Перед start/restart (record) и stop: если в окне уже START_BUDGET запусков — ждать, пока старейший выйдет."""
+    key = (host, unit)
+    if key not in _starts:
+        t = now()
+        _starts[key] = sorted(t - age for age in seed(host, unit))
+    hist = _starts[key]
+    t = now()
+    hist[:] = [x for x in hist if t - x < START_WINDOW_S]
+    if len(hist) >= START_BUDGET:
+        wait = START_WINDOW_S - (t - hist[0]) + 2.0
+        log(f"  пауза {wait:.0f} с: лимит запусков {unit} ({START_BUDGET} за {START_WINDOW_S:.0f} с)")
+        sleep(wait)
+        t = now()
+        hist[:] = [x for x in hist if t - x < START_WINDOW_S]
+    if record:
+        hist.append(t)
+
+
 def systemctl(host, verb, unit, timeout=90):
+    if verb in ("start", "restart", "stop"):
+        start_guard(host, unit, record=verb != "stop")
     return ssh(host, f"systemctl --no-ask-password {verb} {unit} 2>&1", timeout)
 
 
