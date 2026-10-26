@@ -71,8 +71,13 @@ class _State:
 
 class PeerClient:
     def __init__(self, host="127.0.0.1", port=7700, heartbeat_timeout_s=3.0, device_id="console-emu-01",
-                 hardware="HW-1.0 Rev A (emulator)", tls_cfg: "tls.LinkConfig | None" = None, status_file=None):
+                 hardware="HW-1.0 Rev A (emulator)", tls_cfg: "tls.LinkConfig | None" = None, status_file=None,
+                 video_session=None):
         self.tls_cfg = tls_cfg
+        # Видеосеанс SRTP (протокол 1.5, ADR-0016): объект с hello_fields(), on_message(тип, body), on_session_start(),
+        # on_session_end(), peer_ip — sheregesh_console.videorx.VideoRx; None — только TLS-видео, hello без video_*.
+        self.video_session = video_session
+        self._clock_samples = deque(maxlen=20)   # ts блока − время приёма (с) по heartbeat текущего соединения
         if tls_cfg is None:
             if not (host or "").startswith("127."):
                 raise ValueError("без сетевого профиля (TLS) канал только через loopback (127.0.0.0/8)")
@@ -191,6 +196,36 @@ class PeerClient:
                         "detail": sel.get("error", "")}
             time.sleep(0.05)
         return None
+
+    def send_video(self, mtype: str, body: dict) -> bool:
+        """Сообщение видеосеанса блоку (video-key-ack, video-fallback; протокол 1.5). Из любого потока, не ждёт:
+        True — поставлено в очередь потока канала (уйдёт сразу), False — нет соединения или сессия < 1.5."""
+        with self._lock:
+            if self._st.phase != "connected" or mtype not in TYPES.get(self._st.session or "", ()):
+                return False
+            self._outbox.append((mtype, body))
+        self._wake()
+        return True
+
+    def peer_ip(self):
+        """Адрес блока текущего соединения (для nftables видеослужбы) или None."""
+        s = self._sock
+        try:
+            return s.getpeername()[0] if s is not None else None
+        except OSError:
+            return self._st.host
+
+    def clock_offset(self):
+        """Оценка смещения часов блок − пульт (с) или None. По heartbeat блока: ts блока − момент приёма даёт
+        смещение минус односторонняя задержка; задержку берём как половину rtt_avg_ms из телеметрии блока
+        (его измерение по ack). Медиана последних 20; без rtt — None (по одной стороне задержку не оценить).
+        Точность — порядка асимметрии сети (миллисекунды в проводной сети), не NTP-класса."""
+        with self._lock:
+            rtt = ((self._st.telemetry or {}).get("link") or {}).get("rtt_avg_ms")
+            samples = sorted(self._clock_samples)
+        if not samples or not isinstance(rtt, (int, float)):
+            return None
+        return samples[len(samples) // 2] + rtt / 2000.0
 
     def module_command(self, op: str, args: dict | None = None, wait_s: float = 5.0) -> dict:
         """Команда подсистеме внешнего модуля блока (протокол 1.3, module-cmd; ADR-0012, разделы 6.3 и 9.2).
@@ -474,6 +509,9 @@ class PeerClient:
         self._sock = sock
         self.counters.connects += 1
         self._last_peer_seq = None
+        self._clock_samples.clear()
+        if self.video_session is not None:
+            self.video_session.on_session_start()
         self._set(phase="handshake", detail="handshake", peer={}, session=None, telemetry=None)
         with self._lock:                                  # кадры rc и их нумерация — заново в каждом соединении
             self._rc, self._rc_n, self._rc_at, self._rc_state = None, 0, None, None
@@ -485,7 +523,9 @@ class PeerClient:
         established = False
         try:
             sock.settimeout(RX_WAIT_S)
-            self._send(sock, "hello", self.info)
+            vs = self.video_session
+            hello = {**self.info, **vs.hello_fields()} if vs is not None else self.info
+            self._send(sock, "hello", hello)
             while not self._stop.is_set():
                 try:
                     data = sock.recv(65536) if self._wait_readable(sock) else None
@@ -555,6 +595,8 @@ class PeerClient:
                 sock.close()
             except OSError:
                 pass
+            if self.video_session is not None:
+                self.video_session.on_session_end()
             self.counters.disconnects += 1
             with self._lock:
                 if self._st.phase == "connected":
@@ -590,7 +632,14 @@ class PeerClient:
             elif mtype == "error":
                 self._set(phase="incompatible", detail=str(body.get("reason", "rejected")))
             return                                       # до успешного рукопожатия данные не принимаются
+        elif mtype in ("video-key", "video-stop"):
+            if self.video_session is not None:           # блок 1.5 присылает их только после video_transports srtp
+                self.video_session.on_message(mtype, body)
+            else:
+                self.counters.ignored_messages += 1
         elif mtype == "heartbeat":
+            if isinstance(msg["ts"], (int, float)):
+                self._clock_samples.append(msg["ts"] - time.time())
             self._set(last_rx=time.monotonic())
             self._ack(seq)
         elif mtype == "status":
@@ -739,7 +788,7 @@ def _sanitize_status(body):
         out["video"] = {"enabled": bool(v.get("enabled")), "active": bool(v.get("active")),
                         "codec": v.get("codec") if v.get("codec") in ("h264", "jpeg") else None,
                         "port": int(v["port"]) if isinstance(v.get("port"), int) and 1024 <= v["port"] <= 65535 else None,
-                        "transport": "tls" if v.get("transport") == "tls" else None}
+                        "transport": v["transport"] if v.get("transport") in ("tls", "srtp") else None}
         src = _sanitize_video_source(v.get("source"))
         if src is not None:                       # видеоприём блока: необязательное поле (протокол 1.1 без изменений)
             out["video"]["source"] = src

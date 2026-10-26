@@ -9,6 +9,9 @@
 Удалённый блок (S3.1-VIDEO): RTP приходит по защищённому видеоканалу (sheregesh.videolink, TLS 1.3 с взаимной
 аутентификацией) и подаётся декодеру через stdin; разрыв канала завершает декодер, и он перезапускается с новым
 подключением. Незащищённого удалённого источника нет.
+Режим «служба» (ADR-0016, транспорт SRTP): приём, расшифровку и декодирование ведёт служба sheregesh-video-rx, а GUI
+берёт готовые кадры из её сокета unixfdsink (dmabuf): GL — unixfdsrc в процессе GUI (glvideo), без дисплея — дочерний
+gst-launch unixfdsrc → RGBx → stdout и прежний _reader. Метрики канала — из state.json службы (videorx).
 """
 from collections import deque
 import os
@@ -30,6 +33,7 @@ FRAME_WAKE = True                        # кадр — на экран сраз
 #                                          задержка в пульте p50 5 мс вместо 15, p95 9 вместо 32 (ui-minimal, video-matrix)
 NO_VIDEO_AFTER_S = 1.5
 RESTART_BACKOFF_S = (1.0, 2.0, 4.0)
+SERVICE_RETRY_S = 0.5        # режим «служба»: повторная проверка сокета кадров, пока его нет
 RESCAN_S = 2.0               # локальный вход: повторный поиск устройства (нет устройства / режим не поддерживается)
 REAP_WAIT_S = 0.05           # остановка: сколько поток GUI ждёт завершения убитого декодера, остальное — в фоне
 STALL_RESTART_S = 5.0       # локальный вход: нет кадров дольше — перезапуск захвата с новым поиском устройства
@@ -46,6 +50,9 @@ class VideoReceiver(QObject):
         self._codec = None
         self._port = None
         self._remote = None                # (ключ, фабрика VideoClient) — удалённый блок по защищённому каналу
+        self._service = None               # ((кодек, путь сокета кадров), stats()) — кадры службы rx (SRTP)
+        self._svc_pending = False          # сокета кадров службы ещё нет: ждём и повторяем
+        self._svc_dead = False             # приёмник GL службы упал (нет процесса, который можно убить)
         self._local = None                 # (ключ, opener() → VideoSource) — локальный видеовход пульта (S3.3)
         self._source = None                # текущий VideoSource локального входа
         self._client = None
@@ -151,11 +158,11 @@ class VideoReceiver(QObject):
     def configure(self, codec, port):
         """Источник сообщил кодек и порт. Перезапуск только при изменении."""
         if (codec, port) == (self._codec, self._port) and self._remote is None and self._local is None and \
-                self._proc is not None:
+                self._service is None and self._proc is not None:
             return
         self.stop()
         self._backoff = 0
-        self._remote = self._local = self._source = None
+        self._remote = self._local = self._source = self._service = None
         self._codec, self._port = codec, port
         if codec is None or port is None:
             self._set_state("off")
@@ -172,8 +179,23 @@ class VideoReceiver(QObject):
             return
         self.stop()
         self._backoff = 0
-        self._local = self._source = None
+        self._local = self._source = self._service = None
         self._remote, self._codec, self._port = ((codec, key), factory), codec, key[1]
+        if self._command is None and not gst.available():
+            self._error = "gst-launch-1.0 not found"
+            self._set_state("unavailable")
+            return
+        self._start()
+
+    def configure_service(self, codec, sock_path, stats):
+        """Видеосеанс SRTP (ADR-0016): кадры отдаёт служба rx в unixfdsink по пути sock_path; stats() → метрики канала
+        (videorx.VideoRx.stats). Сокета ещё нет — приёмник ждёт его и повторяет."""
+        if self._service is not None and self._service[0] == (codec, sock_path) and self._state != "off":
+            return
+        self.stop()
+        self._backoff = 0
+        self._remote = self._local = self._source = None
+        self._service, self._codec, self._port = ((codec, sock_path), stats), codec, None
         if self._command is None and not gst.available():
             self._error = "gst-launch-1.0 not found"
             self._set_state("unavailable")
@@ -188,7 +210,7 @@ class VideoReceiver(QObject):
             return
         self.stop()
         self._backoff = 0
-        self._remote, self._codec, self._port, self._source = None, None, None, None
+        self._remote, self._codec, self._port, self._source, self._service = None, None, None, None, None
         self._local = (key, opener)
         if self._command is None and not gst.available():
             self._error = "gst-launch-1.0 not found"
@@ -210,15 +232,59 @@ class VideoReceiver(QObject):
             frames = self._seq
         out = {"state": self._state, "codec": self._codec, "frames_decoded": frames, "restarts": self._restarts,
                "decoded_fps_5s": round(len(recent) / 5.0, 1) if recent else 0.0, "output": f"{FRAME_W}x{FRAME_H}",
-               "error": self._error, "mode": "remote-tls" if self._remote else "local-input" if self._local else
-               ("local" if self._codec else "off"), "sessions": self._sessions}
+               "error": self._error, "mode": "remote-tls" if self._remote else "remote-srtp" if self._service else
+               "local-input" if self._local else ("local" if self._codec else "off"), "sessions": self._sessions,
+               "transport": "srtp" if self._service else "tls" if self._remote else None}
         if self._local is not None and self._source is not None:
             out["source"] = self._source.info()
         if self._client is not None:
             out["link"] = self._client.stats()
+        elif self._service is not None:
+            out["link"] = self._service[1]()
         return out
 
+    def _start_service(self):
+        """Кадры службы rx: GL (unixfdsrc в процессе GUI) или RGBx (дочерний gst-launch), как у остальных источников."""
+        path = self._service[0][1]
+        self._svc_pending = False
+        if not os.path.exists(path):                # служба ещё не создала сокет — тихо ждём и повторяем
+            self._svc_pending = True
+            self._next_start = time.monotonic() + SERVICE_RETRY_S
+            if self._state == "off" or self._started_at == 0.0:
+                self._started_at = time.monotonic()
+            self._error = ""
+            if self._state not in ("waiting", "no-video"):
+                self._set_state("waiting")
+            return
+        gl_on = self._use_gl()
+        if not gl_on:
+            args = self._command or [gst.GST_LAUNCH, "-q", "unixfdsrc", f"socket-path={path}", "!",
+                                     *gst._to_rgbx(FRAME_W, FRAME_H)]
+            try:
+                self._proc = gst.spawn(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                       stderr=subprocess.DEVNULL)
+            except OSError as e:
+                self._error = str(e)
+                self._schedule_restart()
+                return
+        self._error = ""
+        self._started_at = time.monotonic()
+        with self._lock:
+            self._last_frame_t = None
+        self._gl_on = gl_on
+        self._set_state("waiting")
+        if gl_on:
+            gen = self._gen
+            self.gl.start(path, lambda t: self._gl_frame(gen, t), lambda why: self._gl_error(gen, why))
+            return
+        self._thread = threading.Thread(target=self._reader, args=(self._proc, self._gen), name="video-reader",
+                                        daemon=True)
+        self._thread.start()
+
     def _start(self):
+        if self._service is not None:
+            self._start_service()
+            return
         remote = self._remote is not None
         if self._local is not None:
             try:
@@ -299,7 +365,12 @@ class VideoReceiver(QObject):
         """Сбой приёмника GL: декодер завершается — _poll перезапустит конвейер, как при любом выходе декодера."""
         if gen != self._gen:
             return
+        if self._service is not None and why.startswith("decoder socket"):
+            why = ""                                # службы ещё нет — не ошибка, а ожидание
         self._error = why
+        if self._service is not None and self._proc is None:
+            self._svc_dead = True                   # приёмник GL службы: перезапуск выполнит _poll
+            return
         proc = self._proc
         if proc is not None:
             try:
@@ -327,6 +398,7 @@ class VideoReceiver(QObject):
         with self._lock:
             self._gen += 1
             self._latest = None
+        self._svc_pending = self._svc_dead = False
         client, self._client = self._client, None
         proc, self._proc = self._proc, None
         if self._gl_on:
@@ -439,7 +511,8 @@ class VideoReceiver(QObject):
         """Раз в секунду: путь конвейера соответствует готовности GL? Окно появляется на экране позже старта
         приёмника (cage, подключение дисплея), а дисплей можно отключить — тогда конвейер перезапускается на нужный
         путь (ADR-0015). Только для работающего конвейера H.264 с блока или UDP."""
-        if self.gl is None or self._proc is None or self._local is not None or now < self._gl_check_at:
+        running = self._proc is not None or (self._service is not None and self._gl_on)
+        if self.gl is None or not running or self._local is not None or now < self._gl_check_at:
             return False
         self._gl_check_at = now + 1.0
         if self._use_gl() == self._gl_on:
@@ -451,6 +524,13 @@ class VideoReceiver(QObject):
     def _poll(self):
         now = time.monotonic()
         if self._gl_reconcile(now):
+            return
+        if self._service is not None and (self._svc_dead or (self._svc_pending and now >= self._next_start)):
+            if self._svc_dead:
+                self.stop()
+                self._schedule_restart()
+            else:
+                self._start()                       # сокета ещё не было: процесса и приёмника нет, останавливать нечего
             return
         if self._state in ("restarting", "no-device", "unsupported") and now >= self._next_start and \
                 (self._codec or self._local):

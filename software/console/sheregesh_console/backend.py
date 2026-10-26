@@ -34,6 +34,7 @@ from . import videosource as vsrc
 from .module import ModuleView
 from .sticks import INPUT_DIR, StickSource, SticksView
 from .video import VideoReceiver
+from . import videorx
 
 LOG_LIMIT = 2000
 POWER_HISTORY = 240
@@ -200,16 +201,20 @@ class Backend(QObject):
         self._power_history = collections.deque(maxlen=POWER_HISTORY)
         self.client = None
         self.link_cfg = link_cfg
+        self._videorx = None                        # видеосеанс SRTP через службу sheregesh-video-rx (ADR-0016)
+        if link_cfg is not None or peer is not None:
+            self._videorx = self._make_videorx(link_cfg)
         if link_cfg is not None:                    # сетевой лабораторный профиль: mTLS к удалённому блоку (S3.1)
             peer = (link_cfg.peer_hosts[0] if link_cfg.peer_hosts else "discover", link_cfg.port)
             self.client = PeerClient(None, link_cfg.port, heartbeat_timeout_s=data["link.yaml"]["heartbeat_timeout_s"],
-                                     tls_cfg=link_cfg, status_file=link_status_file).start()
+                                     tls_cfg=link_cfg, status_file=link_status_file,
+                                     video_session=self._videorx).start()
             self.bench = Bench(data["diagnostics.yaml"], data["link.yaml"],
                                peer_factory=lambda clock: RemotePeer(self.client, clock))
         elif peer is not None:
             host, port = peer
             self.client = PeerClient(host, port, heartbeat_timeout_s=data["link.yaml"]["heartbeat_timeout_s"],
-                                     status_file=link_status_file).start()
+                                     status_file=link_status_file, video_session=self._videorx).start()
             self.bench = Bench(data["diagnostics.yaml"], data["link.yaml"],
                                peer_factory=lambda clock: RemotePeer(self.client, clock))
         else:
@@ -277,7 +282,21 @@ class Backend(QObject):
         while self.bench.clock() < t - 1e-9:
             self.tick()
 
+    def _make_videorx(self, link_cfg):
+        """Видеосеанс SRTP: настройки видео — из link.json (video.transport, video_port), канал — через self.client."""
+        pref, port = videorx.link_video_prefs(getattr(link_cfg, "source", None))
+        if link_cfg is not None:
+            port = link_cfg.video_port
+        vrx = videorx.VideoRx(lambda t, b: self.client is not None and self.client.send_video(t, b),
+                              lambda: self.client.peer_ip() if self.client is not None else None,
+                              clock_offset=lambda: self.client.clock_offset() if self.client is not None else None,
+                              log=lambda level, text: self.log(level, "video", text), transport_pref=pref,
+                              rx_port=port)
+        return vrx.start()
+
     def stop(self):
+        if self._videorx is not None:
+            self._videorx.stop()
         self._timer.stop()
         self._sticks.stop()                         # без прощального кадра: блок сам уйдёт в FAILSAFE (ST-06)
         self.video.shutdown()
@@ -428,8 +447,12 @@ class Backend(QObject):
                 self.log("warning" if snap["phase"] != "connected" else "info", "link",
                          f"phase {snap['phase']} ({snap['detail']})")
                 self._last_phase = snap["phase"]
+            vrx = self._videorx
             if self._video_source != "synthetic":
                 pass                                # локальный видеовход или видео выключено (S3.3)
+            elif vrx is not None and vrx.active and s.peer_state == "connected":
+                # Видеосеанс SRTP (ADR-0016): кадры отдаёт служба rx; откат на TLS — по решению пульта (videorx)
+                self.video.configure_service(vrx.codec, vrx.frames_path, vrx.stats)
             elif s.peer_state == "connected" and vid.get("codec") and vid.get("transport") == "tls" \
                     and self.link_cfg is not None and self.link_cfg.video and snap.get("host"):
                 # Защищённый видеоканал (S3.1-VIDEO): тот же блок, что у сеанса управления; порт — из своей
