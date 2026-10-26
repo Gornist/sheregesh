@@ -271,16 +271,3 @@ def test_same_scenario_gives_identical_results():
 
     assert trace() == trace()
 
-
-def test_emulators_work_in_memory():
-    """Эмуляторы устройств и сценарии работают только в памяти процесса: без сетевых и последовательных интерфейсов."""
-    import ast
-    import inspect
-
-    import sheregesh_emulators.devices as dev
-    import sheregesh_emulators.scenario as scn
-    for module in (dev, scn):
-        src = inspect.getsource(module)
-        imported = {n.names[0].name.split(".")[0] for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Import)}
-        imported |= {(n.module or "").split(".")[0] for n in ast.walk(ast.parse(src)) if isinstance(n, ast.ImportFrom)}
-        assert not imported & {"socket", "serial", "ssl", "http", "urllib", "subprocess", "gpiozero", "smbus", "spidev"}

@@ -18,7 +18,7 @@
 | Журналы | journald, хранение на разделе data, `SystemMaxUse=200M`; экспорт с фильтром секретов | SW-001/005, ресурс SD |
 | Пакеты | Собственное ПО — Debian-пакеты (`arch: all`), собранные в CI; зависимости — только из репозиториев Debian и Raspberry Pi OS, без `pip` в образе | Воспроизводимость, SYS-004 |
 | Воспроизводимость | Манифест сборки: версии и SHA-256 всех пакетов. Использованные `.deb` архивируются с каждым релизом, потому что archive.raspberrypi.com не хранит старые версии. `SOURCE_DATE_EPOCH` | DOC-006, REL-010 |
-| Сеть | Статическая адресация лабораторного канала (ADR-0007); Wi-Fi и Bluetooth выключены оверлеями `disable-wifi` и `disable-bt` | 1.0 работает только по проводу; меньше поверхность атаки |
+| Сеть | Статическая адресация лабораторного канала (ADR-0007); радиомодули Pi не отключаются (D7) | Стеки Wi-Fi и Bluetooth в образ пока не входят |
 | Доступ | Паролей и SSH по умолчанию нет; SSH только в dev-режиме по ключу | AUD-028 |
 | Время | `fake-hwclock`; удалённый блок синхронизируется с пультом (chrony по лабораторному каналу); RTC — по решению AUD-012 | ADR-0005 §4 |
 
@@ -40,7 +40,7 @@
 
 Сборка — `os/build.sh` (`rpi-image-gen`, коммит закреплён в `os/rpi-image-gen.ref`), CI — `.github/workflows/image.yml` на нативном `ubuntu-24.04-arm`. Решения ADR не меняются; отклонения в деталях:
 
-- **База.** Состав, равный Raspberry Pi OS Lite trixie arm64 (Debian trixie + архив Raspberry Pi, слои `rpi-*`), собирается слоем `sheregesh-base` без `openssh-server`, `iwd` и беспроводных регуляторных пакетов: SSH по умолчанию отсутствует (AUD-028), Wi-Fi и Bluetooth — `dtoverlay=disable-wifi`/`disable-bt`.
+- **База.** Состав, равный Raspberry Pi OS Lite trixie arm64 (Debian trixie + архив Raspberry Pi, слои `rpi-*`), собирается слоем `sheregesh-base` без `openssh-server`, `iwd` и беспроводных регуляторных пакетов: SSH по умолчанию отсутствует (AUD-028), радиомодули Pi не отключаются (D7), стеков Wi-Fi и Bluetooth в образе нет.
 - **Время.** В trixie стек Raspberry Pi OS маскирует `fake-hwclock`. Ту же функцию — время не раньше последнего сохранённого — выполняет файл часов `systemd-timesyncd` в `/var/lib/systemd/timesync/clock` (засевается `SOURCE_DATE_EPOCH`). Без сети NTP недоступен; RTC — по решению AUD-012.
 - **Службы.** `sheregesh-console.service` (cage, пользователь `sheregesh-ui`) и `sheregesh-remote-emu.service` (лабораторный эмулятор, `DynamicUser`, `IPAddressAllow=localhost`). `Type=notify` и `WatchdogSec` пока не реализованы в пульте — `Type=simple` до S3.
 - **Пакет.** `sheregesh_*_all.deb` собирается детерминированно `tools/image/build_deb.py` (без dpkg-deb), переводы `.qm` — в пакете.

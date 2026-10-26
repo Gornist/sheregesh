@@ -8,7 +8,7 @@
 в порядке autoboot | boot-A | boot-B | root-A | root-B | data, типы, размеры, выравнивание, сигнатуры и метки FAT/ext4,
 побайтовая идентичность слотов A и B.
 Содержимое (если доступны debugfs из e2fsprogs и mtools): корень только для чтения, службы, учётные записи
-заблокированы, SSH по варианту, хост-ключей SSH в образе нет, Wi-Fi/Bluetooth выключены, tryboot, манифест пакетов,
+заблокированы, SSH по варианту, хост-ключей SSH в образе нет, tryboot, манифест пакетов,
 обновления без перестановки microSD (S3.1-DEPLOY: launcher, установщик, агент OTA, ключ подписи, polkit).
 Нет инструмента — проверка SKIP с причиной (не PASS). Итог — DIR/verify.json и DIR/<имя>.packages.tsv; код 1 при FAIL.
 
@@ -435,8 +435,6 @@ def verify(img, variant, out):
                                capture_output=True)
                 r = subprocess.run(["mtype", "-i", str(inner), "::config.txt"], capture_output=True, text=True)
                 cfg = cfg + "\n" + r.stdout
-            rep.add("boot.config", "config.txt: dtoverlay=disable-wifi и disable-bt (ADR-0002)",
-                    cfg is not None and "dtoverlay=disable-wifi" in cfg and "dtoverlay=disable-bt" in cfg)
             auto = mtype(img, by["bootconfig"], "autoboot.txt") if "bootconfig" in by else None
             rep.add("boot.tryboot", "autoboot.txt: tryboot_a_b=1 (ADR-0006)", auto is not None and "tryboot_a_b=1" in auto,
                     (auto or "").strip().replace("\n", " "))
