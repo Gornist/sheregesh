@@ -4,7 +4,7 @@
 эмулятора с подменённым sysfs vhci), разбор DV timings в lab-vivid. Ядро и systemd не нужны.
 
   python3 -m unittest tools/lab-video/pi2/tests/test_pi2_lab_video.py
-Место в дереве тестов (tests/tools) выбирает владелец tests/** при встраивании в образ."""
+Не зависит от своего места: владелец tests/** может перенести файл в tests/tools (git mv), тогда его запускает CI."""
 import asyncio
 import importlib.machinery
 import importlib.util
@@ -19,8 +19,10 @@ import time
 import unittest
 from pathlib import Path
 
-PI2 = Path(__file__).resolve().parents[1]
-LAB = PI2.parent
+# Корень репозитория — вверх по дереву: тест работает и отсюда, и после переноса в tests/tools (git mv)
+ROOT = next(p for p in Path(__file__).resolve().parents if (p / "tools/lab-video/pi2").is_dir())
+LAB = ROOT / "tools/lab-video"
+PI2 = LAB / "pi2"
 sys.path.insert(0, str(LAB))
 import usbip_attach  # noqa: E402
 import usbip_uvc  # noqa: E402

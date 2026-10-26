@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
 # shcam: постоянные имена узлов vivid (номера /dev/videoN зависят от порядка загрузки, rp1-cfe занимает video0–7).
 SUBSYSTEM=="video4linux", DRIVERS=="vivid", ATTR{name}=="vivid-000-vid-cap", SYMLINK+="shcam/cvbs-cap"
 SUBSYSTEM=="video4linux", DRIVERS=="vivid", ATTR{name}=="vivid-000-vid-out", SYMLINK+="shcam/cvbs-out"

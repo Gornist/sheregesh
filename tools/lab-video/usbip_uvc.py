@@ -31,11 +31,15 @@ FID переключается от кадра к кадру. Протокол U
 import argparse
 import asyncio
 import errno
-import os
 import struct
 import sys
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gstpipe  # noqa: E402  (рядом: tools/lab-video, на shcam — /usr/local/lib/shcam)
 
 USBIP_VERSION = 0x0111
 OP_REQ_DEVLIST, OP_REP_DEVLIST = 0x8005, 0x0005
@@ -171,43 +175,114 @@ def ret_unlink(seqnum, status):
     return struct.pack(">IIIIIi24x", RET_UNLINK, seqnum, 0, 0, 0, status)
 
 
-def payloads(frame, fid, max_payload=MAX_PAYLOAD):
-    """Кадр → полезные нагрузки UVC: [заголовок 2 байта: длина, bmHeaderInfo (EOH | EOF | FID)] + данные."""
-    chunk = max_payload - UVC_HEADER
-    parts = [frame[i:i + chunk] for i in range(0, len(frame), chunk)] or [b""]
-    return [bytes((UVC_HEADER, 0x80 | fid | (0x02 if i == len(parts) - 1 else 0))) + part
-            for i, part in enumerate(parts)]
-
-
 # --------------------------------------------------------------------------- источник кадров
 
-class Source:
-    """gst-launch → stdout: MJPEG (multipartmux с Content-Length) или сырой YUYV фиксированного размера."""
+async def log_stderr(proc, log, prefix):
+    """Ошибки gst-launch (-q печатает только их) — в журнал эмулятора, а не в /dev/null."""
+    while proc.stderr and (line := await proc.stderr.readline()):
+        text = line.decode(errors="replace").strip()
+        if text:
+            log(f"{prefix}: {text[:300]}")
 
-    def __init__(self, url, fmt, fr, fps):
-        self.url, self.fmt, self.fr, self.fps = url, fmt, fr, fps
+
+def spawn_logged(argv, log, prefix, stdout=asyncio.subprocess.DEVNULL):
+    async def run():
+        proc = await asyncio.create_subprocess_exec(*argv, stdout=stdout, stderr=asyncio.subprocess.PIPE,
+                                                    limit=1 << 24)
+        proc.stderr_task = asyncio.get_running_loop().create_task(log_stderr(proc, log, prefix))
+        return proc
+    return run()
+
+
+class Hub:
+    """Одно декодирование /cam на все устройства: gstpipe.decoder_hub пишет кадры I420 в shmsink, потоки устройств
+    читают их через shmsrc. Запускается первым пользователем, останавливается через linger_s после последнего
+    (повторный commit не ждёт подключения к RTSP). Для источника test не нужен.
+
+    Запуск — под asyncio.Lock: два устройства, стартующие одновременно, иначе запускали два декодера (второй shmsink
+    находил занятый сокет и создавал «.0»). Каждый запуск — свой сокет cam-N.shm: потребитель старого декодера не
+    подключится к новому по ошибке."""
+
+    def __init__(self, url, sock_dir, linger_s=10.0, log=print, spawn=None):
+        self.url, self.sock_dir, self.linger_s, self.log = url, Path(sock_dir), linger_s, log
+        self.users, self.proc, self.sock, self._stopper, self._n = 0, None, None, None, 0
+        self._lock = asyncio.Lock()
+        self._spawn = spawn or (lambda argv: spawn_logged(argv, self.log, "hub gst"))
+
+    @property
+    def shm_url(self):
+        return f"shm:{self.sock}"
+
+    async def acquire(self, wait_s=10.0):
+        self.users += 1
+        if self._stopper:
+            self._stopper.cancel()
+            self._stopper = None
+        try:
+            async with self._lock:
+                if self.proc is None or self.proc.returncode is not None:
+                    await self._stop_proc()
+                    self._n += 1
+                    self.sock = self.sock_dir / f"cam-{self._n}.shm"
+                    self.sock.unlink(missing_ok=True)
+                    self.proc = await self._spawn(gstpipe.decoder_hub(self.url, str(self.sock)))
+                    self.log(f"hub: decode {self.url} -> {self.sock}")
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + wait_s
+                while not self.sock.exists():   # shmsink создаёт сокет при старте
+                    if self.proc.returncode is not None or loop.time() > deadline:
+                        raise OSError(f"hub: декодер {self.url} не поднялся")
+                    await asyncio.sleep(0.1)
+        except BaseException:
+            self.users -= 1
+            raise
+
+    def release(self):
+        self.users = max(0, self.users - 1)
+        if self.users == 0 and self.proc and not self._stopper:
+            self._stopper = asyncio.get_running_loop().create_task(self._stop_later())
+
+    async def _stop_later(self):
+        await asyncio.sleep(self.linger_s)
+        async with self._lock:
+            if self.users == 0:
+                await self._stop_proc()
+                self.log("hub: decode stopped")
+        self._stopper = None
+
+    async def _stop_proc(self):
+        if self.proc and self.proc.returncode is None:
+            self.proc.kill()
+            await self.proc.wait()
         self.proc = None
+        if self.sock:
+            self.sock.unlink(missing_ok=True)
 
-    def _pipeline(self, pattern=None, count=None):
-        w, h, f = self.fr.width, self.fr.height, self.fps
-        if pattern:
-            src = f"videotestsrc pattern={pattern}" + (f" num-buffers={count}" if count else " is-live=true")
-        elif self.url == "test":
-            src = "videotestsrc is-live=true pattern=smpte"
-        else:
-            src = (f"rtspsrc location={self.url} protocols=tcp latency=0 ! rtph264depay ! h264parse ! avdec_h264 "
-                   "! videoconvert ! videoscale add-borders=false ! videorate")
-        caps = f"video/x-raw,width={w},height={h},framerate={f}/1,pixel-aspect-ratio=1/1"
-        tail = ("! videoconvert ! jpegenc quality=80 ! multipartmux boundary=shcamframe ! fdsink fd=1"
-                if self.fmt == FMT_MJPEG else "! videoconvert ! video/x-raw,format=YUY2 ! fdsink fd=1")
-        label = "" if pattern else (f"! timeoverlay text=\"USB {self.fmt} {w}x{h}\" halignment=right "
-                                    "valignment=bottom font-desc=\"Sans 18\" ")
-        return f"{src} ! {caps} {label}{tail}"
+    async def stop(self):
+        if self._stopper:
+            self._stopper.cancel()
+            self._stopper = None
+        async with self._lock:
+            await self._stop_proc()
+
+
+class Source:
+    """gst-launch → stdout: MJPEG (multipartmux с Content-Length) или сырой YUYV фиксированного размера.
+    Конвейер — gstpipe (exec, без shell); с hub — из общих декодированных кадров."""
+
+    def __init__(self, url, fmt, fr, fps, hub=None, log=print):
+        self.url, self.fmt, self.fr, self.fps, self.hub, self.log = url, fmt, fr, fps, hub, log
+        self.proc, self._held = None, False
 
     async def start(self):
-        self.proc = await asyncio.create_subprocess_shell(
-            "exec gst-launch-1.0 -q " + self._pipeline(), stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, limit=1 << 24)
+        url = self.url
+        if self.hub:
+            await self.hub.acquire()
+            self._held = True
+            url = self.hub.shm_url
+        argv = gstpipe.uvc_stream(url, self.fmt, self.fr.width, self.fr.height, self.fps)
+        self.proc = await spawn_logged(argv, self.log, f"{self.fmt} {self.fr.width}x{self.fr.height} gst",
+                                       stdout=asyncio.subprocess.PIPE)
 
     async def frames(self):
         out = self.proc.stdout
@@ -219,7 +294,7 @@ class Source:
             line = await out.readline()
             if not line:
                 raise asyncio.IncompleteReadError(b"", None)
-            if not line.startswith(b"--shcamframe"):
+            if not line.startswith(b"--" + gstpipe.MJPEG_BOUNDARY.encode()):
                 continue
             length = None
             while (line := await out.readline()) not in (b"\r\n", b"\n", b""):
@@ -232,9 +307,9 @@ class Source:
 
     async def still(self, pattern):
         """Один кадр однотонного поля (blue | black) в формате потока."""
-        proc = await asyncio.create_subprocess_shell(
-            "exec gst-launch-1.0 -q " + self._pipeline(pattern=pattern, count=1), stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, limit=1 << 24)
+        proc = await asyncio.create_subprocess_exec(
+            *gstpipe.uvc_still(pattern, self.fmt, self.fr.width, self.fr.height, self.fps),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, limit=1 << 24)
         data, _ = await proc.communicate()
         if self.fmt == FMT_YUYV:
             return data[:self.fr.width * self.fr.height * 2]
@@ -248,6 +323,9 @@ class Source:
             self.proc.kill()
             await self.proc.wait()
         self.proc = None
+        if self._held:
+            self._held = False
+            self.hub.release()
 
 
 # --------------------------------------------------------------------------- одно устройство на соединение
@@ -257,14 +335,15 @@ class Device:
     profile: Profile
     source_url: str
     state_dir: Path
-    writer: asyncio.StreamWriter = None
+    writer: asyncio.StreamWriter | None = None
+    hub: Hub | None = None
     probe: dict = field(default_factory=dict)
-    committed: dict = None
-    pending: list = field(default_factory=list)        # [(seqnum, length)] — URB bulk IN в ожидании данных
+    committed: dict | None = None
+    pending: deque = field(default_factory=deque)      # (seqnum, длина) — URB bulk IN в ожидании данных
     urb_ready: asyncio.Event = field(default_factory=asyncio.Event)
-    stream_task: asyncio.Task = None
+    stream_task: asyncio.Task | None = None
     unplug: asyncio.Event = field(default_factory=asyncio.Event)
-    log: callable = print
+    log: Callable[[str], None] = print
 
     def __post_init__(self):
         self.probe = self.default_probe()
@@ -364,19 +443,29 @@ class Device:
         while not self.pending:
             self.urb_ready.clear()
             await self.urb_ready.wait()
-        return self.pending.pop(0)
+        return self.pending.popleft()
 
     async def send_frame(self, frame, fid):
-        for pl in payloads(frame, fid):
+        """Кадр → полезные нагрузки UVC по одной на URB: [заголовок 2 байта (EOH | EOF | FID)] + данные. Размер нагрузки —
+        min(длина URB, MAX_PAYLOAD): данные никогда не обрезаются, EOF — только в нагрузке с последним байтом кадра."""
+        pos = 0
+        while True:
             seq, length = await self.next_urb()
-            if len(pl) > length:                # URB меньше нагрузки (не ожидается при 16384): режем, EOF — в последней
-                pl = pl[:length]
-            self.writer.write(ret_submit(seq, 0, pl))
+            room = min(length, MAX_PAYLOAD) - UVC_HEADER
+            if room <= 0:                               # URB не вмещает даже заголовок — для bulk 512 невозможно
+                self.writer.write(ret_submit(seq, -errno.EOVERFLOW))
+                continue
+            chunk = frame[pos:pos + room]
+            pos += len(chunk)
+            last = pos >= len(frame)
+            self.writer.write(ret_submit(seq, 0, bytes((UVC_HEADER, 0x80 | fid | (0x02 if last else 0))) + chunk))
+            if last:
+                break
         await self.writer.drain()
 
     async def stream(self):
         c = self.committed
-        src = Source(self.source_url, c["fmt"], c["fr"], c["fps"])
+        src = Source(self.source_url, c["fmt"], c["fr"], c["fps"], hub=self.hub, log=self.log)
         latest = {"frame": None}
         fresh = asyncio.Event()
         stills = {}
@@ -424,10 +513,11 @@ class Device:
 # --------------------------------------------------------------------------- сервер
 
 class Server:
-    def __init__(self, profiles, source_url, state_dir, log=print):
+    def __init__(self, profiles, source_url, state_dir, log=print, hub=True):
         self.profiles = {p.busid: p for p in profiles}
         self.source_url, self.state_dir, self.log = source_url, Path(state_dir), log
         self.busy = set()
+        self.hub = Hub(source_url, self.state_dir, log=log) if hub and source_url.startswith("rtsp://") else None
 
     async def handle(self, reader, writer):
         peer = writer.get_extra_info("peername")
@@ -451,7 +541,7 @@ class Server:
             writer.write(struct.pack(">HHI", USBIP_VERSION, OP_REP_IMPORT, 0) + devinfo(p, 2 + list(self.profiles).index(busid)))
             await writer.drain()
             self.log(f"{p.name} ({busid}) imported by {peer}")
-            dev = Device(p, self.source_url, self.state_dir, writer=writer, log=self.log)
+            dev = Device(p, self.source_url, self.state_dir, writer=writer, hub=self.hub, log=self.log)
             urbs = asyncio.get_running_loop().create_task(self.urb_loop(reader, writer, dev))
             unplug = asyncio.get_running_loop().create_task(self.watch_unplug(dev))
             await asyncio.wait({urbs, unplug}, return_when=asyncio.FIRST_COMPLETED)
@@ -497,7 +587,7 @@ class Server:
                 elif command == CMD_UNLINK:
                     victim = struct.unpack_from(">I", hdr, 20)[0]
                     before = len(dev.pending)
-                    dev.pending = [u for u in dev.pending if u[0] != victim]
+                    dev.pending = deque(u for u in dev.pending if u[0] != victim)     # очередь остаётся deque
                     writer.write(ret_unlink(seq, -errno.ECONNRESET if len(dev.pending) < before else 0))
                 else:
                     raise ConnectionError(f"неизвестная команда USB/IP {command}")

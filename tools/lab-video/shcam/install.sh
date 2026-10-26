@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Установить эмулированные входы vivid на shcam (Raspberry Pi 5, Pi OS trixie, пользователь с sudo):
 #   tools/lab-video/shcam/install.sh cam@192.168.1.193 [--with-mediamtx]
-# Ставит v4l-utils и GStreamer, vivid с параметрами, udev-имена /dev/shcam/*, shcam-sig/shcam-feed и службы,
+# Ставит v4l-utils и GStreamer, vivid с параметрами, udev-имена /dev/shcam/*, shcam-sig, lab-vivid и службы,
 # эмулятор USB/IP (usbip_uvc.py, порт 3240) в /usr/local/lib/shcam.
 # --with-mediamtx — ещё и etc/mediamtx.yml + units/mediamtx.service (бинарник /opt/mediamtx ставится отдельно, см. README).
 # Повторный запуск безопасен: файлы перезаписываются, службы перезапускаются; mediamtx без флага не трогается.
@@ -17,7 +17,7 @@ STAGE=/tmp/shcam-install
 
 "${SSH[@]}" "$HOST" "rm -rf $STAGE && mkdir -p $STAGE"
 scp -q -o BatchMode=yes ${EXTRA[@]+"${EXTRA[@]}"} -r "$HERE/bin" "$HERE/etc" "$HERE/units" "$HERE/../usbip_uvc.py" \
-    "$HERE/../usbip_attach.py" "$HOST:$STAGE/"
+    "$HERE/../usbip_attach.py" "$HERE/../gstpipe.py" "$HERE/../pi2/bin/lab-vivid" "$HOST:$STAGE/"
 "${SSH[@]}" "$HOST" "WITH_MTX='$WITH_MTX' STAGE=$STAGE bash -s" <<'REMOTE'
 set -euo pipefail
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq v4l-utils gstreamer1.0-tools gstreamer1.0-plugins-base \
@@ -28,7 +28,9 @@ sudo install -m 0644 $STAGE/etc/99-shcam-vivid.rules /etc/udev/rules.d/99-shcam-
 [ -e /etc/default/shcam-video ] || sudo install -m 0644 $STAGE/etc/shcam-video.default /etc/default/shcam-video
 sudo install -m 0755 $STAGE/bin/shcam-sig /usr/local/sbin/shcam-sig
 sudo ln -sf /usr/local/sbin/shcam-sig /usr/local/bin/shcam-sig
-sudo install -m 0755 $STAGE/bin/shcam-feed /usr/local/bin/shcam-feed
+sudo rm -f /usr/local/bin/shcam-feed                       # заменён на lab-vivid feed (общая реализация с pi2)
+sudo install -D -m 0755 $STAGE/lab-vivid /usr/local/lib/shcam/lab-vivid
+sudo install -D -m 0644 $STAGE/gstpipe.py /usr/local/lib/shcam/gstpipe.py
 sudo install -m 0644 $STAGE/units/shcam-vivid-setup.service $STAGE/units/shcam-feed@.service \
     $STAGE/units/shcam-usbip-uvc.service /etc/systemd/system/
 sudo install -D -m 0644 $STAGE/usbip_uvc.py /usr/local/lib/shcam/usbip_uvc.py

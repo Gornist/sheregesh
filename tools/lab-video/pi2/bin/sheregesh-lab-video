@@ -122,7 +122,7 @@ def usbip_start(slot, conf, run_dir, check=check_attached):
     with vhci_lock():
         try:
             d = usbip_attach.import_device(host, port, busid, expect)
-        except SystemExit as e:
+        except usbip_attach.UsbipError as e:
             raise Refused(str(e)) from e
     state = {"vport": d["vport"], "devid": d["devid"], "expect": expect, "busid": busid}
     (run_dir / "state.json").write_text(json.dumps(state) + "\n")

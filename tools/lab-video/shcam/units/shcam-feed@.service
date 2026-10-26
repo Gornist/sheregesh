@@ -10,7 +10,7 @@ Wants=mediamtx.service
 
 [Service]
 EnvironmentFile=-/etc/default/shcam-video
-ExecStart=/usr/local/bin/shcam-feed %i
+ExecStart=/usr/bin/python3 -I /usr/local/lib/shcam/lab-vivid feed %i --src ${SHCAM_FEED_SRC}
 Restart=always
 RestartSec=2
 DynamicUser=yes

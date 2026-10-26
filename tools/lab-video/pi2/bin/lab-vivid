@@ -3,13 +3,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Эмулированные входы vivid на плате без root и без v4l-utils (ioctl напрямую; группа video).
 
-  lab-vivid init                               петли «выход → вход», PAL, 1280x720p30, без OSD
+  lab-vivid init [--std pal|ntsc] [--hdmi WxHpF]   петли «выход → вход», стандарт, режим HDMI, без OSD
   lab-vivid status
   lab-vivid cvbs|hdmi ok|nosignal|nolock|cable-out|testpattern
   lab-vivid hdmi outofrange
   lab-vivid cvbs pal|ntsc                      стандарт (подача sheregesh-lab-vivid-feed@cvbs перезапускается)
   lab-vivid hdmi 1920x1080p30                  режим HDMI (подача @hdmi перезапускается)
-  lab-vivid feed cvbs|hdmi [CONF]              подача камеры (SHCAM_RTSP) в выход vivid — для юнита подачи
+  lab-vivid feed cvbs|hdmi [CONF] [--src URL]  подача камеры в выход vivid — для юнита подачи (конвейер — gstpipe)
+
+Юнит подачи — LAB_VIVID_FEED_UNIT (по умолчанию sheregesh-lab-vivid-feed@{}.service; на shcam — shcam-feed@{}.service).
 
 Узлы ищутся по имени в sysfs (vivid-000-vid-cap …), не по номеру. Что при этом видит V4L2 — tools/lab-video/CONTRACT.md.
 Перезапуск подачи — через systemctl (polkit разрешает sheregesh-ui stop/start юнитов подачи).
@@ -17,13 +19,19 @@
 import fcntl
 import os
 import re
-import shlex
 import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 
+_HERE = Path(__file__).resolve().parent
+sys.path[:0] = [str(_HERE), str(_HERE.parents[1])]   # рядом (образ, shcam) или tools/lab-video (репозиторий)
+import gstpipe  # noqa: E402
+
 SYS = Path("/sys/class/video4linux")
+# Юнит подачи: на pi2 — sheregesh-lab-vivid-feed@, на shcam — shcam-feed@ (задаёт shcam-sig)
+FEED_UNIT = os.environ.get("LAB_VIVID_FEED_UNIT", "sheregesh-lab-vivid-feed@{}.service")
 NODES = {("cvbs", "cap"): "vivid-000-vid-cap", ("cvbs", "out"): "vivid-000-vid-out",
          ("hdmi", "cap"): "vivid-001-vid-cap", ("hdmi", "out"): "vivid-001-vid-out"}
 STD = {"pal": 0x000000FF, "ntsc": 0x0000B000}
@@ -127,11 +135,11 @@ def find_timings(fd, w, h, fps):
 
 
 def feed_unit(kind, verb):
-    subprocess.run(["systemctl", verb, f"sheregesh-lab-vivid-feed@{kind}.service"], check=False)
+    subprocess.run(["systemctl", verb, FEED_UNIT.format(kind)], check=False)
 
 
 def feed_active(kind):
-    return subprocess.run(["systemctl", "is-active", "-q", f"sheregesh-lab-vivid-feed@{kind}.service"]).returncode == 0
+    return subprocess.run(["systemctl", "is-active", "-q", FEED_UNIT.format(kind)]).returncode == 0
 
 
 def with_feed_stopped(kind, fn):
@@ -196,72 +204,91 @@ def status():
         print(f"{kind}: {cap} {mode}  signal_mode={sig} connected_to={conn}  feed={'active' if feed_active(kind) else 'inactive'}")
 
 
-def feed_pipeline(kind, src_url, decoder):
-    """Конвейер gst-launch: поток камеры → формат узла vivid-выхода (как shcam-feed). Аналог: чересстрочно по
-    стандарту; capssetter убирает field-order, иначе поле выхода (Interlaced-TB/BT) не совпадёт со входом."""
-    src = (f"rtspsrc location={src_url} protocols=tcp latency=0 ! rtph264depay ! h264parse ! {decoder} "
-           "! videoconvert ! videoscale add-borders=false ! videorate")
+def feed_argv(kind, src_url, decoder):
+    """Конвейер подачи (gstpipe) по текущему формату выхода vivid: аналог — по стандарту, HDMI — по DV timings."""
     out = node(kind, "out")
     fd = os.open(out, os.O_RDWR)
     try:
         if kind == "cvbs":
             b = bytearray(8)
             fcntl.ioctl(fd, VIDIOC_G_STD, b)
-            pal = bool(struct.unpack("Q", b)[0] & 0xFF)
-        else:
-            b = bytearray(132)
-            fcntl.ioctl(fd, VIDIOC_G_DV_TIMINGS, b)
-            w, h, f, _il = bt_fps(bytes(b))
+            return gstpipe.vivid_cvbs(src_url, str(out), bool(struct.unpack("Q", b)[0] & 0xFF), decoder)
+        b = bytearray(132)
+        fcntl.ioctl(fd, VIDIOC_G_DV_TIMINGS, b)
+        w, h, f, _il = bt_fps(bytes(b))
+        return gstpipe.vivid_hdmi(src_url, str(out), w, h, f, decoder)
     finally:
         os.close(fd)
-    if kind == "cvbs":
-        w, h, fields, rate, par, tff, label = ((720, 576, "50/1", "25/1", "54/59", "true", "CVBS PAL") if pal else
-                                               (720, 480, "60000/1001", "30000/1001", "11/10", "false", "CVBS NTSC"))
-        return (f"{src} ! video/x-raw,width={w},height={h},framerate={fields},pixel-aspect-ratio={par} "
-                f'! timeoverlay text="{label}" halignment=right valignment=bottom '
-                f"! videoconvert ! video/x-raw,format=YUY2 ! interlace field-pattern=1:1 top-field-first={tff} "
-                f'! capssetter replace=true caps="video/x-raw,format=YUY2,width={w},height={h},framerate={rate},'
-                f'interlace-mode=interleaved,pixel-aspect-ratio={par}" ! v4l2sink device={out} sync=false')
-    r = round(f)
-    rate = f"{r * 1000}/1001" if r - f > 0.005 else f"{r}/1"
-    return (f"{src} ! video/x-raw,width={w},height={h},framerate={rate} "
-            f'! timeoverlay text="HDMI {w}x{h}" halignment=right valignment=bottom '
-            f"! videoconvert ! video/x-raw,format=YUY2 ! v4l2sink device={out} sync=false")
 
 
-def feed(kind, conf_path="/etc/sheregesh/lab-video.conf"):
-    conf = dict(ln.split("=", 1) for ln in Path(conf_path).read_text().splitlines()
-                if "=" in ln and not ln.lstrip().startswith("#"))
-    url = conf.get("SHCAM_RTSP", "").strip()
-    if not url.startswith("rtsp://"):
-        raise SystemExit(f"lab-vivid: SHCAM_RTSP в {conf_path}: {url!r}")
-    # Pi 4: аппаратный v4l2h264dec (avdec_h264 в образе нет); Pi 5 / x86: avdec_h264
-    dec = "v4l2h264dec" if subprocess.run(["gst-inspect-1.0", "v4l2h264dec"], capture_output=True).returncode == 0 \
-        else "avdec_h264"
-    args = ["gst-launch-1.0", "-q", *shlex.split(feed_pipeline(kind, url, dec))]
-    os.execvp(args[0], args)
+def feed_source(conf_path, src=None):
+    """Адрес источника: --src, иначе SHCAM_RTSP (pi2, lab-video.conf) или SHCAM_FEED_SRC (shcam, shcam-video)."""
+    if not src:                                         # нет --src или пустой (переменная окружения не задана)
+        conf = dict(ln.split("=", 1) for ln in Path(conf_path).read_text().splitlines()
+                    if "=" in ln and not ln.lstrip().startswith("#"))
+        src = (conf.get("SHCAM_RTSP") or conf.get("SHCAM_FEED_SRC") or "").strip()
+    if not (src.startswith("rtsp://") or src == "test"):
+        raise SystemExit(f"lab-vivid: источник подачи — rtsp://… или test: {src!r}")
+    return src
 
 
-def init():
+def feed(kind, conf_path="/etc/sheregesh/lab-video.conf", src=None):
+    argv = feed_argv(kind, feed_source(conf_path, src), gstpipe.h264_decoder())
+    os.execvp(argv[0], argv)
+
+
+def wait_nodes(timeout=10.0):
+    """После modprobe/udev узлы появляются не сразу."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            return [node(k, r) for k, r in NODES]
+        except SystemExit:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.2)
+
+
+def init(std="pal", hdmi="1280x720p30"):
+    wait_nodes()
     for kind in ("cvbs", "hdmi"):
         fd = os.open(node(kind, "cap"), os.O_RDWR)
         try:
             set_ctrl(fd, controls(fd), "osd_text_mode", 2)
         finally:
             os.close(fd)
-    set_std("pal")
-    set_hdmi("1280x720p30")
+    set_std(std)
+    set_hdmi(hdmi)
     set_signal("cvbs", "ok")
     set_signal("hdmi", "ok")
 
 
+def opt(argv, name, default=None):
+    """--name VALUE из argv (argv меняется)."""
+    if name in argv:
+        i = argv.index(name)
+        if i + 1 >= len(argv):
+            raise SystemExit(f"lab-vivid: {name} без значения")
+        value = argv[i + 1]
+        del argv[i:i + 2]
+        return value
+    return default
+
+
 def main(argv):
+    argv = list(argv)
     if not argv or argv[0] == "status":
         status()
     elif argv[0] == "init":
-        init()
-    elif argv[0] == "feed" and len(argv) in (2, 3) and argv[1] in ("cvbs", "hdmi"):
-        feed(*argv[1:])
+        std, hdmi = opt(argv, "--std", "pal"), opt(argv, "--hdmi", "1280x720p30")
+        if std not in STD or not re.fullmatch(r"\d+x\d+p\d+", hdmi) or len(argv) != 1:
+            raise SystemExit("lab-vivid: init [--std pal|ntsc] [--hdmi WxHpF]")
+        init(std, hdmi)
+    elif argv[0] == "feed":
+        src = opt(argv, "--src")
+        if len(argv) not in (2, 3) or argv[1] not in ("cvbs", "hdmi"):
+            raise SystemExit("lab-vivid: feed cvbs|hdmi [CONF] [--src URL]")
+        feed(*argv[1:], src=src)
     elif argv[0] in ("cvbs", "hdmi") and len(argv) == 2:
         kind, arg = argv
         if arg in SIGNAL:

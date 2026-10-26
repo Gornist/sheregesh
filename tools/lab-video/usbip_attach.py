@@ -24,6 +24,10 @@ SPEED_HUB = {1: "hs", 2: "hs", 3: "hs", 5: "ss", 6: "ss"}     # low/full/high �
 VDEV_ST_NULL = 4
 
 
+class UsbipError(Exception):
+    """Отказ сервера, нет свободного порта, порт свободен и т. п. Печать и код выхода — только в main()."""
+
+
 def recv_exact(sock, n):
     buf = b""
     while len(buf) < n:
@@ -45,7 +49,7 @@ def devlist(host, port):
         s.sendall(struct.pack(">HHI", USBIP_VERSION, OP_REQ_DEVLIST, 0))
         _v, _code, status, ndev = struct.unpack(">HHII", recv_exact(s, 12))
         if status != 0:
-            raise SystemExit(f"сервер вернул ошибку списка (status {status})")
+            raise UsbipError(f"сервер вернул ошибку списка (status {status})")
         out = []
         for _ in range(ndev):
             raw = recv_exact(s, 312)
@@ -93,15 +97,15 @@ def import_device(host, port, busid, expect=None):
         s.sendall(struct.pack(">HHI", USBIP_VERSION, OP_REQ_IMPORT, 0) + busid.encode().ljust(32, b"\0"))
         _v, _code, status = struct.unpack(">HHI", recv_exact(s, 8))
         if status != 0:
-            raise SystemExit(f"сервер отказал в импорте {busid} (status {status}): занят или нет такого")
+            raise UsbipError(f"сервер отказал в импорте {busid} (status {status}): занят или нет такого")
         info = parse_devinfo(recv_exact(s, 312))
         claimed = f"{info['vid']:04x}:{info['pid']:04x}"
         if expect and claimed != expect:
-            raise SystemExit(f"сервер предлагает {claimed} вместо {expect} в {busid} — не подключаю")
+            raise UsbipError(f"сервер предлагает {claimed} вместо {expect} в {busid} — не подключаю")
         hub = SPEED_HUB.get(info["speed"], "hs")
         free = [(ctl, p) for ctl, h, p, st in vhci_ports() if h == hub and st == VDEV_ST_NULL]
         if not free:
-            raise SystemExit(f"нет свободного порта vhci ({hub})")
+            raise UsbipError(f"нет свободного порта vhci ({hub})")
         ctl, vport = free[0]
         s.settimeout(None)
         devid = info["busnum"] << 16 | info["devnum"]
@@ -110,20 +114,17 @@ def import_device(host, port, busid, expect=None):
 
 
 def attach(host, port, busid, expect=None):
-    d = import_device(host, port, busid, expect)
-    print(f"attached {busid} {d['vid']:04x}:{d['pid']:04x} -> vhci port {d['vport']}")
-    return d["vport"]
+    return import_device(host, port, busid, expect)["vport"]
 
 
 def detach(vport):
     for ctl, _h, p, st in vhci_ports():
         if p == vport:
             if st == VDEV_ST_NULL:
-                raise SystemExit(f"порт {vport} свободен")
+                raise UsbipError(f"порт {vport} свободен")
             (ctl / "detach").write_text(str(vport))
-            print(f"detached port {vport}")
             return
-    raise SystemExit(f"нет порта vhci {vport}")
+    raise UsbipError(f"нет порта vhci {vport}")
 
 
 def main(argv=None):
@@ -138,13 +139,23 @@ def main(argv=None):
     sub.add_parser("detach").add_argument("vport", type=int)
     sub.add_parser("status")
     a = ap.parse_args(argv)
+    try:
+        return _run(a)
+    except UsbipError as e:
+        print(f"usbip_attach: {e}", file=sys.stderr)
+        return 1
+
+
+def _run(a):
     if a.cmd == "list":
         for d in devlist(a.host, a.port):
             print(f"{d['busid']}  {d['vid']:04x}:{d['pid']:04x}  speed {d['speed']}")
     elif a.cmd == "attach":
-        attach(a.host, a.port, a.busid)
+        d = import_device(a.host, a.port, a.busid)
+        print(f"attached {a.busid} {d['vid']:04x}:{d['pid']:04x} -> vhci port {d['vport']}")
     elif a.cmd == "detach":
         detach(a.vport)
+        print(f"detached port {a.vport}")
     else:
         for ctl, hub, p, st in vhci_ports():
             print(f"{ctl.name} {hub} port {p}: {'free' if st == VDEV_ST_NULL else f'used (status {st})'}")

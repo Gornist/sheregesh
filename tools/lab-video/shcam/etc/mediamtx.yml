@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
 # sheregesh test camera: IMX477 -> RTSP rtsp://shcam.local:8554/cam (H.264 baseline 1280x720@30)
 logLevel: info
 api: no

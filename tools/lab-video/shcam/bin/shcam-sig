@@ -1,116 +1,42 @@
 #!/bin/bash
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Эмулированные входы захвата на shcam (vivid): начальная настройка, сигнал, стандарт/режим, состояние.
+# Эмулированные входы на shcam: обёртка над lab-vivid (та же реализация, что на pi2) + сбои эмулятора USB/IP.
 #
-#   shcam-sig init                         после загрузки (shcam-vivid-setup.service): петли, стандарт, режим, без OSD
-#   shcam-sig status                       стандарт, режим HDMI, сигнал, подключение, подачи
-#   shcam-sig cvbs|hdmi ok                 сигнал есть (вход подключён к своему выходу)
-#   shcam-sig cvbs|hdmi nosignal|nolock    драйвер сообщает потерю сигнала / синхронизации (V4L2_IN_ST_*)
-#   shcam-sig hdmi outofrange              HDMI: режим вне диапазона
-#   shcam-sig cvbs|hdmi cable-out          «кабель выдернут»: вход ни к чему не подключён, статус драйвера остаётся ok
-#                                          (так ведут себя захваты, которые без сигнала шлют синее/чёрное поле)
-#   shcam-sig cvbs|hdmi testpattern        вход подключён к генератору таблицы vivid вместо камеры
-#   sudo shcam-sig cvbs pal|ntsc           сменить стандарт (подача перезапускается)
-#   sudo shcam-sig hdmi 1920x1080p30       сменить режим HDMI (из списка vivid; подача перезапускается)
+#   shcam-sig init                         после загрузки (shcam-vivid-setup.service): петли, стандарт и режим
+#                                          из /etc/default/shcam-video, без OSD
+#   shcam-sig status                       стандарт, режим HDMI, сигнал, подключение, подачи, эмулятор USB/IP
+#   shcam-sig cvbs|hdmi ok|nosignal|nolock|cable-out|testpattern
+#   shcam-sig hdmi outofrange
+#   sudo shcam-sig cvbs pal|ntsc           сменить стандарт (подача shcam-feed@cvbs перезапускается)
+#   sudo shcam-sig hdmi 1920x1080p30       сменить режим HDMI (подача @hdmi перезапускается)
 #   shcam-sig usb PROFILE ok|blue|black|freeze|unplug
 #                                          устройства эмулятора USB/IP (hdmi-ms2109, cvbs-ms2106, camera);
 #                                          unplug разрывает USB/IP — хост видит отключение USB
 #
-# Сигнал меняется без root (группа video); стандарт и режим — от root (перезапуск shcam-feed@).
+# Что при этом видит V4L2 — tools/lab-video/CONTRACT.md.
 set -euo pipefail
 
-DEV=/dev/shcam
+LIB=/usr/local/lib/shcam
 DEFAULTS=/etc/default/shcam-video
 # shellcheck source=/dev/null
 [ -r "$DEFAULTS" ] && . "$DEFAULTS"
-SHCAM_CVBS_STD=${SHCAM_CVBS_STD:-pal}
-SHCAM_HDMI_MODE=${SHCAM_HDMI_MODE:-1280x720p30}
-
+export LAB_VIVID_FEED_UNIT='shcam-feed@{}.service'
+lab_vivid() { /usr/bin/python3 -I "$LIB/lab-vivid" "$@"; }
 die() { echo "shcam-sig: $*" >&2; exit 1; }
-ctl_name() {  # имя управляющего параметра по шаблону (имена vivid зависят от номера экземпляра)
-    v4l2-ctl -d "$1" -l | awk -v p="$2" '$1 ~ p {print $1; exit}'
-}
-signal_ctl() { [ "$1" = cvbs ] && echo standard_signal_mode || echo dv_timings_signal_mode; }
 
-set_signal() {  # $1 cvbs|hdmi, $2 режим
-    local cap=$DEV/$1-cap conn sig
-    conn=$(ctl_name "$cap" '_is_connected_to$'); sig=$(signal_ctl "$1")
-    [ -n "$conn" ] || die "$cap: нет параметра *_is_connected_to"
-    case $2 in
-        ok)          v4l2-ctl -d "$cap" -c "$sig=0" -c "$conn=2" ;;
-        nosignal)    v4l2-ctl -d "$cap" -c "$sig=1" -c "$conn=2" ;;
-        nolock)      v4l2-ctl -d "$cap" -c "$sig=2" -c "$conn=2" ;;
-        outofrange)  [ "$1" = hdmi ] || die "outofrange — только для hdmi"; v4l2-ctl -d "$cap" -c "$sig=3" -c "$conn=2" ;;
-        cable-out)   v4l2-ctl -d "$cap" -c "$sig=0" -c "$conn=1" ;;
-        testpattern) v4l2-ctl -d "$cap" -c "$sig=0" -c "$conn=0" ;;
-        *) die "неизвестный сигнал: $2" ;;
-    esac
-}
-
-hdmi_index() {  # индекс ENUM_DV_TIMINGS для ШxВpЧАСТОТА (частота — целая часть кадров в секунду)
-    [[ $1 =~ ^([0-9]+)x([0-9]+)p([0-9]+)$ ]] || die "режим HDMI вида 1280x720p30: $1"
-    v4l2-ctl -d $DEV/hdmi-out --list-dv-timings | awk -v w="${BASH_REMATCH[1]}" -v h="${BASH_REMATCH[2]}" \
-        -v f="${BASH_REMATCH[3]}" '
-        /Index:/ {i=$2} /Active width:/ {aw=$3} /Active height:/ {ah=$3} /Frame format:/ {pr=($3=="progressive")}
-        /Pixelclock:/ { fps=$0; sub(/.*\(/, "", fps); sub(/ frames.*/, "", fps)
-                        if (aw==w && ah==h && int(fps+0.5)==f && pr) {print i; exit} }'
-}
-
-restart_feed_around() {  # $1 подача (cvbs|hdmi), дальше — команда; узел нельзя перенастроить во время потока
-    local feed=$1 was=0; shift
-    if systemctl is-active -q "shcam-feed@$feed"; then was=1; systemctl stop "shcam-feed@$feed"; fi
-    "$@"
-    if [ $was = 1 ]; then systemctl start "shcam-feed@$feed"; fi
-}
-apply_std() { v4l2-ctl -d $DEV/cvbs-cap -s "$1" >/dev/null; v4l2-ctl -d $DEV/cvbs-out -s "$1" >/dev/null; }
-apply_hdmi() {
-    local idx; idx=$(hdmi_index "$1"); [ -n "$idx" ] || die "vivid не знает режим $1"
-    v4l2-ctl -d $DEV/hdmi-cap --set-dv-bt-timings "index=$idx" >/dev/null
-    v4l2-ctl -d $DEV/hdmi-out --set-dv-bt-timings "index=$idx" >/dev/null
-}
-
-status() {
-    local std
-    std=$(v4l2-ctl -d $DEV/cvbs-cap --get-standard | awk '/Video Standard/ {print $4; exit}')
-    case $(( std )) in 0) std=none ;; *) (( std & 0xff )) && std="PAL ($std)" || std="NTSC ($std)" ;; esac
-    echo "cvbs: $DEV/cvbs-cap -> $(readlink -f $DEV/cvbs-cap)  standard $std"
-    v4l2-ctl -d $DEV/cvbs-cap -C standard_signal_mode -C "$(ctl_name $DEV/cvbs-cap '_is_connected_to$')" | sed 's/^/      /'
-    echo "hdmi: $DEV/hdmi-cap -> $(readlink -f $DEV/hdmi-cap)  $(v4l2-ctl -d $DEV/hdmi-cap --get-dv-timings |
-        awk '/Active width/ {w=$3} /Active height/ {h=$3} /Pixelclock/ {sub(/.*\(/, ""); sub(/ frames.*/, ""); f=$0} END {print w "x" h " @" f}')"
-    v4l2-ctl -d $DEV/hdmi-cap -C dv_timings_signal_mode -C "$(ctl_name $DEV/hdmi-cap '_is_connected_to$')" | sed 's/^/      /'
-    for f in cvbs hdmi; do echo "feed $f: $(systemctl is-active "shcam-feed@$f" || true)"; done
-    echo "usbip-uvc: $(systemctl is-active shcam-usbip-uvc || true)"
-    for s in /run/shcam-uvc/*.signal; do [ -e "$s" ] && echo "      $(basename "$s" .signal): $(cat "$s")"; done; true
-}
-
-init() {
-    for _ in $(seq 1 50); do
-        [ -e $DEV/cvbs-cap ] && [ -e $DEV/cvbs-out ] && [ -e $DEV/hdmi-cap ] && [ -e $DEV/hdmi-out ] && break
-        sleep 0.2
-    done
-    [ -e $DEV/hdmi-out ] || die "нет узлов $DEV/* — vivid не загружен или нет 99-shcam-vivid.rules"
-    for c in $DEV/cvbs-cap $DEV/hdmi-cap; do v4l2-ctl -d "$c" -c osd_text_mode=2; done
-    apply_std "$SHCAM_CVBS_STD"; apply_hdmi "$SHCAM_HDMI_MODE"
-    set_signal cvbs ok; set_signal hdmi ok
-    status
-}
-
-case ${1:-} in
-    init) init ;;
-    status|"") status ;;
-    cvbs)
-        case ${2:-} in
-            pal|ntsc) restart_feed_around cvbs apply_std "$2" ;;
-            *) set_signal cvbs "${2:-}" ;;
-        esac ;;
-    hdmi)
-        if [[ ${2:-} =~ ^[0-9]+x[0-9]+p[0-9]+$ ]]; then restart_feed_around hdmi apply_hdmi "$2"
-        else set_signal hdmi "${2:-}"; fi ;;
+case ${1:-status} in
+    init) lab_vivid init --std "${SHCAM_CVBS_STD:-pal}" --hdmi "${SHCAM_HDMI_MODE:-1280x720p30}"; lab_vivid status ;;
+    status)
+        lab_vivid status
+        echo "usbip-uvc: $(systemctl is-active shcam-usbip-uvc || true)"
+        for s in /run/shcam-uvc/*.signal; do [ -e "$s" ] && echo "      $(basename "$s" .signal): $(cat "$s")"; done
+        true ;;
     usb)
         [[ ${2:-} =~ ^(hdmi-ms2109|cvbs-ms2106|camera)$ ]] || die "профиль USB: hdmi-ms2109 | cvbs-ms2106 | camera"
         [[ ${3:-} =~ ^(ok|blue|black|freeze|unplug)$ ]] || die "сигнал USB: ok | blue | black | freeze | unplug"
         echo "$3" > "/run/shcam-uvc/$2.signal" ;;
-    -h|--help) sed -n '4,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+    cvbs|hdmi) lab_vivid "$@" ;;
+    -h|--help) sed -n '4,17p' "$0" | sed 's/^# \{0,1\}//' ;;
     *) die "неизвестная команда: $1 (shcam-sig --help)" ;;
 esac
