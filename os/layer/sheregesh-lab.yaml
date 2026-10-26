@@ -3,7 +3,7 @@
 # X-Env-Layer-Category: app
 # X-Env-Layer-Desc: Sheregesh laboratory console: the sheregesh .deb (console GUI
 #  under cage and the remote unit emulator, loopback only, synthetic data),
-#  package manifest inside the image.
+#  Bluetooth on the mini-UART (console ttyAMA0 on GPIO14/15), package manifest inside the image.
 # X-Env-Layer-Version: 0.1.0
 # X-Env-Layer-Requires: sheregesh-base,device-user-admin,rpi-boot-firmware
 # X-Env-Layer-RequiresProvider: sheregesh-net
@@ -31,6 +31,12 @@ mmdebstrap:
       mkdir -p $1/tmp/sheregesh-debs
       cp "$IGconf_sheregesh_assetdir"/pkgs/sheregesh_*_all.deb $1/tmp/sheregesh-debs/
       chroot $1 sh -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/sheregesh-debs/*.deb'
+    - |-
+      set -eu
+      # ADR-0002: Bluetooth на mini-UART, PL011 (ttyAMA0) — консоль загрузки на GPIO14/15. Скорость mini-UART
+      # зависит от частоты VPU, поэтому частота закреплена на штатных для Pi 4 500 МГц (кодер H.264 не замедляется).
+      printf '\n[all]\n# Sheregesh (ADR-0002): BT on mini-UART, console UART on GPIO14/15\ndtoverlay=miniuart-bt\ncore_freq_min=500\n' \
+        >> $1/boot/firmware/config.txt
     # sheregesh-ota.socket и sheregesh-ota-boot (S3.1-DEPLOY) включены всегда, но работают только при открытом
     # ключе подписи владельца (/etc/sheregesh/deploy/allowed_signers — только dev-образ).
     - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console sheregesh-remote-net sheregesh-health.timer sheregesh-ota.socket sheregesh-ota-boot sheregesh-var-seed

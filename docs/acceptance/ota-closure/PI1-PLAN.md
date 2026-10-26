@@ -90,7 +90,7 @@ TLSv1.3; видео `remote-tls` `playing` ≥ 25 к/с; health PASS, сетев
 - **После confirm, B не грузится (шаг 7):** выключить, карта в Mac (`diskutil unmountDisk` сразу — Spotlight пишет на
   FAT), на p1 (`bootconfig`) `autoboot.txt` `[all] boot_partition=2`, вернуть карту → A → `ota-abort`.
 - **Консоль загрузки для разбора:** `console=ttyAMA0,115200` уже в cmdline (PL011 на GPIO14/15 при
-  `disable-bt`): USB-UART 3,3 В — GND (пин 6), RX адаптера ← TXD GPIO14 (пин 8), TX → RXD GPIO15 (пин 10);
+  `miniuart-bt`; в образах до d567c1d — `disable-bt`): USB-UART 3,3 В — GND (пин 6), RX адаптера ← TXD GPIO14 (пин 8), TX → RXD GPIO15 (пин 10);
   `screen /dev/tty.usbserial-* 115200`. Подключать до шага 3; альтернатива — HDMI-монитор (tty1).
 
 ## Риски
