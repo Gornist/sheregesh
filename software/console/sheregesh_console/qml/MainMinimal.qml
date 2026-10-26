@@ -153,9 +153,21 @@ ConsoleWindow {
             id: view
             objectName: "videoView"
             anchors.fill: parent
-            visible: win.details === ""             // под прежней страницей кадр не рисуется
+            visible: win.details === "" && !backend.videoReceiver.glActive    // под прежней страницей не рисуется
             receiver: backend.videoReceiver
             live: backend.videoSource.live
+        }
+        Loader {                                     // путь GL (ADR-0015): элемент создаётся заранее, до первого кадра
+            id: glVideo
+            anchors.fill: parent
+            active: backend.videoReceiver.glAvailable
+            visible: win.details === "" && backend.videoReceiver.glActive
+            source: "GlVideoItem.qml"
+        }
+        Rectangle {                                  // источник без сигнала: прежний кадр GL не показывается
+            anchors.fill: parent
+            color: "#000000"
+            visible: glVideo.visible && !backend.videoSource.live
         }
         Rectangle {
             objectName: "videoMessage"

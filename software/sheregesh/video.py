@@ -242,6 +242,35 @@ def _to_rgbx(width, height):
             f"video/x-raw,format=RGBx,width={width},height={height}", "!", "fdsink", "fd=1", "sync=false"]
 
 
+def _to_unixfd(socket_path):
+    """Кадры декодера без преобразования — дескрипторами dmabuf в unix-сокет (ADR-0015): приёмник в процессе пульта
+    (unixfdsrc → glupload → qml6glsink) берёт их без копий; пиксели не проходят через Python."""
+    return ["unixfdsink", f"socket-path={socket_path}", "sync=false"]
+
+
+def gl_capable(codec) -> bool:
+    """Путь мимо Python — только H.264 с аппаратным декодером (v4l2h264dec отдаёт dmabuf) и с unixfdsink."""
+    if codec != "h264" or not has_element("unixfdsink"):
+        return False
+    pair = h264_elements()
+    return pair is not None and pair[1] == "v4l2h264dec"
+
+
+def stream_receiver_gl_args(codec, socket_path):
+    """RTP из stdin (RFC 4571) → декодер → unixfdsink (ADR-0015)."""
+    caps = H264_CAPS if codec == "h264" else JPEG_CAPS
+    stream_caps = caps.replace("application/x-rtp,", "application/x-rtp-stream,")
+    return [GST_LAUNCH, "-q", "fdsrc", "fd=0", "!", stream_caps, "!", "rtpstreamdepay", "!", caps, "!"] + \
+        _depay_decode(codec) + _to_unixfd(socket_path)
+
+
+def receiver_gl_args(codec, port, socket_path):
+    """RTP по UDP на 127.0.0.1 → декодер → unixfdsink (ADR-0015)."""
+    caps = H264_CAPS if codec == "h264" else JPEG_CAPS
+    return [GST_LAUNCH, "-q", "udpsrc", f"port={port}", "address=127.0.0.1", f"caps={caps}", "!"] + \
+        _depay_decode(codec) + _to_unixfd(socket_path)
+
+
 def receiver_args(codec, port, width, height):
     """Вывод — сырые кадры RGBx фиксированного размера в stdout (fd=1)."""
     caps = H264_CAPS if codec == "h264" else JPEG_CAPS

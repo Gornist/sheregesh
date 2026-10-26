@@ -73,6 +73,10 @@ class VideoReceiver(QObject):
         self._started_at = 0.0
         self._last_notify = 0.0
         self.image = None
+        self.gl = None                     # glvideo.GlVideo — кадр мимо Python (ADR-0015); None — прежний путь RGBx
+        self._gl_on = False                # текущий конвейер — через GL
+        self._gl_codec = {}                # кодек → годится ли для GL (аппаратный декодер, unixfdsink); проверка — раз
+        self._gl_sock = None
         self._timer = QTimer(self)
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._poll)
@@ -91,6 +95,16 @@ class VideoReceiver(QObject):
     @Property(int, notify=stateChanged)
     def port(self):
         return self._port or 0
+
+    @Property(bool, notify=stateChanged)
+    def glAvailable(self):
+        """Путь GL в этом процессе возможен (плагины есть, Minimal): QML держит наготове элемент GstGLQt6VideoItem."""
+        return self.gl is not None
+
+    @Property(bool, notify=stateChanged)
+    def glActive(self):
+        """Кадры сейчас рисует qml6glsink (GlVideoItem), а не VideoView."""
+        return self._gl_on
 
     @Property(float, notify=stateChanged)
     def fps(self):
@@ -217,13 +231,23 @@ class VideoReceiver(QObject):
                 self._set_state("no-device" if src is None or getattr(src, "missing", False) else "unsupported")
                 return
             args = self._command or gst.capture_args(src, FRAME_W, FRAME_H)
+        elif self._use_gl():
+            self._gl_sock = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp",
+                                         f"sheregesh-video-{os.getpid()}-{self._gen}.sock")
+            try:
+                os.unlink(self._gl_sock)
+            except OSError:
+                pass
+            args = gst.stream_receiver_gl_args(self._codec, self._gl_sock) if remote else \
+                gst.receiver_gl_args(self._codec, self._port, self._gl_sock)
         elif remote:
             args = self._command or gst.stream_receiver_args(self._codec, FRAME_W, FRAME_H)
         else:
             args = self._command or gst.receiver_args(self._codec, self._port, FRAME_W, FRAME_H)
+        gl_on = self._gl_sock is not None
         try:
             self._proc = gst.spawn(args, stdin=subprocess.PIPE if remote else subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                   stdout=subprocess.DEVNULL if gl_on else subprocess.PIPE, stderr=subprocess.DEVNULL)
         except OSError as e:
             self._error = str(e)
             self._schedule_restart()
@@ -238,10 +262,49 @@ class VideoReceiver(QObject):
         self._started_at = time.monotonic()
         with self._lock:
             self._last_frame_t = None
+        self._gl_on = gl_on
         self._set_state("waiting")
+        if gl_on:
+            gen = self._gen
+            self.gl.start(self._gl_sock, lambda t: self._gl_frame(gen, t), lambda why: self._gl_error(gen, why))
+            return
         self._thread = threading.Thread(target=self._reader, args=(self._proc, self._gen), name="video-reader",
                                         daemon=True)
         self._thread.start()
+
+    def _use_gl(self):
+        """GL — для кадров с блока или локального UDP, H.264 с аппаратным декодером, при готовом элементе QML."""
+        if self.gl is None or self._command or not self._codec:
+            return False
+        if self._codec not in self._gl_codec:
+            self._gl_codec[self._codec] = gst.gl_capable(self._codec)
+        return self._gl_codec[self._codec] and self.gl.ready()
+
+    def _gl_frame(self, gen, now):
+        """Проба приёмника GL (поток GStreamer): кадр дошёл до qml6glsink. Пикселей здесь нет — только учёт."""
+        with self._lock:
+            if gen != self._gen:
+                return
+            self._seq += 1
+            self._last_frame_t = now
+            self._decoded.append(now)
+        client = self._client
+        if client is not None:
+            client.frame_decoded(now)
+        if FRAME_WAKE:
+            self._arrived.emit()
+
+    def _gl_error(self, gen, why):
+        """Сбой приёмника GL: декодер завершается — _poll перезапустит конвейер, как при любом выходе декодера."""
+        if gen != self._gen:
+            return
+        self._error = why
+        proc = self._proc
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
 
     def _feed(self, client, proc, gen):
         """Видеоканал → stdin декодера. Конец канала (разрыв, отказ аутентификации) закрывает stdin — декодер
@@ -265,6 +328,15 @@ class VideoReceiver(QObject):
             self._latest = None
         client, self._client = self._client, None
         proc, self._proc = self._proc, None
+        if self._gl_on:
+            self.gl.stop()
+            self._gl_on = False
+        if self._gl_sock is not None:
+            try:
+                os.unlink(self._gl_sock)
+            except OSError:
+                pass
+            self._gl_sock = None
         threads = [t for t in (self._feeder, self._thread) if t is not None]
         self._feeder = self._thread = None
         if proc is not None:
@@ -383,9 +455,10 @@ class VideoReceiver(QObject):
             return
         with self._lock:
             frame, seq, last = self._latest, self._seq, self._last_frame_t
-        if frame is not None and seq != self._shown_seq:
-            self.image = QImage(frame, FRAME_W, FRAME_H, FRAME_FORMAT)              # на буфере кадра, без копии
-            self._image_buf = frame                                                 # буфер живёт вместе с QImage
+        if (frame is not None or self._gl_on) and seq != self._shown_seq:
+            if not self._gl_on:                                 # путь GL: кадр уже у qml6glsink, изображения нет
+                self.image = QImage(frame, FRAME_W, FRAME_H, FRAME_FORMAT)          # на буфере кадра, без копии
+                self._image_buf = frame                                             # буфер живёт вместе с QImage
             self._fps_window = [t for t in self._fps_window if now - t < 1.0] + [now]
             self._fps = float(len(self._fps_window))         # показанных кадров за последнюю секунду
             self._shown_seq = seq

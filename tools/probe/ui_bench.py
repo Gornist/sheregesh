@@ -36,7 +36,17 @@ from PySide6.QtGui import QImage
 FW, FH = __FRAME_SIZE__
 V.FRAME_W, V.FRAME_H, V.FRAME_WAKE = FW, FH, __WAKE__
 V.FRAME_FORMAT = QImage.Format_RGB32 if __FMT__ == "BGRx" else QImage.Format_RGBX8888
-if RTSP_URL:      # кадры камеры напрямую (rtspsrc → аппаратный декодер), строка состояния — как от блока с RTSP
+if RTSP_URL and __GL__:   # путь GL (ADR-0015): декодер → unixfdsink → qml6glsink в окне пульта
+    import sheregesh.video as G
+    G.receiver_gl_args = lambda codec, port, sock: [
+        "gst-launch-1.0", "-q", "rtspsrc", "location=" + RTSP_URL, "latency=50", "protocols=tcp", "!",
+        "rtph264depay", "!", "h264parse", "!", "v4l2h264dec", "!", "unixfdsink", "socket-path=" + sock, "sync=false"]
+    b = Backend(tempfile.mkdtemp(prefix="ui-bench-"), autostart=True)
+    rep = {"mode": "remote", "link": "CONNECTED", "session_info": {"codec": "h264", "width": 1280, "height": 720, "fps": 30},
+           "telemetry_video": {"enabled": True, "active": True, "codec": "h264", "source": {
+               "input": "rtsp", "state": "streaming", "device": "shcam Pi5 IMX477", "width": 1280, "height": 720, "fps": 30}}}
+    b._video_report = lambda: rep
+elif RTSP_URL:      # кадры камеры напрямую (rtspsrc → аппаратный декодер), строка состояния — как от блока с RTSP
     caps = f"video/x-raw,format={__FMT__},width={FW},height={FH}"
     conv = (["v4l2convert", "!", caps] if __CONV__ == "hw" else
             ["videoscale", "!", f"video/x-raw,width={FW},height={FH}", "!", "videoconvert", "!", caps])
@@ -51,6 +61,8 @@ if RTSP_URL:      # кадры камеры напрямую (rtspsrc → апп
 else:
     b = Backend(tempfile.mkdtemp(prefix="ui-bench-"), autostart=True, local_video=True)
 ui = Ui(b, LAYOUT)
+if RTSP_URL and __GL__:                  # окно уже на экране cage: элемент GL привязан, конвейер можно строить
+    b.video.configure("h264", 5600)
 w = ui.window
 w.setProperty("visibility", 5)                      # полноэкранно на виртуальном выходе
 if LAYOUT == "classic":
@@ -137,7 +149,8 @@ def finish():
         "open_ms": sorted(res["opens"]),
         "lat_ms": {"p50": round(sorted(LAT)[len(LAT) // 2], 1), "p95": round(sorted(LAT)[int(len(LAT) * 0.95)], 1),
                    "n": len(LAT)} if LAT else None,
-        "variant": {"size": f"{FW}x{FH}", "fmt": __FMT__, "conv": __CONV__, "wake": __WAKE__}, "shown_series": res["shown"][1:], "section_series": res["sec"][1:],
+        "variant": {"size": f"{FW}x{FH}", "fmt": __FMT__, "conv": __CONV__, "wake": __WAKE__, "gl": __GL__,
+                    "gl_active": ui.backend.videoReceiver.property("glActive")}, "shown_series": res["shown"][1:], "section_series": res["sec"][1:],
         "video_state": ui.backend.videoReceiver.property("state")}), flush=True)
     app.quit()
 
@@ -166,13 +179,14 @@ def main():
     ap.add_argument("--fmt", choices=("RGBx", "BGRx"), default="RGBx")
     ap.add_argument("--conv", choices=("sw", "hw"), default="sw", help="масштаб/конвертация: videoconvert или v4l2convert")
     ap.add_argument("--wake", action="store_true", help="показ кадра по приходу, а не по таймеру 33 мс")
+    ap.add_argument("--gl", action="store_true", help="путь GL (ADR-0015): unixfdsink → qml6glsink, без пикселей в Python")
     ap.add_argument("--rtsp", default="", help="видео — RTSP камеры напрямую на pi1 (rtsp://…), а не локальная синтетика")
     ap.add_argument("--grab", metavar="DIR", help="в конце снять окно с каждым разделом (PNG с GPU платы) в DIR")
     a = ap.parse_args()
     pages = ["dashboard", "video", "diagnostics", "power", "logs", "settings", "about", "module", "sticks"]
     code = (HARNESS.replace("LAYOUT", repr(a.layout)).replace("PAGE", str(pages.index(a.page)))
             .replace("NAVIGATE", str(a.navigate)).replace("DO_PROFILE", str(a.profile)).replace("GRAB_DIR", "os.getcwd()" if a.grab else "''").replace("RTSP_URL", repr(a.rtsp)).replace("__FRAME_SIZE__", repr(tuple(int(x) for x in a.frame.split("x"))))
-            .replace("__FMT__", repr(a.fmt)).replace("__CONV__", repr(a.conv)).replace("__WAKE__", str(a.wake)).replace("WARMUP", str(a.warmup)).replace("SECONDS", str(a.seconds)))
+            .replace("__FMT__", repr(a.fmt)).replace("__CONV__", repr(a.conv)).replace("__WAKE__", str(a.wake)).replace("__GL__", str(a.gl)).replace("WARMUP", str(a.warmup)).replace("SECONDS", str(a.seconds)))
     root = "$(python3 -c 'import json,subprocess;print(json.loads(subprocess.run([\"sheregesh-deployd\",\"status\"]," \
            "capture_output=True,text=True).stdout)[\"code_root\"])')"
     w, h = a.size.split("x")

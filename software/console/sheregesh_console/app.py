@@ -154,6 +154,7 @@ class Ui:
         self.translator = QTranslator()
         self._lang = None
         self.system_info = SystemInfo()
+        self._prepare_gl_video()
         self.engine.rootContext().setContextProperty("backend", backend)
         self.engine.rootContext().setContextProperty("systemInfo", self.system_info)
         self._apply_language()
@@ -162,8 +163,38 @@ class Ui:
         if not self.engine.rootObjects():
             raise RuntimeError(f"не удалось загрузить {LAYOUTS[layout]}")
         self.window = self.engine.rootObjects()[0]
+        if self.gl is not None:                     # элемент GstGLQt6VideoItem создан Loader-ом при загрузке
+            item = self.find("glVideoItem")
+            if item is None:
+                print("видео GL: элемент QML не создан — прежний путь", flush=True)
+                backend.video.gl = self.gl = None
+                backend.video.stateChanged.emit()
+            else:
+                self.gl.bind(item)
         self._swaps = []                          # моменты frameSwapped за 5 с (rendered_fps_5s), только по запросу
         self._count_swaps = False
+
+    def _prepare_gl_video(self):
+        """Кадр мимо Python (ADR-0015) — только Minimal, при python3-gi, gst GL и qml6glsink; SHEREGESH_VIDEO_GL=0 —
+        выключить. Рисование сцены — OpenGL (общий контекст с qml6glsink); решение — до создания окна."""
+        self.gl = None
+        if self.layout != "minimal" or os.environ.get("SHEREGESH_VIDEO_GL", "1") == "0":
+            return
+        from . import glvideo
+        why = glvideo.probe()
+        if why is None:
+            try:
+                glvideo.register_qml_type()
+            except RuntimeError as e:
+                why = str(e)
+        if why is not None:
+            print(f"видео GL недоступно: {why} — кадры через Python", flush=True)
+            return
+        from PySide6.QtQuick import QSGRendererInterface
+        QQuickWindow.setGraphicsApi(QSGRendererInterface.GraphicsApi.OpenGL)
+        self.gl = glvideo.GlVideo(ready=lambda: getattr(self, "window", None) is not None and self.window.isExposed())
+        self.backend.video.gl = self.gl
+        print("видео GL: unixfdsrc → glupload → qml6glsink", flush=True)
 
     def count_frames(self):
         """Считать отрисованные кадры окна (замер нагрузки, ui-state perf)."""
