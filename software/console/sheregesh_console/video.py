@@ -26,7 +26,8 @@ from sheregesh import video as gst
 
 FRAME_W, FRAME_H = 640, 360
 FRAME_FORMAT = QImage.Format_RGBX8888    # раскладка байтов кадра из gst (RGBx); BGRx — Format_RGB32
-FRAME_WAKE = False                       # показывать кадр сразу по приходу (сигнал потока чтения), а не по таймеру 33 мс
+FRAME_WAKE = True                        # кадр — на экран сразу по приходу (сигнал потока чтения), а не по таймеру 33 мс:
+#                                          задержка в пульте p50 5 мс вместо 15, p95 9 вместо 32 (ui-minimal, video-matrix)
 NO_VIDEO_AFTER_S = 1.5
 RESTART_BACKOFF_S = (1.0, 2.0, 4.0)
 RESCAN_S = 2.0               # локальный вход: повторный поиск устройства (нет устройства / режим не поддерживается)
