@@ -655,11 +655,19 @@ modulectl status | reinit | reset | lab SCENARIO | configure KEY=VALUE…
 - Системный журнал: `self.journal.emit(prio, "module: <STATE> (from=… reason=… code=… profile=… backend=…)")` только на смену `seq` или `support` (как `_journal_transitions`): `READY` — `INFO`, `FAULT` — `ERR`, `DISCONNECTED`/`RECOVERING` — `WARNING`, прочее — `NOTICE`.
 - Диагностическое событие монитора: новый код `MODULE-FAULT` в `faults.CATALOG` (`WARNING`, `latched=True`; RU «Внешний модуль: ошибка {code}», EN «External module fault: {code}»; действие RU «Состояние и восстановление — на экране «Модуль».»). `Backend` делает `self.bench.events.inject("MODULE-FAULT", code=…)` при `support = ok` и `state = FAULT`, иначе `self.bench.events.clear("MODULE-FAULT")`.
 
-### 12.3. Никогда нет самопроизвольного перехода к активному аппаратному выводу
+### 12.3. Выход управления в S6
 
-Гарантируется тем, что выхода нет вовсе, и это проверяется:
-1. **Кодом.** В `sheregesh.module` и `jrmodule.py` нет API вывода; поле `output` — константа `"none"` в `ModuleManager.snapshot()`, не зависящая от состояния. `HardwareBackendStub` не конструируется (`ModuleError`), `make_backend` для любого вида, кроме `lab-emulator`, — `ModuleError`; схема `remote-1` допускает только `backend: lab-emulator`. `module-cmd` не принимает никаких аргументов, кроме перечисленных в 6.3 (`bad-request`), — каналов, значений органов управления и команд «взвести» в протоколе нет.
-2. **Тестом `tests/unit/test_module_no_output.py`** (B): (а) разбор AST всех файлов `software/sheregesh/module/**` и `software/emulators/sheregesh_emulators/jrmodule.py` — запрещены импорты `serial`, `termios`, `tty`, `fcntl`, `gpiod`, `RPi`, `spidev`, `smbus`, `smbus2`, `periphery`, `usb`, `pyudev`, `socket`, `ctypes`, `mmap` и строковые литералы, начинающиеся с `/dev/` или `/sys/class/`; (б) прогон `SCRIPT_FULL` и всех сценариев раздела 6.4 на `InlineEmulatorBackend`+`SimClock` — на каждом такте `snapshot()["output"] == "none"`; (в) `HardwareBackendStub()` и `make_backend(backend="hardware")` → `ModuleError`; схема отвергает `backend: hardware`; (г) `command("lab", …)` при `supports_lab=False` → `forbidden`; (д) `wire.check_command` отвергает любые ключи `args`, кроме разрешённых.
+В S6 выхода управления нет, потому что нет аппаратного backend: это свойство текущей реализации, а не запрет
+(решение D7). Поле `output` в `ModuleManager.snapshot()` — `"none"`; `HardwareBackendStub` не конструируется
+(`ModuleError`), `make_backend` для любого вида, кроме `lab-emulator`, — `ModuleError`; схема `remote-1` допускает
+только `backend: lab-emulator`. Аппаратный backend (UART/CRSF) добавляется отдельным ADR вместе со значением `output`,
+схемой и правилом, когда вывод активен.
+
+Тест `tests/unit/test_module_no_output.py` (B) проверяет текущее поведение: (б) прогон `SCRIPT_FULL` и всех
+сценариев раздела 6.4 на `InlineEmulatorBackend`+`SimClock` — на каждом такте `snapshot()["output"] == "none"`;
+(в) `HardwareBackendStub()` и `make_backend(backend="hardware")` → `ModuleError`; схема отвергает `backend: hardware`;
+(г) `command("lab", …)` при `supports_lab=False` → `forbidden`; (д) `wire.check_command` отвергает любые ключи
+`args`, кроме разрешённых.
 
 ### 12.4. Отказы
 

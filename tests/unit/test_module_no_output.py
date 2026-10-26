@@ -1,14 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""S6 (ADR-0012, раздел 12.3): никогда нет самопроизвольного перехода к активному аппаратному выводу — выхода нет.
+"""S6 (ADR-0012, раздел 12.3): лабораторный эмулятор не даёт выхода управления, аппаратного бэкенда в S6 нет.
 
-(а) в sheregesh.module и эмуляторе модуля нет импортов интерфейсов устройств, сети и памяти и путей /dev, /sys/class;
 (б) на каждом такте SCRIPT_FULL и всех сценариев 6.4 output == "none";
-(в) аппаратный бэкенд не создаётся, схема remote-1 его не допускает;
+(в) аппаратный бэкенд пока не создаётся, схема remote-1 его не допускает;
 (г) лабораторная команда без лабораторного бэкенда — forbidden, ничего не передаётся;
-(д) module-cmd не принимает никаких аргументов, кроме перечисленных в 6.3."""
-import ast
-from pathlib import Path
+(д) module-cmd не принимает никаких аргументов, кроме перечисленных в 6.3.
+Запрета на интерфейсы устройств в коде модуля нет (D7): будущий аппаратный бэкенд работает с UART."""
 
 import pytest
 
@@ -22,31 +20,6 @@ from sheregesh.module.settings import ModuleSettings
 from sheregesh.module.states import Timings
 from sheregesh_emulators.devices import SimClock
 from sheregesh_emulators.jrmodule import SCRIPT_FULL, JrModuleEmulator
-
-ROOT = Path(__file__).resolve().parents[2]
-FILES = sorted((ROOT / "software/sheregesh/module").rglob("*.py")) + \
-    [ROOT / "software/emulators/sheregesh_emulators/jrmodule.py"]
-FORBIDDEN = {"serial", "termios", "tty", "fcntl", "gpiod", "RPi", "spidev", "smbus", "smbus2", "periphery", "usb",
-             "pyudev", "socket", "ctypes", "mmap"}
-
-
-def test_a_no_device_imports_or_paths():
-    assert len(FILES) >= 10
-    for f in FILES:
-        tree = ast.parse(f.read_text(encoding="utf-8"))
-        for n in ast.walk(tree):
-            names = []
-            if isinstance(n, ast.Import):
-                names = [a.name for a in n.names]
-            elif isinstance(n, ast.ImportFrom) and n.level == 0:
-                names = [n.module or ""]
-            for name in names:
-                assert name.split(".")[0] not in FORBIDDEN, f"{f.name}: import {name}"
-            if isinstance(n, ast.Call) and getattr(n.func, "id", getattr(n.func, "attr", "")) == "__import__":
-                raise AssertionError(f"{f.name}: dynamic __import__")
-            if isinstance(n, ast.Constant) and isinstance(n.value, str):
-                assert not n.value.startswith(("/dev/", "/sys/class/")), f"{f.name}: {n.value[:40]!r}"
-
 
 def _rig():
     clock = SimClock()
