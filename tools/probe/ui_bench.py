@@ -31,7 +31,20 @@ from sheregesh_console.backend import Backend
 QQuickStyle.setStyle("Fusion")
 app = QGuiApplication(["ui-bench"])
 compile_translations()
-ui = Ui(Backend(tempfile.mkdtemp(prefix="ui-bench-"), autostart=True, local_video=True), LAYOUT)
+if RTSP_URL:      # кадры камеры напрямую (rtspsrc → аппаратный декодер), строка состояния — как от блока с RTSP
+    cmd = ["gst-launch-1.0", "-q", "rtspsrc", "location=" + RTSP_URL, "latency=50", "protocols=tcp", "!",
+           "rtph264depay", "!", "h264parse", "!", "v4l2h264dec", "!", "videoscale", "!",
+           "video/x-raw,width=640,height=360", "!", "videoconvert", "!", "video/x-raw,format=RGBx,width=640,height=360",
+           "!", "fdsink", "fd=1", "sync=false"]
+    b = Backend(tempfile.mkdtemp(prefix="ui-bench-"), autostart=True, video_command=cmd)
+    rep = {"mode": "remote", "link": "CONNECTED", "session_info": {"codec": "h264", "width": 1280, "height": 720, "fps": 30},
+           "telemetry_video": {"enabled": True, "active": True, "codec": "h264", "source": {
+               "input": "rtsp", "state": "streaming", "device": "shcam Pi5 IMX477", "width": 1280, "height": 720, "fps": 30}}}
+    b._video_report = lambda: rep
+    b.video.configure("h264", 5600)
+else:
+    b = Backend(tempfile.mkdtemp(prefix="ui-bench-"), autostart=True, local_video=True)
+ui = Ui(b, LAYOUT)
 w = ui.window
 w.setProperty("visibility", 5)                      # полноэкранно на виртуальном выходе
 if LAYOUT == "classic":
@@ -133,11 +146,12 @@ def main():
     ap.add_argument("--size", default="1280x800")
     ap.add_argument("--profile", action="store_true", help="cProfile потока интерфейса за окно замера (топ по tottime)")
     ap.add_argument("--out")
+    ap.add_argument("--rtsp", default="", help="видео — RTSP камеры напрямую на pi1 (rtsp://…), а не локальная синтетика")
     ap.add_argument("--grab", metavar="DIR", help="в конце снять окно с каждым разделом (PNG с GPU платы) в DIR")
     a = ap.parse_args()
     pages = ["dashboard", "video", "diagnostics", "power", "logs", "settings", "about", "module", "sticks"]
     code = (HARNESS.replace("LAYOUT", repr(a.layout)).replace("PAGE", str(pages.index(a.page)))
-            .replace("NAVIGATE", str(a.navigate)).replace("DO_PROFILE", str(a.profile)).replace("GRAB_DIR", "os.getcwd()" if a.grab else "''").replace("WARMUP", str(a.warmup)).replace("SECONDS", str(a.seconds)))
+            .replace("NAVIGATE", str(a.navigate)).replace("DO_PROFILE", str(a.profile)).replace("GRAB_DIR", "os.getcwd()" if a.grab else "''").replace("RTSP_URL", repr(a.rtsp)).replace("WARMUP", str(a.warmup)).replace("SECONDS", str(a.seconds)))
     root = "$(python3 -c 'import json,subprocess;print(json.loads(subprocess.run([\"sheregesh-deployd\",\"status\"]," \
            "capture_output=True,text=True).stdout)[\"code_root\"])')"
     w, h = a.size.split("x")
