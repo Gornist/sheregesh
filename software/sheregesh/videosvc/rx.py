@@ -55,6 +55,15 @@ def _default_factory(cfg, on_event):
     return SrtpRx(cfg, on_event)
 
 
+def jitter_ms() -> int:
+    """Задержка джиттер-буфера rtpbin, мс: SHEREGESH_VIDEO_JITTER_MS (подбор замером, ADR-0016 R5), по умолчанию 20."""
+    try:
+        v = int(os.environ.get("SHEREGESH_VIDEO_JITTER_MS", "20"))
+    except ValueError:
+        return 20
+    return v if 0 <= v <= 2000 else 20
+
+
 @dataclass
 class _Active:
     stream: str
@@ -154,6 +163,7 @@ class RxService(M.ServiceBase):
         try:
             cfg = RxConfig(stream=stream, ssrc=ssrc, peer_ip=ip, local_port=port, rtcp_local_port=rtcp_port,
                            rtcp_peer_port=rtcp_peer, decoder=dec, sink=sink,
+                           jitter_latency_ms=jitter_ms(),
                            srtp=SrtpParams.from_b64(cipher, key_b64))
         except ValueError:
             raise M.bad("параметры SRTP или конвейера отклонены") from None

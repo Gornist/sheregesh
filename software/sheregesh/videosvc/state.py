@@ -34,7 +34,7 @@ def _default_stream() -> dict:
         "rtcp": {"pli_sent": 0, "pli_received": 0, "keyframes_requested": 0, "keyframe_unsupported": False},
         "latency_ms": {"p50": None, "p95": None, "max": None, "samples": 0},
         "last_frame_age_s": None, "restarts": 0, "error": "",
-        "source": {}, "nft_dropped": 0, "transitions": [],
+        "source": {}, "nft_dropped": None, "transitions": [],
     }
 
 
@@ -222,7 +222,7 @@ _STREAM_FIELDS = {
     "restarts": lambda v: _int(v) and v >= 0,
     "error": lambda v: isinstance(v, str),
     "source": lambda v: isinstance(v, dict),
-    "nft_dropped": lambda v: _int(v) and v >= 0,
+    "nft_dropped": lambda v: v is None or (_int(v) and v >= 0),   # null: счётчик nftables доступен только root (контракт v3)
 }
 _NESTED_FIELDS = {
     "rtp": {"packets": _int, "lost": _int, "jitter_ms": _num, "reordered": _int},

@@ -69,7 +69,7 @@ def test_file_has_schema_v1_defaults(tmp_path):
         "srtp": {"auth_fail": 0, "replay_fail": 0, "unknown_ssrc": 0},
         "rtcp": {"pli_sent": 0, "pli_received": 0, "keyframes_requested": 0, "keyframe_unsupported": False},
         "latency_ms": {"p50": None, "p95": None, "max": None, "samples": 0},
-        "last_frame_age_s": None, "restarts": 0, "error": "", "source": {}, "nft_dropped": 0,
+        "last_frame_age_s": None, "restarts": 0, "error": "", "source": {}, "nft_dropped": None,
         "transitions": [],
     }
     assert main == expected
