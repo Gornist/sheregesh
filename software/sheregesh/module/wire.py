@@ -5,7 +5,9 @@
 Чистый Python без зависимостей: импортируют клиент пульта (sheregesh.link.client), представление пульта и приёмка.
 Данные второй стороны недоверенные: sanitize_module оставляет только известные поля, типы и длины;
 check_command отвергает любое тело команды, кроме перечисленного в разделе 6.3 (каналов, значений органов
-управления и команд «взвести» в протоколе нет). Выход управления в S6 отсутствует: output — только "none".
+управления и команд «взвести» в module-cmd нет: значения органов управления идут кадрами rc, ADR-0013).
+S8 (ADR-0014): output — none | neutral | live (выход CRSF на модуль), блок crsf — снимок выхода; configure выбирает
+бэкенд (backend). Версия протокола не меняется: старый пульт видит output вне своего словаря как "unknown".
 """
 import re
 
@@ -14,17 +16,24 @@ STATES = ("DISCONNECTED", "DETECTED", "INITIALIZING", "READY", "FAULT", "RECOVER
 OPS = ("status", "reinit", "reset", "configure", "lab")
 RESULTS = ("ok", "pending", "bad-request", "unknown-op", "forbidden", "disabled", "busy", "invalid", "not-saved",
            "not-running", "error")
-LAB_SCENARIOS = ("attach", "detach", "iface-error", "hang", "heal", "slow-init", "crash", "emu-unavailable",
-                 "emu-available")
+LAB_SCENARIOS_JR = ("attach", "detach", "iface-error", "hang", "heal", "slow-init", "crash", "emu-unavailable",
+                    "emu-available")                                   # lab-emulator (jrmodule, ADR-0012 6.4)
+LAB_SCENARIOS = LAB_SCENARIOS_JR + ("silent", "garbage", "crc")        # + эмулятор ELRS TX (crsf-pty-lab, ADR-0014)
+# crsf-pty-lab (эмулятор ELRS TX): свои сценарии, heal и сценарии родителя; сценарии jrmodule принимаются по смыслу
+# (hang/detach → silent, iface-error → crc, attach → heal), slow-init — bad-request
+LAB_SCENARIOS_ELRS = ("silent", "garbage", "crc", "heal", "crash", "emu-unavailable", "emu-available")
 ERROR_CODES = ("MOD-IFACE-ERROR", "MOD-NO-RESPONSE", "MOD-INIT-TIMEOUT", "MOD-INIT-FAILED", "MOD-PROFILE-MISMATCH",
                "MOD-RECOVER-TIMEOUT", "EMU-START-FAILED", "EMU-EXITED", "EMU-NO-KEEPALIVE", "EMU-UNAVAILABLE")
-BACKEND_KINDS = ("lab-emulator", "hardware")
+BACKENDS = ("lab-emulator", "crsf-pty-lab", "crsf-uart")      # module.yaml backend (схема remote-1)
+LAB_BACKENDS = ("lab-emulator", "crsf-pty-lab")              # лабораторные: принимают module-cmd lab
+BACKEND_KINDS = ("lab-emulator", "hardware", "crsf-pty-lab", "crsf-uart")
 BACKEND_STATES = ("starting", "running", "restarting", "stopped", "unavailable")
 SETTINGS_SOURCES = ("store", "factory", "recovered", "reset", "memory")
-OUTPUT = "none"                                    # выхода управления нет при любом состоянии (раздел 12.3)
+OUTPUT = "none"                                    # выхода нет: lab-emulator при любом состоянии (раздел 12.3)
+OUTPUTS = ("none", "neutral", "live")              # ADR-0014, 2: нет / нейтраль (IDLE, FAILSAFE) / каналы пульта
 PROFILE_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 # configure: только эти ключи и типы (раздел 6.3); значения сверх типа проверяют схема remote-1 и реестр профилей
-CONFIGURE_KEYS = {"enabled": bool, "auto_init": bool, "auto_recover": bool, "profile": str}
+CONFIGURE_KEYS = {"enabled": bool, "auto_init": bool, "auto_recover": bool, "profile": str, "backend": str}
 REQ_MAX = 2 ** 31 - 1
 HISTORY_MAX = 8
 PROFILES_MAX = 8
@@ -75,7 +84,8 @@ def check_command(body):
                              + (f" (unknown: {', '.join(map(str, extra))[:60]})" if extra else ""), req, op)
         for k, v in args.items():
             kind = CONFIGURE_KEYS[k]
-            if not isinstance(v, kind) or (kind is str and not PROFILE_ID.fullmatch(v)):
+            if not isinstance(v, kind) or (kind is str and not PROFILE_ID.fullmatch(v)) \
+                    or (k == "backend" and v not in BACKENDS):
                 raise BadCommand("bad-request", f"configure: bad value for {k}", req, op)
     else:                                            # lab
         if set(args) != {"scenario"} or args["scenario"] not in LAB_SCENARIOS:
@@ -144,11 +154,18 @@ def _recovery(r):
 def _settings(s):
     s = s if isinstance(s, dict) else {}
     pid = s.get("profile")
-    return {"enabled": s.get("enabled") is True, "profile": pid if isinstance(pid, str) and PROFILE_ID.fullmatch(pid)
-            else "", "backend": s.get("backend") if s.get("backend") in BACKEND_KINDS else "",
-            "auto_init": s.get("auto_init") is True, "auto_recover": s.get("auto_recover") is True,
-            "revision": _text(s.get("revision"), 16),
-            "source": s.get("source") if s.get("source") in SETTINGS_SOURCES else "", "notice": _text(s.get("notice"), 64)}
+    out = {"enabled": s.get("enabled") is True, "profile": pid if isinstance(pid, str) and PROFILE_ID.fullmatch(pid)
+           else "", "backend": s.get("backend") if s.get("backend") in BACKEND_KINDS else "",
+           "auto_init": s.get("auto_init") is True, "auto_recover": s.get("auto_recover") is True,
+           "revision": _text(s.get("revision"), 16),
+           "source": s.get("source") if s.get("source") in SETTINGS_SOURCES else "", "notice": _text(s.get("notice"), 64)}
+    u = s.get("uart")                                # S8: только если блок их сообщает (S6/S7 — нет)
+    if isinstance(u, dict):
+        out["uart"] = {"device": _text(u.get("device"), 72), "baud": _num(u.get("baud"), integer=True),
+                       "half_duplex": u.get("half_duplex") is True}
+    if isinstance(s.get("failsafe_ch"), list):
+        out["failsafe_ch"] = _channels(s["failsafe_ch"], 8)
+    return out
 
 
 def _diag(d):
@@ -172,6 +189,57 @@ def _history(h):
     return out
 
 
+def _int(x, lo, hi):
+    return int(min(max(x, lo), hi)) if isinstance(x, (int, float)) and not isinstance(x, bool) and x == x else 0
+
+
+def _channels(ch, n):
+    """Каналы −1000…1000: не больше n значений, нечисловые — 0."""
+    return [_int(x, -1000, 1000) for x in ch[:n]] if isinstance(ch, list) else []
+
+
+def _crsf_link(x):
+    if not isinstance(x, dict):
+        return None
+    signed = {"rssi": (-255, 0), "snr": (-128, 127)}
+    out = {k: _int(x.get(k), *signed[k]) if x.get(k) is not None else None for k in signed}
+    out.update(lq=_int(x.get("lq"), 0, 100) if x.get("lq") is not None else None,
+               rf_mode=_int(x.get("rf_mode"), 0, 255) if x.get("rf_mode") is not None else None,
+               tx_power=_int(x.get("tx_power"), 0, 100000) if x.get("tx_power") is not None else None)
+    return out
+
+
+def _crsf_device(x):
+    if not isinstance(x, dict):
+        return None
+    return {k: _text(x.get(k), 48) for k in ("name", "sw", "serial")}
+
+
+def _crsf_emu(x):
+    if not isinstance(x, dict):
+        return None
+    return {"state": _text(x.get("state"), 24), "ch": _channels(x.get("ch"), 16),
+            "armed": x.get("armed") if isinstance(x.get("armed"), bool) else None,
+            "frames": _num(x.get("frames"), integer=True), "rate_hz": _num(x.get("rate_hz")),
+            "jitter_us_p99": _num(x.get("jitter_us_p99"), integer=True),
+            "crc_errors": _num(x.get("crc_errors"), integer=True)}
+
+
+def _crsf(c):
+    """Блок crsf (ADR-0014, 3.2): снимок CrsfOutput и, у эмулятора, принятое им (emu)."""
+    if not isinstance(c, dict):
+        return None
+    return {"mode": c.get("mode") if c.get("mode") in OUTPUTS else "unknown", "port": _text(c.get("port"), 64),
+            "period_us": _num(c.get("period_us"), integer=True), "synced": c.get("synced") is True,
+            "sync_age_ms": _num(c.get("sync_age_ms"), integer=True, null=True),
+            "frames_sent": _num(c.get("frames_sent"), integer=True),
+            "jitter_us_p99": _num(c.get("jitter_us_p99"), integer=True),
+            "crc_errors": _num(c.get("crc_errors"), integer=True),
+            "collisions": _num(c.get("collisions"), integer=True),
+            "link": _crsf_link(c.get("link")), "device": _crsf_device(c.get("device")),
+            "last_rx_ms": _num(c.get("last_rx_ms"), integer=True, null=True), "emu": _crsf_emu(c.get("emu"))}
+
+
 def _cmd(c):
     if not isinstance(c, dict) or c.get("result") not in RESULTS or not _req_ok(c.get("req")):
         return None
@@ -182,8 +250,8 @@ def _cmd(c):
 def sanitize_module(v):
     """status.module второй стороны → dict раздела 6.2 или None (нет объекта, v != 1, неизвестное состояние).
 
-    Отсутствующие и неверные поля заменяются значениями по умолчанию; output, отличный от "none", — "unknown";
-    cmd — только при верных req и result (op не из OPS — пустая строка)."""
+    Отсутствующие и неверные поля заменяются значениями по умолчанию; output не из OUTPUTS — "unknown";
+    cmd — только при верных req и result (op не из OPS — пустая строка); crsf — только если блок его сообщает."""
     if not isinstance(v, dict) or v.get("v") != STATUS_V or isinstance(v.get("v"), bool) or v.get("state") not in STATES:
         return None
     profiles = v.get("profiles")
@@ -193,7 +261,11 @@ def sanitize_module(v):
            "backend": _backend(v.get("backend")), "identity": _identity(v.get("identity")),
            "error": _error(v.get("error")), "recovery": _recovery(v.get("recovery")),
            "settings": _settings(v.get("settings")), "diag": _diag(v.get("diag")),
-           "output": OUTPUT if v.get("output") == OUTPUT else "unknown", "history": _history(v.get("history"))}
+           "output": v.get("output") if v.get("output") in OUTPUTS else "unknown",
+           "history": _history(v.get("history"))}
+    crsf = _crsf(v.get("crsf"))
+    if crsf is not None:
+        out["crsf"] = crsf
     cmd = _cmd(v.get("cmd"))
     if cmd is not None:
         out["cmd"] = cmd

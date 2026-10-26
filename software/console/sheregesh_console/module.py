@@ -4,7 +4,10 @@
 
 ModuleView показывает status.module из телеметрии блока (уже проверенное клиентом канала, wire.sanitize_module) и
 передаёт команды module-cmd через клиент канала (PeerClient.module_command). О менеджере, профиле, бэкенде и
-эмуляторе модуля пульт ничего не знает, кроме полей телеметрии. Время блока приходит только относительными секундами
+эмуляторе модуля пульт ничего не знает, кроме полей телеметрии. С S8 (ADR-0014, 3.3) — ещё выход на модуль
+(output: none | neutral | live), блок CRSF (status.module.crsf: синхронизация, частота и джиттер кадров, RSSI/LQ,
+ошибки CRC, каналы, полученные эмулятором модуля) и выбор backend (lab-emulator | crsf-pty-lab | crsf-uart) через
+configure. Время блока приходит только относительными секундами
 (since_s, ago_s): абсолютное время для экрана считается здесь по часам пульта в момент приёма.
 
 Тексты для экрана — в ModulePage.qml (qsTr, перевод в i18n/*.ts); snapshot()["display"] берёт те же исходные строки
@@ -22,10 +25,16 @@ except ImportError:                             # до слияния с аге�
 
 STATES = tuple(getattr(_wire, "STATES", ("DISCONNECTED", "DETECTED", "INITIALIZING", "READY", "FAULT", "RECOVERING",
                                          "DISABLED")))
-LAB_SCENARIOS = tuple(getattr(_wire, "LAB_SCENARIOS", ("attach", "detach", "iface-error", "hang", "heal", "slow-init",
-                                                       "crash", "emu-unavailable", "emu-available")))
+# Сценарии лабораторного эмулятора S6 (lab-emulator); с S8 у блока LAB_SCENARIOS — ещё и сценарии ELRS TX
+LAB_SCENARIOS = tuple(getattr(_wire, "LAB_SCENARIOS_JR", ("attach", "detach", "iface-error", "hang", "heal", "slow-init",
+                                                          "crash", "emu-unavailable", "emu-available")))
+# Сценарии эмулятора ELRS TX на экране (crsf-pty-lab, ADR-0014 3.1; блок принимает и сценарии S6 — сопоставляя их)
+CRSF_LAB_SCENARIOS = ("silent", "garbage", "crc", "heal", "crash")
+BACKENDS = tuple(getattr(_wire, "BACKENDS", ("lab-emulator", "crsf-pty-lab", "crsf-uart")))   # настройка backend
+OUTPUTS = ("none", "neutral", "live")           # выход на модуль (ADR-0014, 2); иное от блока — "unknown"
 MIN_SESSION = (1, 3)                            # status.module и module-cmd — с протокола 1.3
-CONFIGURE_KEYS = {"enabled": bool, "auto_init": bool, "auto_recover": bool, "profile": str}
+CONFIGURE_KEYS = {"enabled": bool, "auto_init": bool, "auto_recover": bool, "profile": str, "backend": str}
+RATE_MIN_DT_S = 0.5                             # частота кадров по frames_sent — не чаще, чем раз в 0,5 с
 WAIT_S = 5.0                                    # итог reinit/reset/lab от блока
 CONFIGURE_WAIT_S = 30.0                         # configure: сохранение ревизии на microSD блока
 GUARD_S = 5.0                                   # вызов клиента не вернулся за wait + GUARD_S — «timeout»
@@ -43,6 +52,8 @@ ERROR_SOURCE = {"MOD-IFACE-ERROR": "Interface error", "MOD-NO-RESPONSE": "Module
                 "MOD-RECOVER-TIMEOUT": "Recovery did not finish", "EMU-START-FAILED": "Emulator did not start",
                 "EMU-EXITED": "Emulator exited abnormally", "EMU-NO-KEEPALIVE": "Emulator does not respond",
                 "EMU-UNAVAILABLE": "Emulator unavailable"}
+OUTPUT_SOURCE = {"none": "Output: none", "neutral": "Output: neutral", "live": "Output: commands",
+                 "unknown": "Output: unknown value from the unit"}
 
 
 def tr(source):
@@ -94,6 +105,45 @@ def _str(v):
     return v if isinstance(v, str) else ""
 
 
+def _opt(v, scale=1.0):
+    """Число или None (поле отсутствует, null, не число)."""
+    return v * scale if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def backend_of(tel):
+    """Действующий backend модуля: lab-emulator | crsf-pty-lab | crsf-uart | "" (неизвестно).
+
+    По status.module.backend (kind "crsf" + lab — эмулятор CRSF на псевдотерминале), иначе по settings.backend."""
+    back = _obj(tel.get("backend"))
+    kind = _str(back.get("kind"))
+    if kind in BACKENDS:
+        return kind
+    if kind == "crsf":
+        return "crsf-pty-lab" if back.get("lab") is True else "crsf-uart"
+    setting = _str(_obj(tel.get("settings")).get("backend"))
+    return setting if setting in BACKENDS else ""
+
+
+def emu_channels(emu):
+    """Каналы 1–8, полученные эмулятором модуля (status.module.crsf.emu.ch — блок уже привёл их к шкале пульта
+    −1000…1000); [] — данных нет."""
+    ch = _obj(emu).get("ch")
+    if not isinstance(ch, list) or not ch:
+        return []
+    out = [max(-1000, min(1000, int(_num(x)))) for x in ch[:8]]
+    return out + [0] * (8 - len(out))
+
+
+def uart_missing(tel):
+    """crsf-uart без UART3 на плате (образ без dtoverlay=uart3): блок сообщает uart-not-found (ADR-0014, 3.5)."""
+    if backend_of(tel) != "crsf-uart":
+        return False
+    err = _obj(tel.get("error"))
+    marks = (_str(tel.get("reason")), _str(err.get("text")), _str(_obj(tel.get("crsf")).get("port")),
+             _str(_obj(tel.get("backend")).get("state")))
+    return any("uart-not-found" in m for m in marks)
+
+
 class ModuleView(QObject):
     """Логика страницы «Модуль»: свойства для QML, слоты команд с подтверждением, snapshot() для локального канала и
     ui-state. Все свойства уведомляются одним сигналом changed (испускается только при изменении видимого)."""
@@ -117,6 +167,7 @@ class ModuleView(QObject):
         self._err_wall = 0.0
         self._err_key = None
         self._hist_wall = {}                    # seq перехода → время по часам пульта
+        self._rate = (None, 0.0, None)          # (frames_sent, время пульта, частота Гц) — частота кадров CRSF
         self._cmd = {"state": "idle", "op": "", "result": "", "detail": "", "id": 0}
         self._cmd_seq = 0
         self._view = {}
@@ -151,6 +202,7 @@ class ModuleView(QObject):
                 if isinstance(h, dict) and isinstance(h.get("seq"), int):
                     hist[h["seq"]] = self._hist_wall.get(h["seq"]) or now - float(_num(h.get("ago_s")))
             self._hist_wall = hist
+            self._measure_rate(_obj(tel.get("crsf")), now)
             self._tel = tel
             self._stale_at = now
         elif support == "no-link" and self._support in ("ok", "no-link") and self._tel:
@@ -158,6 +210,7 @@ class ModuleView(QObject):
         else:
             self._tel, self._seq, self._changed_wall = {}, None, 0.0
             self._err_key, self._err_wall, self._hist_wall = None, 0.0, {}
+            self._rate = (None, 0.0, None)
         if support != self._support:            # смены support пишет в журналы Backend (вместе со сменой seq)
             if self._cmd["state"] == "sending" and support != "ok":
                 # связь потеряна во время команды: итог неизвестен (видно по state/settings после возврата)
@@ -167,11 +220,51 @@ class ModuleView(QObject):
             self._support = support
         self._rebuild(now)
 
+    def _measure_rate(self, c, now):
+        """Частота кадров каналов: rate_hz блока, если есть; иначе по приросту frames_sent за время пульта
+        (не чаще раза в RATE_MIN_DT_S); сброс счётчика (рестарт агента) — заново."""
+        n = _opt(c.get("frames_sent"))
+        if n is None:
+            self._rate = (None, 0.0, None)
+            return
+        prev_n, prev_at, hz = self._rate
+        if prev_n is None or n < prev_n:
+            self._rate = (n, now, None)
+        elif now - prev_at >= RATE_MIN_DT_S:
+            self._rate = (n, now, (n - prev_n) / (now - prev_at))
+
+    def _crsf(self, t):
+        """status.module.crsf → поля блока CRSF для экрана ({} — блока нет)."""
+        c = _obj(t.get("crsf"))
+        if not c:
+            return {}
+        link, dev, emu = _obj(c.get("link")), _obj(c.get("device")), _obj(c.get("emu"))
+        rate = _opt(c.get("rate_hz"))
+        if rate is None:
+            rate = self._rate[2]
+        return {
+            "mode": _str(c.get("mode")), "periodUs": int(_num(c.get("period_us"))), "synced": c.get("synced") is True,
+            "syncAgeMs": _opt(c.get("sync_age_ms")), "framesSent": int(_num(c.get("frames_sent"))),
+            "rateHz": rate, "jitterP99Ms": _opt(c.get("jitter_us_p99"), 0.001),
+            "crcErrors": int(_num(c.get("crc_errors"))), "collisions": int(_num(c.get("collisions"))),
+            "lastRxMs": _opt(c.get("last_rx_ms")), "port": scrub(c.get("port"), 64),
+            "link": {"rssi": _opt(link.get("rssi")), "lq": _opt(link.get("lq")), "snr": _opt(link.get("snr")),
+                     "rfMode": _opt(link.get("rf_mode")), "txPower": _opt(link.get("tx_power"))} if link else {},
+            "device": {"name": scrub(dev.get("name"), 64), "sw": scrub(dev.get("sw"), 32),
+                       "serial": scrub(dev.get("serial"), 32)} if dev else {},
+            "emu": {"state": scrub(emu.get("state"), 32), "armed": emu.get("armed") if isinstance(emu.get("armed"), bool)
+                    else None, "rateHz": _opt(emu.get("rate_hz")), "channels": emu_channels(emu)} if emu else {},
+        }
+
     def _rebuild(self, now=None):
         now = self._wall() if now is None else now
         t = self._tel
         prof, back, err = _obj(t.get("profile")), _obj(t.get("backend")), _obj(t.get("error"))
         lab = bool(back.get("lab"))
+        kind = backend_of(t)
+        crsf = self._crsf(t) if t else {}
+        output = _str(t.get("output")) if t else ""
+        output = output if output in OUTPUTS or output == "" else "unknown"
         history = []
         for h in t.get("history") or []:
             if isinstance(h, dict):
@@ -203,10 +296,13 @@ class ModuleView(QObject):
             "identity": dict(_obj(t.get("identity"))), "settings": dict(_obj(t.get("settings"))),
             "diagnostics": dict(_obj(t.get("diag"))), "recovery": dict(_obj(t.get("recovery"))),
             "history": history,
-            "output": _str(t.get("output")) if t else "",
+            "output": output,
+            "backendSetting": kind, "backendChoices": list(BACKENDS),
+            "isCrsf": kind.startswith("crsf"), "uartMissing": uart_missing(t) if t else False,
+            "crsf": crsf, "emuChannels": list(_obj(crsf.get("emu")).get("channels") or []),
             "protocolNote": self._session,
             "command": dict(self._cmd),
-            "labScenarios": list(LAB_SCENARIOS) if lab else [],
+            "labScenarios": (list(CRSF_LAB_SCENARIOS) if kind == "crsf-pty-lab" else list(LAB_SCENARIOS)) if lab else [],
         }
         if view != self._view:
             self._view = view
@@ -248,6 +344,12 @@ class ModuleView(QObject):
     recovery = _p("recovery", dict)
     history = _p("history", list)
     output = _p("output", str)
+    backendSetting = _p("backendSetting", str)
+    backendChoices = _p("backendChoices", list)
+    isCrsf = _p("isCrsf", bool)
+    uartMissing = _p("uartMissing", bool)
+    crsf = _p("crsf", dict)
+    emuChannels = _p("emuChannels", list)
     protocolNote = _p("protocolNote", str)
     command = _p("command", dict)
     labScenarios = _p("labScenarios", list)
@@ -323,13 +425,20 @@ class ModuleView(QObject):
 
     @Slot(dict, bool, result=bool)
     def configure(self, args, confirmed):
-        """configure: подмножество enabled, auto_init, auto_recover, profile (типы — как в схеме remote-1)."""
+        """configure: подмножество enabled, auto_init, auto_recover, profile, backend (типы — как в схеме remote-1;
+        backend — из BACKENDS)."""
         args = dict(args or {})
         if not confirmed or self._cmd["state"] == "sending":
             return False
-        if not args or any(k not in CONFIGURE_KEYS or type(v) is not CONFIGURE_KEYS[k] for k, v in args.items()):
+        if not args or any(k not in CONFIGURE_KEYS or type(v) is not CONFIGURE_KEYS[k] for k, v in args.items()) \
+                or ("backend" in args and args["backend"] not in BACKENDS):
             return self._reject("configure", "bad-request")
         return self._start("configure", args, CONFIGURE_WAIT_S, confirmed)
+
+    @Slot(str, bool, result=bool)
+    def setBackend(self, name, confirmed):
+        """Смена backend модуля (ADR-0014, 3.2): configure backend — только после подтверждения в диалоге выбора."""
+        return self.configure({"backend": str(name)}, confirmed)
 
     @Slot(str, bool, result=bool)
     def runLabScenario(self, name, confirmed):
@@ -355,11 +464,18 @@ class ModuleView(QObject):
         code = self._view["lastErrorCode"]
         return tr(ERROR_SOURCE[code]) if code in ERROR_SOURCE else code
 
+    def output_text(self):
+        """Строка выхода (как moduleOutputText на экране); "" — нет текущих данных модуля (без связи выход неизвестен)."""
+        out = self._view["output"]
+        return tr(OUTPUT_SOURCE[out]) if out in OUTPUT_SOURCE and self._view["support"] == "ok" else ""
+
     def snapshot(self):
-        """Формат M (ADR-0012, 9.3): support, stale, session, telemetry, display (+ command)."""
+        """Формат M (ADR-0012, 9.3): support, stale, session, telemetry, display (+ command); с S8 — backend и
+        output (ADR-0014, 3.3) и display.outputText."""
         v = self._view
         return {"support": v["support"], "stale": v["stale"], "session": self._session or None,
                 "telemetry": dict(self._tel) if self._tel else None,
+                "backend": v["backendSetting"] or None, "output": v["output"] or None,
                 "display": {"stateText": self.state_text(), "errorText": self.error_text(),
-                            "changedAt": v["changedAt"]},
+                            "changedAt": v["changedAt"], "outputText": self.output_text()},
                 "command": dict(v["command"])}

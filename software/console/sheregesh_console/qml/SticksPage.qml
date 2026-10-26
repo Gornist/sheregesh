@@ -6,10 +6,16 @@ import QtQuick.Layouts
 
 // Стики и кнопки аппаратуры → удалённый блок (ADR-0013, 4.2): backend.sticks (SticksView). Передача после старта
 // пульта выключена; включение — только после подтверждения в диалоге, выключение — сразу. Состояние команд на блоке
-// (IDLE / ACTIVE / FAILSAFE) и эхо каналов — из rc-state блока. Радиовыхода в S7 нет.
+// (IDLE / ACTIVE / FAILSAFE) и эхо каналов — из rc-state блока. С S8 (ADR-0014, 3.3) плашка — по фактическому выходу
+// на модуль (status.module.output: none / neutral / live, backend.module), третья полоса эха — каналы, полученные
+// эмулятором модуля (status.module.crsf.emu), если блок их сообщает.
 Item {
     id: page
     readonly property var sv: backend.sticks
+    readonly property var mv: backend.module
+    readonly property bool emu: mv.support === "ok" && mv.emuChannels.length === 8     // каналы эмулятора модуля
+    readonly property bool emuMark: mv.support === "ok" && mv.backendSetting === "crsf-pty-lab"
+    readonly property color emuColor: backend.theme === "light" ? "#8250df" : "#bc8cff"   // третья полоса: не как пульт
     readonly property bool linkOk: sv.support === "ok" || sv.support === "no-device"
     readonly property bool hasRemote: sv.remoteState !== ""
     readonly property bool echo: hasRemote && sv.remoteState !== "IDLE"       // в IDLE блок команд не применяет
@@ -66,6 +72,28 @@ Item {
             return qsTr("Transmission was not enabled: %1").arg(page.refusalText(sv.result))
         return ""
     }
+    function outputText() {           // фактический выход блока на модуль (ADR-0014, 2)
+        if (mv.support === "no-link")
+            return qsTr("Radio output: no data, no link to the remote unit")
+        var mark = page.emuMark ? " · " + qsTr("module emulator") : ""
+        switch (mv.support === "ok" ? mv.output : "none") {
+        case "neutral": return qsTr("CRSF output: neutral") + mark
+        case "live": return qsTr("CRSF output: commands go to the module") + mark
+        case "unknown": return qsTr("Radio output: unknown value from the remote unit")
+        default: return qsTr("No radio output: commands reach the remote unit but are not passed to the module")
+        }
+    }
+    function outputColor() {
+        if (mv.support !== "ok")
+            return mv.support === "no-link" ? win.p.muted : win.p.warning
+        return mv.output === "live" ? win.p.ok : mv.output === "neutral" ? win.p.info : win.p.warning
+    }
+    function outputNote() {           // для диалога включения
+        if (mv.support === "ok" && (mv.output === "neutral" || mv.output === "live"))
+            return page.emuMark ? qsTr("The remote unit passes channels 1–8 to the CRSF module emulator.")
+                                : qsTr("The remote unit passes channels 1–8 to the module over CRSF.")
+        return qsTr("There is no radio output.")
+    }
     function value(v) {               // −1000…1000 со знаком «минус», а не дефисом
         return v < 0 ? "\u2212" + (-v) : "" + v
     }
@@ -75,7 +103,7 @@ Item {
         property int level: 0
         property color fill: win.p.accent
         property bool active: true
-        implicitHeight: 12 * win.s
+        implicitHeight: (page.emu ? 8 : 12) * win.s
         radius: 2 * win.s
         color: win.p.bg
         border.color: win.p.border
@@ -97,22 +125,22 @@ Item {
         anchors.fill: parent
         spacing: 10 * win.s
 
-        // Обязательная плашка S7: команды доходят до блока, но модулю (радио) не передаются
+        // Обязательная плашка: фактический выход на модуль — нет / нейтраль / команды (S7 — только «нет»)
         Rectangle {
-            objectName: "sticksNoOutputBanner"
+            objectName: "sticksOutputBanner"
             readonly property bool shown: true
-            color: win.p.warning
+            color: page.outputColor()
             radius: 6 * win.s
             Layout.fillWidth: true
             implicitHeight: bannerText.implicitHeight + 12 * win.s
             Label {
                 id: bannerText
-                objectName: "sticksNoOutputText"
+                objectName: "sticksOutputText"
                 anchors.fill: parent
                 anchors.leftMargin: 16 * win.s
                 anchors.rightMargin: 16 * win.s
                 verticalAlignment: Text.AlignVCenter
-                text: qsTr("No radio output (S7): commands reach the remote unit but are not passed to the module")
+                text: page.outputText()
                 color: "#ffffff"
                 font.bold: true
                 elide: Text.ElideRight
@@ -190,7 +218,7 @@ Item {
             Tile {
                 id: channelsTile
                 objectName: "sticksChannelsTile"
-                title: qsTr("Channels: console → remote unit")
+                title: page.emu ? qsTr("Channels: console → remote unit → module") : qsTr("Channels: console → remote unit")
                 accent: sv.enabled ? win.p.ok : win.p.border
                 Layout.fillWidth: true
                 Layout.preferredWidth: 3
@@ -202,7 +230,17 @@ Item {
                     Rectangle { width: 22 * win.s; height: 11 * win.s; radius: 2 * win.s; color: win.p.accent }
                     Label { text: qsTr("console"); font.pixelSize: 16 * win.s; color: win.p.muted }
                     Rectangle { width: 22 * win.s; height: 11 * win.s; radius: 2 * win.s; color: win.p.ok }
-                    Label { text: qsTr("remote unit (echo)"); font.pixelSize: 16 * win.s; color: win.p.muted; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Label { text: qsTr("remote unit (echo)"); font.pixelSize: 16 * win.s; color: win.p.muted; elide: Text.ElideRight; Layout.fillWidth: !page.emu }
+                    Rectangle { visible: page.emu; width: 22 * win.s; height: 11 * win.s; radius: 2 * win.s; color: page.emuColor }
+                    Label {
+                        objectName: "sticksEmuLegend"
+                        visible: page.emu
+                        text: qsTr("module emulator")
+                        font.pixelSize: 16 * win.s
+                        color: win.p.muted
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
                 }
                 Repeater {
                     model: 8
@@ -223,6 +261,7 @@ Item {
                             Layout.fillWidth: true
                             AxisBar { Layout.fillWidth: true; level: page.sv.axes[index]; fill: win.p.accent; active: page.sv.present }
                             AxisBar { Layout.fillWidth: true; level: page.sv.remoteAxes[index]; fill: page.echoColor; active: page.echo }
+                            AxisBar { Layout.fillWidth: true; visible: page.emu; level: page.emu ? page.mv.emuChannels[index] : 0; fill: page.emuColor }
                         }
                         Label {
                             objectName: "sticksAxisValue_" + index
@@ -236,6 +275,15 @@ Item {
                             text: page.hasRemote ? page.value(page.sv.remoteAxes[index]) : "—"
                             font.pixelSize: 17 * win.s
                             color: page.echo ? page.echoColor : win.p.muted
+                            horizontalAlignment: Text.AlignRight
+                            Layout.preferredWidth: numMetrics.advanceWidth + 4 * win.s
+                        }
+                        Label {
+                            objectName: "sticksEmuAxisValue_" + index
+                            visible: page.emu
+                            text: page.emu ? page.value(page.mv.emuChannels[index]) : "—"
+                            font.pixelSize: 17 * win.s
+                            color: page.emuColor
                             horizontalAlignment: Text.AlignRight
                             Layout.preferredWidth: numMetrics.advanceWidth + 4 * win.s
                         }
@@ -377,8 +425,8 @@ Item {
         title: qsTr("Enable command transmission?")
         Label {
             objectName: "sticksConfirmQuestion"
-            text: qsTr("Axes and buttons of «%1» are sent to the remote unit 50 times per second. If commands stop for longer than %2\u00a0ms, the remote unit switches to FAILSAFE. There is no radio output (S7).")
-                  .arg(sv.deviceName !== "" ? sv.deviceName : qsTr("control device")).arg(sv.timeoutMs)
+            text: qsTr("Axes and buttons of «%1» are sent to the remote unit 50 times per second. If commands stop for longer than %2\u00a0ms, the remote unit switches to FAILSAFE.")
+                  .arg(sv.deviceName !== "" ? sv.deviceName : qsTr("control device")).arg(sv.timeoutMs) + " " + page.outputNote()
             wrapMode: Text.WordWrap
             width: confirmDialog.availableWidth
         }

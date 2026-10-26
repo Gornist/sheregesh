@@ -78,14 +78,27 @@ def module_ui_state(ui):
     def text(name):                      # видимость — по условию элемента (shown), а не по текущей вкладке
         o = ui.find(name)
         return o.property("text") if o is not None and o.property("shown") is not False else ""
-    banner = ui.find("moduleLabBanner")
+    banner, crsf = ui.find("moduleLabBanner"), ui.find("moduleCrsfBlock")
+
+    def crsf_text(name):                 # блок CRSF виден только при backend crsf-*
+        return text(name) if crsf is not None and crsf.property("shown") else ""
     return {"support": mv.support, "state": mv.state, "seq": mv.seq, "stale": mv.stale,
             "stateText": text("moduleStateText"), "stateDetail": text("moduleStateDetail"),
             "supportText": text("moduleSupportText"), "profileText": text("moduleProfileText"),
             "errorText": text("moduleErrorText"), "emulatorText": text("moduleEmulatorText"),
             "changedText": text("moduleChangedText"), "outputText": text("moduleOutputText"),
             "labBanner": bool(banner is not None and banner.property("shown")),
-            "faultEvent": b.bench.monitor.log.is_active("MODULE-FAULT"), "command": dict(mv.command)}
+            "labBannerText": text("moduleLabBannerText") if banner is not None and banner.property("shown") else "",
+            "faultEvent": b.bench.monitor.log.is_active("MODULE-FAULT"), "command": dict(mv.command),
+            # S8 (ADR-0014, 3.3): выход, backend, блок CRSF
+            "output": mv.output, "backend": mv.backendSetting, "isCrsf": mv.isCrsf, "uartMissing": mv.uartMissing,
+            "crsf": dict(mv.crsf), "emuChannels": list(mv.emuChannels),
+            "crsfShown": bool(crsf is not None and crsf.property("shown")),
+            "crsfDeviceText": crsf_text("moduleCrsfDeviceText"), "crsfPeriodText": crsf_text("moduleCrsfPeriodText"),
+            "crsfSyncText": crsf_text("moduleCrsfSyncText"),
+            "crsfRateText": crsf_text("moduleCrsfRateText"), "crsfJitterText": crsf_text("moduleCrsfJitterText"),
+            "crsfLinkText": crsf_text("moduleCrsfLinkText"), "crsfErrorsText": crsf_text("moduleCrsfErrorsText"),
+            "labScenarios": list(mv.labScenarios)}
 
 
 def sticks_ui_state(ui):
@@ -95,7 +108,10 @@ def sticks_ui_state(ui):
     def text(name):                      # видимость — по условию элемента (shown), а не по текущей вкладке
         o = ui.find(name)
         return o.property("text") if o is not None and o.property("shown") is not False else ""
-    banner, switch = ui.find("sticksNoOutputBanner"), ui.find("sticksEnableSwitch")
+    banner, switch = ui.find("sticksOutputBanner"), ui.find("sticksEnableSwitch")
+    mv = ui.backend.module
+    output = mv.output if mv.support == "ok" else ""
+    out_text = text("sticksOutputText")
     snd = sv.sender.status()
     return {"support": sv.support, "present": sv.present, "deviceName": sv.deviceName, "enabled": sv.enabled,
             "axisCount": sv.axisCount, "buttonCount": sv.buttonCount, "axes": list(sv.axes), "buttons": sv.buttons,
@@ -107,8 +123,12 @@ def sticks_ui_state(ui):
             "noticeText": text("sticksNoticeText"), "deviceText": text("sticksDeviceText"),
             "rateText": text("sticksRateText"), "latencyText": text("sticksLatencyText"),
             "switchChecked": bool(switch is not None and switch.property("checked")),
-            "noOutputBanner": bool(banner is not None and banner.property("shown")),
-            "noOutputText": text("sticksNoOutputText")}
+            # S8 (ADR-0014, 3.3): плашка по фактическому выходу (status.module.output), каналы эмулятора модуля
+            "output": output, "outputText": out_text, "outputBanner": bool(banner is not None and banner.property("shown")),
+            "outputEmulator": mv.support == "ok" and mv.backendSetting == "crsf-pty-lab",
+            "emuAxes": list(mv.emuChannels) if mv.support == "ok" else [],
+            "noOutputBanner": output not in ("neutral", "live"),
+            "noOutputText": out_text if output not in ("neutral", "live") else ""}
 
 
 class Ui:
@@ -301,7 +321,8 @@ def main(argv=None):
             st = backend.status
             mv, sv = backend.module, backend.sticks
             key = (st.get("linkView"), st.get("peerLink"), st.get("peerDetail"), backend.video.state,
-                   mv.support, mv.state, mv.seq, sv.support, sv.present, sv.enabled, sv.remoteState, sv.remoteReason)
+                   mv.support, mv.state, mv.seq, mv.output, mv.backendSetting,       # выход CRSF — сразу (CR-03, CR-06)
+                   sv.support, sv.present, sv.enabled, sv.remoteState, sv.remoteReason)
             if key != last_key["k"]:
                 last_key["k"] = key
                 dump_ui()

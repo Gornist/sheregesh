@@ -6,6 +6,7 @@
 хранилища наружу не выходят: при любом сбое модуль запускается с заводскими значениями (в памяти, если сохранить
 нельзя), причина — в журнале и в settings.source / settings.notice.
 """
+import json
 import os
 import time
 from dataclasses import asdict, dataclass, fields, replace
@@ -18,13 +19,24 @@ FILE = "module.yaml"
 SCHEMA = "remote-1"
 
 
+UART_DEFAULTS = {"device": "auto", "baud": 400000, "half_duplex": True}
+NEUTRAL = (0,) * 8
+
+
 @dataclass(frozen=True)
 class ModuleSettings:
     enabled: bool = True
     profile: str = "radiomaster-nomad"
-    backend: str = "lab-emulator"
+    backend: str = "lab-emulator"          # lab-emulator | crsf-pty-lab | crsf-uart (ADR-0014)
     auto_init: bool = True
     auto_recover: bool = True
+    uart: tuple = tuple(UART_DEFAULTS.items())   # линия crsf-uart: (("device", …), ("baud", …), ("half_duplex", …))
+    failsafe_ch: tuple = NEUTRAL           # каналы 1–8 режима выхода neutral, −1000…1000
+
+    def __post_init__(self):
+        uart = dict(self.uart) if isinstance(self.uart, (dict, tuple, list)) else {}
+        object.__setattr__(self, "uart", tuple({**UART_DEFAULTS, **uart}.items()))
+        object.__setattr__(self, "failsafe_ch", tuple(self.failsafe_ch))
 
     @classmethod
     def from_data(cls, d: dict) -> "ModuleSettings":
@@ -32,14 +44,28 @@ class ModuleSettings:
         known = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in (d or {}).items() if k in known})
 
+    def uart_dict(self) -> dict:
+        return dict(self.uart)
+
     def to_yaml(self) -> str:
-        return "".join(f"{k}: {str(v).lower() if isinstance(v, bool) else v}\n" for k, v in asdict(self).items())
+        return "".join(f"{k}: {_yaml(v)}\n" for k, v in self.as_dict().items())
 
     def replace(self, **kw) -> "ModuleSettings":
         return replace(self, **kw)
 
     def as_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d.update(uart=self.uart_dict(), failsafe_ch=list(self.failsafe_ch))
+        return d
+
+
+def _yaml(v):
+    """Скаляр — как в S6 (true/false, строка без кавычек); вложенное — JSON (подмножество YAML)."""
+    if isinstance(v, bool):
+        return str(v).lower()
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, ensure_ascii=False)
+    return v
 
 
 class SettingsStore:

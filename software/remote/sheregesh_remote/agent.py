@@ -20,7 +20,11 @@ video-input.json, результат — в status.video.select.
 Выхода управления нет: эмулятор моделирует только состояние модуля, радиосигналов не формирует.
 Органы управления пульта (S7, ADR-0013): кадры rc (сессия ≥ 1.4) принимает сторож свежести sheregesh.control
 (ControlReceiver, такт 25 мс): IDLE / ACTIVE / FAILSAFE, состояние — сообщением rc-state (10 Гц, в IDLE — 1 Гц, при
-переходе — сразу) и в link-status.json (control). Значения никуда не выводятся: rc-state.output = "none".
+переходе — сразу) и в link-status.json (control). rc-state.output = "none" (формат ADR-0013 не меняется).
+Выход CRSF (S8, ADR-0014): если оператор выбрал бэкенд модуля crsf-pty-lab (эмулятор ELRS TX на псевдотерминале) или
+crsf-uart (JR-модуль на UART3) командой module-cmd configure, сторож команд питает CrsfOutput: модуль не READY — кадров
+каналов нет (none), IDLE/FAILSAFE — нейтраль (neutral), ACTIVE — каналы пульта (live); режим и снимок выхода — в
+status.module (output, crsf). По умолчанию бэкенд lab-emulator — поведение S6/S7, выхода нет.
 От пульта принимает только hello, ack, bye, (сессия ≥ 1.2) video-select, (сессия ≥ 1.3) module-cmd и (сессия ≥ 1.4)
 rc; остальные сообщения не исполняются, а учитываются. Команд ОС, управления устройствами и радиоинтерфейсов нет.
 
@@ -130,7 +134,8 @@ class Agent:
         self.faults = sorted((self._parse_fault(f) for f in faults), key=lambda f: f[0])
         # Внешний модуль (ADR-0012, раздел 7.4): дочерний процесс эмулятора, настройки — ConfigStore remote-1.
         self.module = ModuleService(module_config_dir(args), log=lambda s: log(f"module: {s}"),
-                                    emulator_command=args.module_emulator_command) if module_enabled(args) else None
+                                    emulator_command=args.module_emulator_command,
+                                    crsf_emulator_command=args.crsf_emulator_command) if module_enabled(args) else None
         self.module_sent = None                     # (seq, итог команды) модуля в последнем отправленном status
         self.module_seq_written = None              # … и в последнем записанном файле состояния
         self.last_status = 0.0                      # monotonic последней отправки status
@@ -309,9 +314,10 @@ class Agent:
         await self.send("status", self.status_body())
 
     def module_key(self):
-        """Смена состояния модуля (seq) или итога команды (configure: pending → ok) — повод для внеочередного status."""
+        """Смена состояния модуля (seq), режима выхода CRSF или итога команды (configure: pending → ok) — повод для
+        внеочередного status."""
         cmd = self.module.cmd
-        return self.module.seq, (cmd["req"], cmd["result"]) if cmd else None
+        return self.module.seq, self.module.output, (cmd["req"], cmd["result"]) if cmd else None
 
     # ---------- видео ----------
     def video_start(self):
@@ -521,9 +527,11 @@ class Agent:
 
     # ---------- органы управления ----------
     def control_tick(self, mono):
-        """Такт сторожа и, если пора, rc-state пульту: при переходе — сразу, иначе 10 Гц (IDLE — 1 Гц). Отправка — в
-        отдельной задаче: пульт, не забирающий данные, не задерживает сторож."""
+        """Такт сторожа, режим выхода CRSF и, если пора, rc-state пульту: при переходе — сразу, иначе 10 Гц (IDLE —
+        1 Гц). Отправка — в отдельной задаче: пульт, не забирающий данные, не задерживает сторож."""
         self.control.tick(mono)
+        if self.module is not None:
+            self.module.set_control(self.control.state(), *self.control.outputs())
         if self.writer is None or self.hello_writer is not self.writer \
                 or "rc-state" not in TYPES.get(self.session or "", ()) or self.now() < self.silent_until:
             return                                  # нет сеанса, его hello ещё не принят, сессия < 1.4 или silence
@@ -770,6 +778,7 @@ def main(argv=None):
                     help="настройки модуля (ConfigStore, схема remote-1); по умолчанию remote-config/ рядом с "
                          "--link-config, без него — только в памяти")
     ap.add_argument("--module-emulator-command", nargs="+", default=None, help=argparse.SUPPRESS)  # испытания
+    ap.add_argument("--crsf-emulator-command", nargs="+", default=None, help=argparse.SUPPRESS)    # … ELRS TX
     ap.add_argument("--rc-timeout-ms", type=int, default=500,
                     help="сторож команд органов управления: нет кадра rc дольше N мс — FAILSAFE (50…10000, ADR-0013)")
     args = ap.parse_args(argv)

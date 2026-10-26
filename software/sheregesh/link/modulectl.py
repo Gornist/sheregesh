@@ -5,8 +5,10 @@
   python3 -m sheregesh.link.modulectl status
   python3 -m sheregesh.link.modulectl reinit | reset [--expect READY [--expect-timeout 15]]
   python3 -m sheregesh.link.modulectl lab detach | attach | iface-error | hang | heal | slow-init | crash
+                                          | silent | garbage | crc
                                           | emu-unavailable | emu-available
-  python3 -m sheregesh.link.modulectl configure enabled=false [auto_init=true auto_recover=true profile=ID]
+  python3 -m sheregesh.link.modulectl configure enabled=false [auto_init=true auto_recover=true profile=ID
+                                          backend=lab-emulator|crsf-pty-lab|crsf-uart]
 
 Как videoselect: по умолчанию запрос передаётся работающему пульту по локальному каналу (unix-сокет пульта,
 {"cmd": "module", …}); пульт исполняет его слотами экрана «Модуль» с подтверждением. Запускать от пользователя

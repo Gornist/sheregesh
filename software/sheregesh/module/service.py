@@ -6,6 +6,13 @@ SHRG-LAB (module-cmd), тело status.module и сводка для link-status
 Исключения наружу не выходят: внутренняя ошибка пишется в журнал, модуль переходит в FAULT, агент, heartbeat и
 сторож systemd не затронуты (раздел 7.3). Сохранение настроек (fsync на microSD) — в своём исполнителе, цикл агента
 не ждёт: команда configure сразу получает итог pending, окончательный — на одном из следующих тактов.
+
+Режим выхода CRSF (ADR-0014, раздел 2) решается здесь, по состоянию модуля и сторожа команд (set_control):
+  none     бэкенд не CRSF или модуль не READY — кадров каналов нет;
+  neutral  модуль READY, ControlReceiver IDLE или FAILSAFE — каналы failsafe_ch из настроек, без взведения;
+  live     модуль READY, ControlReceiver ACTIVE — каналы пульта, взведение.
+Поток CrsfOutput читает итог через output_source() — одна ссылка на кортеж, без блокировок. Переходы — в журнал
+(«crsf: neutral -> live»).
 """
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -15,16 +22,17 @@ from . import wire
 from .backend import check_backend, make_backend
 from .manager import ModuleManager
 from .profiles import DEFAULT_PROFILE, REGISTRY, get_profile
-from .settings import ModuleSettings, SettingsStore
-from .states import Timings
+from .settings import NEUTRAL, ModuleSettings, SettingsStore
+from .states import State, Timings
 
 
 class ModuleService:
     def __init__(self, config_dir: Path | None, *, clock=time.monotonic, log, timings=Timings(),
-                 emulator_command=None, backend_factory=None, wall=time.time):
+                 emulator_command=None, backend_factory=None, wall=time.time, crsf_emulator_command=None):
         self.config_dir = config_dir
         self.clock, self.log, self.timings = clock, log, timings
         self.emulator_command = emulator_command
+        self.crsf_emulator_command = crsf_emulator_command
         self.backend_factory = backend_factory or self._make_backend
         self.store = SettingsStore(config_dir, log=log, clock=wall)
         self.settings = ModuleSettings()
@@ -35,10 +43,46 @@ class ModuleService:
         self._pending = None               # (Future, req, ModuleSettings, сеанс) — идущий configure
         self._session = 0
         self._last_internal = None
+        self.output = wire.OUTPUT          # режим выхода: none | neutral | live
+        self._control = ("IDLE", NEUTRAL, 0)            # состояние ControlReceiver, каналы, кнопки
+        self._out = (wire.OUTPUT, NEUTRAL, 0)           # для потока CrsfOutput: (режим, ch[8], btn)
 
     def _make_backend(self, s):
         return make_backend(s, get_profile(s.profile), clock=self.clock, log=self.log, timings=self.timings,
-                            emulator_command=self.emulator_command)
+                            emulator_command=self.emulator_command, source=self.output_source,
+                            crsf_emulator_command=self.crsf_emulator_command)
+
+    # ---------- выход CRSF ----------
+    def output_source(self):
+        """source() для CrsfOutput (ADR-0014, 3.1): (mode, ch[8], btn). Вызывается из потока выхода."""
+        return self._out
+
+    def set_control(self, state, ch, btn) -> None:
+        """Состояние сторожа команд (такт агента, 25 мс): режим выхода пересчитывается сразу."""
+        try:
+            self._control = (state, tuple(ch), int(btn))
+            self._update_output()
+        except Exception as e:  # noqa: BLE001
+            self._internal(e)
+
+    def _update_output(self):
+        m = self.manager
+        crsf = m is not None and hasattr(m.backend, "crsf_snapshot")
+        st, ch, btn = self._control
+        if not crsf or m.state != State.READY:
+            out = (wire.OUTPUT, NEUTRAL, 0)
+        elif st == "ACTIVE":
+            out = ("live", ch, btn)
+        else:
+            out = ("neutral", tuple(self.settings.failsafe_ch), 0)
+        self._out = out
+        if out[0] != self.output:
+            why = f"module {m.state}" if m is not None and m.state is not None else "no module"
+            self.log(f"crsf: {self.output} -> {out[0]} ({why}, control {st}"
+                     f"{', backend ' + self.settings.backend if not crsf else ''})")
+            self.output = out[0]
+        if m is not None:
+            m.output = self.output
 
     def validate(self, s: ModuleSettings) -> str | None:
         """Проверка настроек без запуска процесса: профиль из реестра, вид бэкенда (раздел 8)."""
@@ -73,6 +117,7 @@ class ModuleService:
             self._finish_configure()
             if self.manager is not None:
                 self.manager.tick()
+            self._update_output()
         except Exception as e:  # noqa: BLE001 — исключение подсистемы не останавливает агента
             self._internal(e)
 
@@ -195,11 +240,17 @@ class ModuleService:
         if snap is None:
             return {"state": "FAULT", "seq": self.seq}
         b, err = snap["backend"], snap["error"]
-        return {"state": snap["state"], "seq": snap["seq"], "since_s": snap["since_s"], "profile": snap["profile"]["id"],
-                "backend_state": b["state"], "pid": b["pid"], "restarts": b["restarts"],
-                "error_code": err["code"] if err else "", "error_active": bool(err and err["active"]),
-                "settings_revision": self.settings_info.get("revision", ""),
-                "settings_source": self.settings_info.get("source", "")}
+        out = {"state": snap["state"], "seq": snap["seq"], "since_s": snap["since_s"], "profile": snap["profile"]["id"],
+               "backend": self.settings.backend, "backend_state": b["state"], "pid": b["pid"],
+               "restarts": b["restarts"],
+               "error_code": err["code"] if err else "", "error_active": bool(err and err["active"]),
+               "settings_revision": self.settings_info.get("revision", ""),
+               "settings_source": self.settings_info.get("source", ""), "output": snap["output"]}
+        c = snap.get("crsf")
+        if isinstance(c, dict):
+            out["crsf"] = {k: c.get(k) for k in ("mode", "port", "period_us", "synced", "frames_sent", "jitter_us_p99",
+                                                 "crc_errors", "last_rx_ms")}
+        return out
 
 
 def _explain(op, res):

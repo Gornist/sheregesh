@@ -21,6 +21,8 @@ id проверяется по списку источников блока (sta
   {"cmd": "module", "op": "reinit"|"reset", "wait": 15}              → {"result": код, "detail": текст, "module": M}
   {"cmd": "module", "op": "lab", "args": {"scenario": "detach"}, "wait": 15}
   {"cmd": "module", "op": "configure", "args": {"enabled": false}, "wait": 30}
+  {"cmd": "module", "op": "configure", "args": {"backend": "crsf-pty-lab"}, "wait": 30}   (S8, ADR-0014: lab-emulator |
+                                                                       crsf-pty-lab | crsf-uart — ModuleView.setBackend)
 M = ModuleView.snapshot(); result: ok | коды блока (disabled, forbidden, not-running, invalid, not-saved, error, …) |
 no-link | unsupported | timeout | busy | bad-request | failed.
 
@@ -43,7 +45,7 @@ from PySide6.QtCore import QObject, Qt, Signal, Slot
 
 from sheregesh.link import videoselect
 
-from .module import CONFIGURE_KEYS
+from .module import BACKENDS, CONFIGURE_KEYS
 
 MAX_REQUEST = 4096
 WAIT_MAX_S = 60.0
@@ -210,8 +212,10 @@ class ControlServer(QObject):
         if op == "lab" and (set(args) != {"scenario"} or not isinstance(args["scenario"], str)):
             return self._module_reply("bad-request", "lab: args {\"scenario\": name}", snap())
         if op == "configure" and (not args or any(k not in CONFIGURE_KEYS or type(v) is not CONFIGURE_KEYS[k]
-                                                  for k, v in args.items())):
-            return self._module_reply("bad-request", "configure: args subset of " + ", ".join(CONFIGURE_KEYS), snap())
+                                                  for k, v in args.items())
+                                  or "backend" in args and args["backend"] not in BACKENDS):
+            return self._module_reply("bad-request", "configure: args subset of " + ", ".join(CONFIGURE_KEYS)
+                                      + "; backend: " + " | ".join(BACKENDS), snap())
         call = {"reinit": lambda: mv.requestReinit(True), "reset": lambda: mv.requestReset(True),
                 "lab": lambda: mv.runLabScenario(args.get("scenario", ""), True),
                 "configure": lambda: mv.configure(args, True)}[op]

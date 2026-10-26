@@ -60,7 +60,15 @@ ModuleManager (ADR-0012) ◄── события backend «crsf»: presence/ini
   не отображаются в S8, передаются только для диагностики); служебная очередь (ping, чтение параметров);
   `snapshot()` → `{mode, period_us, synced, sync_age_ms, frames_sent, jitter_us_p99, crc_errors, collisions,
   link: {rssi, lq, snr, rf_mode, tx_power} | None, device: {name, sw, serial} | None, last_rx_ms}`.
-- `emulator.py` + `python3 -m sheregesh_emulators.elrs_tx` (`software/emulators/sheregesh_emulators/elrs_tx.py`):
+  *Уточнено при реализации (агент K):* `pack_channels` принимает оси −1000…1000 (16 значений), сырые отсчёты —
+  `pack_channels_raw`; `unpack_channels(payload) -> (16 отсчётов, armed | None)`, `axis_to_crsf`/`crsf_to_axis`.
+  `CrsfOutput(port, source, clock, log, wait=None, on_frame=None, status_byte=True, ping_interval_s=0.1)`;
+  `start()/stop()/step()/run(n)/request_ping()/queue(frame)/forget_device()`. В `snapshot()` дополнительно:
+  `offset_us, pings_sent, service_sent, overruns, crc_errors_run, garbage_bytes, rx_frames, write_errors,
+  source_errors, armed, ch` (8 осей последнего кадра). `mode none` — только ping раз в 100 мс; device info
+  забывается после 2 с без ответов модуля (ping возобновляется), link — после 2 с.
+- Эмулятор — `python3 -m sheregesh_emulators.elrs_tx` (`software/emulators/sheregesh_emulators/elrs_tx.py`; ядро
+  `ElrsTxEmulator` и `LoopbackPort` для тестов в одном процессе там же, отдельного `crsf/emulator.py` нет):
   эмулятор ELRS TX на pty — отвечает на ping device info «RM Nomad X-Band (emu)», шлёт 0x3A.0x10 раз в 200 мс
   (период по умолчанию 20 000 мкс = 50 Гц пакетов, параметр), link statistics 0x14 раз в 200 мс; принимает 0x16,
   проверяет CRC и интервалы, хранит последние каналы и взведение; без кадров хоста > 1 с — состояние

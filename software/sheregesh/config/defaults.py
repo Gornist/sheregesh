@@ -13,10 +13,12 @@ def console_defaults():
     return dict(CONSOLE_DEFAULTS)
 
 
-# Удалённый блок (схема remote-1, ADR-0012 раздел 8): внешний модуль — лабораторный эмулятор Nomad.
+# Удалённый блок (схема remote-1, ADR-0012 раздел 8): внешний модуль — лабораторный эмулятор Nomad. Выход CRSF
+# (ADR-0014) — только по выбору оператора (configure backend=crsf-pty-lab | crsf-uart); линия UART3 и нейтраль — здесь.
 REMOTE_DEFAULTS = {
     "module.yaml": "enabled: true\nprofile: radiomaster-nomad\nbackend: lab-emulator\nauto_init: true\n"
-                   "auto_recover: true\n",
+                   "auto_recover: true\nuart: {\"device\": \"auto\", \"baud\": 400000, \"half_duplex\": true}\n"
+                   "failsafe_ch: [0, 0, 0, 0, 0, 0, 0, 0]\n",
 }
 
 

@@ -17,11 +17,19 @@ class ModuleProfile:
     model: str                 # "Nomad"
     name: str                  # "RadioMaster Nomad"
     family: str                # "elrs" — справочно (D6 допускает упоминание)
-    interface: str             # "uart-crsf" — справочно; в S6 не открывается
+    interface: str             # "uart-crsf" — линия бэкенда crsf (ADR-0014); lab-emulator её не открывает
     init_steps: tuple = ("identify", "read-config", "check-version")
     init_timeout_s: float = 5.0
     ping_interval_s: float = 1.0
     response_timeout_s: float = 3.0
+    # CRSF (ADR-0014, 3.2): скорость линии, тишина модуля до FAULT, префикс имени из device info 0x29
+    baud: int = 400000
+    no_response_s: float = 2.0
+    crsf_name: str = ""
+
+    def matches_crsf(self, name: str) -> bool:
+        """Модуль CRSF соответствует профилю: имя из device info начинается с crsf_name (пустой — любой)."""
+        return isinstance(name, str) and name.startswith(self.crsf_name)
 
     def __post_init__(self):
         if not wire.PROFILE_ID.fullmatch(self.id or ""):

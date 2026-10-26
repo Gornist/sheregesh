@@ -1,5 +1,5 @@
 {
-  "$comment": "Схема конфигурации удалённого блока, версия 1 (ADR-0012, раздел 8). Каждый ключ files — отдельный YAML-файл набора. Новые ключи в будущих версиях — необязательные.",
+  "$comment": "Схема конфигурации удалённого блока, версия 1 (ADR-0012, раздел 8; ADR-0014, 3.2). Каждый ключ files — отдельный YAML-файл набора. Новые ключи в будущих версиях — необязательные.",
   "schema_version": 1,
   "device": "remote",
   "files": {
@@ -12,9 +12,24 @@
         "properties": {
           "enabled": {"type": "boolean"},
           "profile": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"},
-          "backend": {"enum": ["lab-emulator"], "$comment": "S6: только лабораторный эмулятор; аппаратного бэкенда нет"},
+          "backend": {"enum": ["lab-emulator", "crsf-pty-lab", "crsf-uart"],
+                      "$comment": "lab-emulator — лабораторный эмулятор состояния (S6, по умолчанию); crsf-pty-lab — выход CRSF на эмулятор ELRS TX через псевдотерминал; crsf-uart — выход CRSF на JR-модуль через UART3 (ADR-0014)"},
           "auto_init": {"type": "boolean"},
-          "auto_recover": {"type": "boolean"}
+          "auto_recover": {"type": "boolean"},
+          "uart": {
+            "type": "object",
+            "additionalProperties": false,
+            "$comment": "Линия JR-отсека для crsf-uart (ADR-0014, 3.1); необязательно, умолчания — в ModuleSettings",
+            "properties": {
+              "device": {"type": "string", "pattern": "^(auto|/dev/[A-Za-z0-9._/-]{1,64})$",
+                         "$comment": "auto — UART3 по дереву устройств (find_uart3), иначе путь /dev/…"},
+              "baud": {"type": "integer", "minimum": 115200, "maximum": 3750000},
+              "half_duplex": {"type": "boolean"}
+            }
+          },
+          "failsafe_ch": {"type": "array", "minItems": 8, "maxItems": 8,
+                          "items": {"type": "integer", "minimum": -1000, "maximum": 1000},
+                          "$comment": "Каналы 1–8 в режиме выхода neutral (IDLE/FAILSAFE), −1000…1000; необязательно, по умолчанию нули (центр 992)"}
         }
       }
     }

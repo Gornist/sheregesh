@@ -275,7 +275,7 @@ def test_state_texts_banner_and_geometry(ui, name, out_dir, report):
     assert mv.support == "ok" and mv.state == module["state"]
     assert text(ui, "moduleStateText") == badge
     assert visible(ui, "moduleLabBanner") and text(ui, "moduleLabBannerText") == "Лабораторный эмулятор, не физический JR-модуль"
-    assert text(ui, "moduleOutputText") == "Выход управления: нет (S6)"
+    assert text(ui, "moduleOutputText") == "Выход: нет"                  # строка выхода S8 (ADR-0014, 3.3)
     assert text(ui, "moduleProfileText") == "RadioMaster Nomad (radiomaster-nomad)"
     assert text(ui, "moduleChangedText").startswith("Изменено: ")
     assert not visible(ui, "moduleSupportText")
@@ -368,7 +368,7 @@ def test_link_return_shows_actual_state_not_stale(ui):
 
 def test_output_unknown_is_shown_as_warning(ui):
     feed(ui, {**READY, "output": "unknown"})
-    assert text(ui, "moduleOutputText") == "Выход управления: неизвестное значение от блока"
+    assert text(ui, "moduleOutputText") == "Выход: неизвестное значение от блока"
 
 
 @pytest.mark.parametrize("code,ru", [("MOD-IFACE-ERROR", "Ошибка интерфейса"), ("MOD-NO-RESPONSE", "Модуль не отвечает"),
@@ -532,7 +532,9 @@ def test_snapshot_format_for_control_channel(ui):
     snap = ui.backend.module.snapshot()
     assert set(snap) >= {"support", "stale", "session", "telemetry", "display"}
     assert snap["session"] == "1.3" and snap["telemetry"]["profile"]["id"] == "radiomaster-nomad"
-    assert snap["display"] == {"stateText": "Готов", "errorText": "", "changedAt": ui.backend.module.changedAt}
+    assert snap["display"] == {"stateText": "Готов", "errorText": "", "changedAt": ui.backend.module.changedAt,
+                               "outputText": "Выход: нет"}
+    assert snap["backend"] == "lab-emulator" and snap["output"] == "none"
 
 
 def test_english_texts(ui):

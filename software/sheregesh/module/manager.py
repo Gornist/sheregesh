@@ -6,7 +6,8 @@
 Не знает ни модели модуля (ModuleProfile), ни способа связи с ним (ModuleBackend). Время — только инъецированные
 часы clock (монотонные секунды; в тестах SimClock), системные часы не читаются. Все методы неблокирующие и
 вызываются из одного потока (цикл агента). Единственная точка переходов — tick() (события бэкенда и таймеры) и
-command()/apply_settings(). Выхода управления нет при любом состоянии: snapshot()["output"] — всегда "none".
+command()/apply_settings(). Режим выхода (ADR-0014) решает ModuleService и кладёт в output: snapshot()["output"] —
+none | neutral | live (lab-emulator — всегда none), у бэкендов CRSF — ещё блок crsf.
 """
 import time
 from collections import deque
@@ -79,6 +80,7 @@ class ModuleManager:
         self._ping_id = 0
         self._next_ping = self._last_pong = None
         self._recover_deadline = None
+        self.output = wire.OUTPUT         # режим выхода (ModuleService, ADR-0014): none | neutral | live
 
     # ---------- публичный API ----------
     def start(self) -> None:
@@ -141,9 +143,11 @@ class ModuleManager:
             return "bad-request"
         b = self.backend
         if b is None:                             # фабрика отказала: канала нет
-            return "not-running" if self.settings.backend == "lab-emulator" else "forbidden"
+            return "not-running" if self.settings.backend in wire.LAB_BACKENDS else "forbidden"
         if not getattr(b, "supports_lab", False):
             return "forbidden"                    # запрет структурный: только лабораторный бэкенд (раздел 6.4)
+        if scenario not in getattr(b, "lab_scenarios", wire.LAB_SCENARIOS_JR):
+            return "bad-request"                  # сценарий другого эмулятора (jrmodule / ELRS TX)
         if scenario in ("emu-unavailable", "emu-available"):
             return "ok" if b.lab_local(scenario) else "error"
         if self.channel != "up":
@@ -151,22 +155,30 @@ class ModuleManager:
         return "ok" if b.send("lab", scenario=scenario) else "not-running"
 
     def apply_settings(self, s) -> None:
-        """Новые настройки после успешного сохранения: enabled и profile меняют состояние, auto_* — поведение."""
+        """Новые настройки после успешного сохранения: enabled, profile и backend (линия uart у crsf-uart) меняют
+        состояние, auto_* — поведение, failsafe_ch — только значения нейтрали (ModuleService)."""
         old, self.settings = self.settings, s
         profile = self.profiles[s.profile]
+        channel = s.backend != old.backend or (s.backend == "crsf-uart" and s.uart != old.uart)
         if not s.enabled:
             if self.state != S.DISABLED:
                 self._disable("settings-disabled")
             self._set_profile(profile)
+            if channel:
+                self._retire_backend()
             return
         if self.state == S.DISABLED:
             self._set_profile(profile)
+            if channel:
+                self._retire_backend()
             self._enable("settings-enabled")
             return
-        if profile.id != self.profile.id:          # другой профиль — перезапуск канала через DISABLED
-            self._disable("settings-profile")
+        if profile.id != self.profile.id or channel:   # другой профиль или бэкенд — перезапуск канала через DISABLED
+            reason = "settings-profile" if profile.id != self.profile.id else "settings-backend"
+            self._disable(reason)
             self._set_profile(profile)
-            self._enable("settings-profile")
+            self._retire_backend()
+            self._enable(reason)
             return
         if not s.auto_recover:
             self._next_attempt = None
@@ -203,9 +215,10 @@ class ModuleManager:
             "diag": {"init_ms": self._init_ms,
                      "pong_age_s": _age(now, self._last_pong) if st == S.READY and self._last_pong is not None else None,
                      "faults": self.faults, "recoveries": self.recoveries, "transitions": self.seq},
-            "output": wire.OUTPUT,
+            "output": self.output if self.output in wire.OUTPUTS else wire.OUTPUT,
             "history": [{"seq": h["seq"], "from": h["from"], "state": h["state"], "reason": h["reason"],
                          "code": h["code"], "ago_s": _age(now, h["t"])} for h in list(self.history)[:wire.HISTORY_MAX]],
+            **({"crsf": self.backend.crsf_snapshot()} if hasattr(self.backend, "crsf_snapshot") else {}),
         }
 
     def internal_error(self, text: str) -> None:
@@ -282,10 +295,12 @@ class ModuleManager:
             if not self.budget.try_spend():
                 self.exhausted = True
                 t = self.timings
-                self.log(f"emulator restart limit reached: {t.restart_limit} in {t.restart_window_s:g} s — "
+                what = "emulator" if self.settings.backend == "lab-emulator" else "channel"
+                last = f"; last: {self.error['text']}" if what == "channel" and self.error else ""
+                self.log(f"{what} restart limit reached: {t.restart_limit} in {t.restart_window_s:g} s — "
                          "automatic restarts stopped")
                 self._fault("restart-limit", EMU_UNAVAILABLE,
-                            f"emulator restart limit reached: {t.restart_limit} in {t.restart_window_s:g} s")
+                            f"{what} restart limit reached: {t.restart_limit} in {t.restart_window_s:g} s{last}")
                 return
             self.log(f"emulator restart {self.budget.used()}/{self.timings.restart_limit} "
                      f"in {self.timings.restart_window_s:g} s")
@@ -302,7 +317,11 @@ class ModuleManager:
             self.backend.start()
         except (ModuleError, OSError, KeyError) as e:
             self.channel = "down"
-            self._fault(reason, EMU_START_FAILED, f"backend not started: {e}")
+            code = getattr(e, "code", None)
+            if code in ERROR_CODES:               # причина известна бэкенду (crsf-uart: UART не найден)
+                self._fault(reason, code, str(e))
+            else:
+                self._fault(reason, EMU_START_FAILED, f"backend not started: {e}")
 
     def _begin_init(self, reason):
         if self._transition(S.INITIALIZING, reason):
@@ -356,7 +375,10 @@ class ModuleManager:
         if profile.id == self.profile.id:
             return
         self.profile = profile
-        if self.backend is not None:              # бэкенд привязан к профилю: следующий запуск — новый
+        self._retire_backend()                    # бэкенд привязан к профилю: следующий запуск — новый
+
+    def _retire_backend(self):
+        if self.backend is not None:
             self.backend.stop()
             self._retired.append((self.backend, self.clock() + 2 * self.timings.stop_timeout_s + 1.0))
             self.backend = None

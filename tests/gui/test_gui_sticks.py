@@ -14,6 +14,7 @@ screenshots-offscreen — туда; иначе во временный ката�
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QObject, QPoint, QPointF, Qt
@@ -94,12 +95,12 @@ def rc_state(state, reason, rx_at, ch=None, btn=0, **kw):
             "rx_at": rx_at, "rx_age_s": 0.0, "latency_ms": 18.4, **kw}
 
 
-OBJECT_NAMES = ["sticksPage", "tabSticks", "sticksNoOutputBanner", "sticksNoOutputText", "sticksRemoteStateBadge",
+OBJECT_NAMES = ["sticksPage", "tabSticks", "sticksOutputBanner", "sticksOutputText", "sticksRemoteStateBadge",
                 "sticksRemoteStateText", "sticksRemoteReasonText", "sticksEnableSwitch", "sticksNoticeText",
                 "sticksChannelsTile", "sticksDeviceTile", "sticksDeviceText", "sticksDeviceDetail", "sticksButtonsTile",
                 "sticksLinkStats", "sticksRateText", "sticksLatencyText", "sticksGapsText", "sticksFailsafesText",
                 "sticksConfirmDialog"]
-BLOCKS = ["sticksNoOutputBanner", "sticksRemoteStateBadge", "sticksChannelsTile", "sticksDeviceTile",
+BLOCKS = ["sticksOutputBanner", "sticksRemoteStateBadge", "sticksChannelsTile", "sticksDeviceTile",
           "sticksButtonsTile"]
 
 
@@ -136,6 +137,8 @@ def feed(u, status=None, session="1.4", rc=None, steps=0):
         b.peer.rc_state = rc
     for _ in range(steps):                       # такты передачи 50 Гц
         b.sticks.sender.step(b.sticks.sender._clock())
+    # status блока без status.module (как S7): плашка выхода «Управления» — по ModuleView (S8, ADR-0014, 3.3)
+    b._update_module(SimpleNamespace(peer=SimpleNamespace(telemetry={"state": "normal"}, session=session)))
     b.sticks.update_link(st["peerLink"], session if st["peerLink"] == "CONNECTED" else None)
     b.statusChanged.emit()
     pump(60)
@@ -262,7 +265,8 @@ def test_no_device(ui, out_dir, report):
     assert text(ui, "sticksDeviceDetail") == "Подключите аппаратуру по USB в режиме USB Joystick"
     assert text(ui, "sticksRemoteStateText") == "Нет команд"
     assert text(ui, "sticksRemoteReasonText") == "Команд не было с запуска блока"
-    assert text(ui, "sticksNoOutputText") == "Радиовыхода нет (S7): команды доходят до блока, модулю не передаются"
+    # блок без status.module (как в S7) — выхода нет; плашка по фактическому выходу — test_gui_crsf (S8)
+    assert text(ui, "sticksOutputText") == "Радиовыхода нет: команды доходят до блока, модулю не передаются"
     assert not find(ui, "sticksEnableSwitch").property("enabled")
     assert text(ui, "sticksAxisValue_0") == "—" and text(ui, "sticksLatencyText") == "Задержка: —"
     assert sv.setEnabled(True, True) is False and sv.result == "no-device"
@@ -453,7 +457,7 @@ def test_english_texts(ui):
     ui.backend.src.plug()
     feed(ui, rc=rc_state("FAILSAFE", "timeout", 1.0))
     assert text(ui, "sticksRemoteStateText") == "FAILSAFE: no fresh commands"
-    assert text(ui, "sticksNoOutputText") == "No radio output (S7): commands reach the remote unit but are not passed to the module"
+    assert text(ui, "sticksOutputText") == "No radio output: commands reach the remote unit but are not passed to the module"
     assert text(ui, "tabSticks") == "Control" and ui.backend.sticks.snapshot()["display"]["stateText"] == "FAILSAFE: no fresh commands"
     pump(100)
     assert page_problems(ui) == []

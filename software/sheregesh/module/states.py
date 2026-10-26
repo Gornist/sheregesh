@@ -36,10 +36,11 @@ ALLOWED = {
     S.DISABLED: frozenset({S.DISCONNECTED}),
 }
 
-# Причины переходов (reason): таблица 4.2; settings-profile — смена профиля перезапуском через DISABLED;
+# Причины переходов (reason): таблица 4.2; settings-profile / settings-backend — смена профиля или бэкенда
+# (ADR-0014) перезапуском через DISABLED;
 # internal-error — исключение внутри подсистемы (раздел 7.3).
-REASONS = ("start", "settings-enabled", "settings-disabled", "settings-profile", "present", "absent", "auto-init",
-           "cmd-reinit", "cmd-reset", "init-ok", "init-error", "profile-mismatch", "init-timeout", "iface-fault",
+REASONS = ("start", "settings-enabled", "settings-disabled", "settings-profile", "settings-backend", "present",
+           "absent", "auto-init", "cmd-reinit", "cmd-reset", "init-ok", "init-error", "profile-mismatch", "init-timeout", "iface-fault",
            "no-response", "channel-down", "start-failed", "recover-attempt", "recover-timeout", "restart-limit",
            "internal-error")
 
