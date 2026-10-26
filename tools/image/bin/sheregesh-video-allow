@@ -1,0 +1,75 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Адрес второй платы сеанса для межсетевого экрана видео (ADR-0016 §3.3, контракт §8). Запускается от root юнитом
+sheregesh-video-allow@<экземпляр>.service; sheregesh-ui может только «start» этого юнита (polkit).
+
+  sheregesh-video-allow none          — очистить оба набора (peer4, peer6)
+  sheregesh-video-allow 192.168.1.92  — IPv4 → peer4, peer6 очищается
+  sheregesh-video-allow fe80::1       — IPv6 → peer6, peer4 очищается
+
+Принимается строго один адрес: не сеть, без маски, зоны (%), пробелов и лишних символов; не unspecified и не
+multicast. Всё остальное — отказ (код 2) без вызова nft. Замена наборов — одна транзакция `nft -f -`
+(flush set + add element): между очисткой и добавлением нет окна, в котором пропускается чужое или пусто.
+Коды: 0 — применено, 1 — nft отказал или не найден, 2 — недопустимый экземпляр. Команда nft — списком, без shell."""
+import ipaddress
+import re
+import subprocess
+import sys
+
+NFT = "/usr/sbin/nft"
+TABLE = "inet sheregesh_video"
+MAX_LEN = 45                                    # длиннейший текст IPv6 с вложенным IPv4
+CHARS = re.compile(r"[0-9a-fA-F:.]+")           # без %, пробелов, '/', юникода, управляющих символов
+
+
+def parse(instance):
+    """'none' → None; адрес → ipaddress-объект; иначе ValueError. Только строка из разрешённых символов."""
+    if not isinstance(instance, str) or not 0 < len(instance) <= MAX_LEN:
+        raise ValueError("недопустимая длина экземпляра")
+    if instance == "none":
+        return None
+    if not CHARS.fullmatch(instance):
+        raise ValueError("недопустимые символы в адресе")
+    addr = ipaddress.ip_address(instance)        # ValueError на сети, масках, лишних группах, ведущих нулях IPv4
+    if addr.is_unspecified or addr.is_multicast:
+        raise ValueError("адрес не может быть unspecified или multicast")
+    return addr
+
+
+def transaction(addr):
+    """Текст транзакции nft. addr — None (очистить) или адрес из parse()."""
+    lines = [f"flush set {TABLE} peer4", f"flush set {TABLE} peer6"]
+    if addr is not None:
+        lines.append(f"add element {TABLE} {'peer4' if addr.version == 4 else 'peer6'} {{ {addr.compressed} }}")
+    return "\n".join(lines) + "\n"
+
+
+def run_nft(text):
+    return subprocess.run([NFT, "-f", "-"], input=text, capture_output=True, text=True, timeout=10, check=False)
+
+
+def main(argv=None, runner=run_nft):
+    argv = sys.argv[1:] if argv is None else argv
+    if len(argv) != 1:
+        print("sheregesh-video-allow: нужен один аргумент: none или адрес", file=sys.stderr)
+        return 2
+    try:
+        addr = parse(argv[0])
+    except ValueError as e:
+        print(f"sheregesh-video-allow: отказ: {e}", file=sys.stderr)
+        return 2
+    try:
+        r = runner(transaction(addr))
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"sheregesh-video-allow: nft не выполнен: {type(e).__name__}", file=sys.stderr)
+        return 1
+    if r.returncode != 0:
+        print(f"sheregesh-video-allow: nft код {r.returncode}: {(r.stderr or '').strip()[:200]}", file=sys.stderr)
+        return 1
+    print("sheregesh-video-allow: наборы очищены" if addr is None else f"sheregesh-video-allow: разрешён {addr.compressed}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

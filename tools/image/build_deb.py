@@ -42,6 +42,7 @@ DEPENDS = [
     "qml6-module-qtquick-shapes",  # значки интерфейса Minimal (MiniIcon.qml)
     "util-linux",
     "cage", "seatd", "openssl",
+    "nftables",   # ADR-0016 §3.3: таблица inet sheregesh_video и sheregesh-video-allow (python3-gi и gir уже выше)
 ]
 # Службы приложения запускаются через launcher (S3.1-DEPLOY): проверенный выпуск DEV deploy из
 # /var/lib/sheregesh-deploy или заводской код /usr/lib/sheregesh. Системные команды — всегда из /usr.
@@ -59,7 +60,17 @@ WRAPPERS = {   # команда → модуль (-m) или скрипт из /
     "usr/bin/sheregesh-deployd": "sheregesh.deploy.installer",    # установщик выпусков, root (S3.1-DEPLOY)
     "usr/bin/sheregesh-ota-agent": "sheregesh.update.ota",        # агент обновления A/B, root (S3.1-DEPLOY)
     "usr/bin/sheregesh-ota-client": "sheregesh.update.ota_client",  # клиент агента для sheregesh-ui
+    # ADR-0016: видеослужбы (модули sheregesh.videosvc.tx/rx — отдельный трек; launcher выпусков DEV deploy знает
+    # только sheregesh_console/sheregesh_remote, поэтому службы видео стартуют из /usr, как системные команды)
+    "usr/bin/sheregesh-video-tx": "sheregesh.videosvc.tx",
+    "usr/bin/sheregesh-video-rx": "sheregesh.videosvc.rx",
 }
+# ADR-0016: помощник межсетевого экрана видео (root, юнит sheregesh-video-allow@) и таблицы nftables по ролям.
+# Помощник лежит в /usr/lib/sheregesh, команда в /usr/bin — обёртка python3 -I, как у прочих системных команд.
+VIDEO_ALLOW_SRC = Path(__file__).resolve().parent / "bin" / "sheregesh-video-allow"
+VIDEO_ALLOW_DST = f"{PREFIX}/tools/image/bin/sheregesh-video-allow"
+NFT_DIR = Path(__file__).resolve().parent / "nft"
+NFT_DST = "usr/share/sheregesh/nft"
 UNITS = Path(__file__).resolve().parent / "units"
 POSTINST = """#!/bin/sh
 set -e
@@ -139,6 +150,18 @@ def build_tree(stage: Path):
         f.write_text(f"#!/bin/sh\n# {PKG}: запуск {module} — выпуск DEV deploy или /{PREFIX} (launcher, S3.1-DEPLOY)\n"
                      f"exec /usr/bin/python3 -I {LAUNCHER} {module} \"$@\"\n")
         f.chmod(0o755)
+    helper = stage / VIDEO_ALLOW_DST
+    helper.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(VIDEO_ALLOW_SRC, helper)
+    helper.chmod(0o755)
+    wrap = stage / "usr/bin/sheregesh-video-allow"
+    wrap.write_text(f"#!/bin/sh\n# {PKG}: запуск sheregesh-video-allow из /{PREFIX} (root, юнит sheregesh-video-allow@)\n"
+                    f"exec /usr/bin/python3 -I /{VIDEO_ALLOW_DST} \"$@\"\n")
+    wrap.chmod(0o755)
+    for nft in sorted(NFT_DIR.glob("*.nft")):
+        dst = stage / NFT_DST / nft.name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(nft, dst)
     info = stage / "usr/share/sheregesh/build.json"
     info.parent.mkdir(parents=True, exist_ok=True)
     info.write_text(json.dumps(build_info(), ensure_ascii=False, indent=1) + "\n")

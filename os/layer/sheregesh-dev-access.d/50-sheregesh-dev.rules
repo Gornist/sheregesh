@@ -15,7 +15,8 @@ polkit.addRule(function(action, subject) {
         // video-input.json); set-property, clean, freeze и прочие — нет (set-property снял бы песочницу и IPAddressDeny).
         var run = ["start", "stop", "restart", "try-restart", "reload-or-restart", "kill", "reset-failed"];
         if ((unit == "sheregesh-console.service" || unit == "sheregesh-remote-emu.service" ||
-             unit == "sheregesh-remote-net.service" || unit == "sheregesh-health.service") && run.indexOf(verb) >= 0) {
+             unit == "sheregesh-remote-net.service" || unit == "sheregesh-health.service" ||
+             unit == "sheregesh-video-tx.service" || unit == "sheregesh-video-rx.service") && run.indexOf(verb) >= 0) {
             return polkit.Result.YES;
         }
         if ((unit == "sheregesh-deploy@install.service" || unit == "sheregesh-deploy@rollback.service" ||

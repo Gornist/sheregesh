@@ -21,6 +21,8 @@
 mmdebstrap:
   packages:
     - ca-certificates
+    # ADR-0016: правило polkit видео (запуск sheregesh-video-allow@) действует во всех образах, не только в dev.
+    - polkitd
     # uid DynamicUser (эмулятор) разрешается через NSS-модуль systemd; без него GLib и GStreamer
     # предупреждают «unknown user id» (найдено в S2-BOOT на pi2).
     - libnss-systemd
@@ -41,9 +43,14 @@ mmdebstrap:
       # потоком; на пульте выводы свободны, оверлей одинаков для обеих плат (единый образ).
       printf '# Sheregesh (ADR-0014): UART3 on GPIO4/5 for the CRSF line to the JR module\ndtoverlay=uart3\n' \
         >> $1/boot/firmware/config.txt
+    - |-
+      set -eu
+      # ADR-0016 §3.3: sheregesh-ui может только «start» sheregesh-video-allow@<адрес|none>.service (правило обычного образа).
+      install -D -m 0644 "$IGconf_sheregesh_assetdir/52-sheregesh-video-allow.rules" \
+        $1/etc/polkit-1/rules.d/52-sheregesh-video-allow.rules
     # sheregesh-ota.socket и sheregesh-ota-boot (S3.1-DEPLOY) включены всегда, но работают только при открытом
     # ключе подписи владельца (/etc/sheregesh/deploy/allowed_signers — только dev-образ).
-    - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console sheregesh-remote-net sheregesh-health.timer sheregesh-ota.socket sheregesh-ota-boot sheregesh-var-seed
+    - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console sheregesh-remote-net sheregesh-health.timer sheregesh-ota.socket sheregesh-ota-boot sheregesh-var-seed sheregesh-video-nft sheregesh-video-nft-remote sheregesh-video-rx sheregesh-video-tx
     - |-
       set -eu
       # Найдено при первой загрузке на Pi 4 (S2-BOOT), корень только для чтения:

@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Таблица nftables видео блока (ADR-0016 §3.3, контракт §8): UDP-порт 7445 (RTCP) — только с адреса пульта сеанса.
+# Роль remote. Наборы при загрузке пусты. Ошибка загрузки — юнит failed, и sheregesh-video-tx (Requires=) не стартует.
+# After=nftables.service: штатный /etc/nftables.conf начинается с «flush ruleset» и стёр бы таблицу.
+[Unit]
+Description=Sheregesh: video firewall table (remote, UDP 7445 peer only)
+Before=network-pre.target sheregesh-video-tx.service
+After=local-fs.target nftables.service
+ConditionPathExists=/home/sheregesh-ui/.config/sheregesh/remote.role
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+ExecStart=/usr/sbin/nft -f /usr/share/sheregesh/nft/sheregesh-video-remote.nft
+ExecStop=-/usr/sbin/nft delete table inet sheregesh_video
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_NETLINK AF_UNIX
+IPAddressDeny=any
+
+[Install]
+WantedBy=multi-user.target

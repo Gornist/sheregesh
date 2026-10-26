@@ -296,6 +296,51 @@ def deploy_checks(rep, root, data, dev, groups):
                 not root.exists(SIGNERS))
 
 
+VIDEO_UNITS = ("sheregesh-video-tx.service", "sheregesh-video-rx.service", "sheregesh-video-nft.service",
+               "sheregesh-video-nft-remote.service", "sheregesh-video-allow@.service")
+VIDEO_NFT = ("sheregesh-video-console.nft", "sheregesh-video-remote.nft")
+VIDEO_POLKIT = "/etc/polkit-1/rules.d/52-sheregesh-video-allow.rules"
+
+
+def video_checks(rep, root, packages_tsv):
+    """ADR-0016: видеослужбы, таблицы nftables, помощник адреса, правило polkit обычного образа, пакет nftables."""
+    units = {u: root.cat(f"/usr/lib/systemd/system/{u}") for u in VIDEO_UNITS}
+    tx, rx = units["sheregesh-video-tx.service"], units["sheregesh-video-rx.service"]
+    common = ("Type=notify", "NotifyAccess=main", "User=sheregesh-ui", "WatchdogSec=15", "LimitCORE=0",
+              "RuntimeDirectory=sheregesh-video", "RuntimeDirectoryMode=0700", "NoNewPrivileges=yes",
+              "ProtectSystem=strict", "IPAddressDeny=any", "StartLimitBurst=")
+    rep.add("video.units", "юниты видео: tx, rx, таблицы nftables (пульт и блок), allow@ есть",
+            all(units.values()), ", ".join(u for u, x in units.items() if not x) or "все на месте")
+    rep.add("video.hardening", "службы видео: notify, watchdog, LimitCORE=0, каталог 0700, песочница",
+            all(k in tx and k in rx for k in common) and "ExecStart=/usr/bin/sheregesh-video-tx" in tx
+            and "ExecStart=/usr/bin/sheregesh-video-rx" in rx)
+    rep.add("video.rx_nft", "rx не стартует без таблицы nftables (Requires= и After= юнита загрузки)",
+            "Requires=sheregesh-video-nft.service" in rx and "After=" in rx and "sheregesh-video-nft.service" in
+            next((x for x in rx.splitlines() if x.startswith("After=")), ""))
+    rep.add("video.tx_nft", "tx не стартует без таблицы блока (Requires= и After=)",
+            "Requires=sheregesh-video-nft-remote.service" in tx and "sheregesh-video-nft-remote.service" in
+            next((x for x in tx.splitlines() if x.startswith("After=")), ""))
+    nft = {n: "\n".join(x for x in root.cat(f"/usr/share/sheregesh/nft/{n}").splitlines() if not x.startswith("#"))
+           for n in VIDEO_NFT}                                  # без комментариев: в них «ct state» упоминается
+    rep.add("video.nft", "файлы nft: таблица inet sheregesh_video, hook input priority -10, drop со счётчиком",
+            all("table inet sheregesh_video {" in x and "priority -10" in x and "counter drop" in x and "ct state" not in x
+                for x in nft.values()), ", ".join(n for n, x in nft.items() if not x) or "оба на месте")
+    allow = root.cat("/usr/bin/sheregesh-video-allow")
+    rep.add("video.allow", "помощник sheregesh-video-allow и его обёртка (python3 -I) есть",
+            "python3 -I " in allow and root.exists("/usr/lib/sheregesh/tools/image/bin/sheregesh-video-allow"))
+    rules = root.cat(VIDEO_POLKIT)
+    rep.add("video.polkit", "polkit обычного образа: sheregesh-ui — только «start» sheregesh-video-allow@<адрес|none>",
+            'subject.user != "sheregesh-ui"' in rules and 'action.lookup("verb") != "start"' in rules
+            and "sheregesh-video-allow@" in rules and rules.count("polkit.Result.YES") >= 2
+            and "sheregesh-video-tx" not in rules and "stop" not in rules and "restart" not in rules,
+            VIDEO_POLKIT)
+    wants = " ".join(root.ls("/etc/systemd/system/multi-user.target.wants"))
+    rep.add("video.enabled", "включены службы видео и таблицы (запуск решают ConditionPathExists роли)",
+            all(u in wants for u in VIDEO_UNITS[:4]))
+    listed = {x.split("\t")[0].split(":")[0] for x in (packages_tsv or "").splitlines() if x}
+    rep.add("video.nftables", "пакет nftables в манифесте пакетов образа", "nftables" in listed)
+
+
 def verify(img, variant, out):
     rep = Report()
     dev = "-dev-" in variant
@@ -413,6 +458,7 @@ def verify(img, variant, out):
             deploy_checks(rep, root, data, dev, groups)
             labvideo_checks(rep, root, dev)
             packages_tsv = root.cat("/usr/share/sheregesh/image-packages.tsv")
+            video_checks(rep, root, packages_tsv)
             status = data.cat("/slots/system_a/var/lib/dpkg/status")
             # Установлен — если последнее слово Status «installed» (в т. ч. «purge ok installed» после неудачного purge).
             installed = sorted(b.split("\n")[0][9:] for b in status.split("\n\n") if b.startswith("Package: ") and

@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Видеослужба блока (ADR-0016 §3.1, контракт видеослужбы): владеет источником, кодером, RTP/SRTP и отправкой на пульт.
+# Агент блока — клиент по сокету /run/sheregesh-video/ctl.sock; ключ SRTP получает от агента и в журнал не пишет.
+# Роль remote (как sheregesh-remote-net): без роли, ключа, сертификата и CA не запускается. Сеть — только частные и
+# link-local диапазоны. Таблица nftables (порт 7445 — только с адреса пульта сеанса) загружается раньше; без неё
+# служба не стартует.
+[Unit]
+Description=Sheregesh: video service, remote unit (SRTP sender)
+After=network.target local-fs.target sheregesh-video-nft-remote.service
+Requires=sheregesh-video-nft-remote.service
+RequiresMountsFor=/home/sheregesh-ui
+ConditionPathExists=/home/sheregesh-ui/.config/sheregesh/remote.role
+ConditionPathExists=/home/sheregesh-ui/.config/sheregesh/link.json
+ConditionPathExists=/home/sheregesh-ui/.local/share/sheregesh/link/device.key
+ConditionPathExists=/home/sheregesh-ui/.local/share/sheregesh/link/device.crt
+ConditionPathExists=/home/sheregesh-ui/.local/share/sheregesh/link/ca.crt
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=sheregesh-ui
+ExecStart=/usr/bin/sheregesh-video-tx
+ExecStopPost=/bin/sh -c 'echo "sheregesh-video-tx stopped: result=$SERVICE_RESULT code=$EXIT_CODE status=$EXIT_STATUS"'
+RuntimeDirectory=sheregesh-video
+RuntimeDirectoryMode=0700
+TimeoutStartSec=60
+WatchdogSec=15
+Restart=on-failure
+RestartSec=3
+LimitCORE=0
+IPAddressDeny=any
+IPAddressAllow=localhost 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 fe80::/10 fc00::/7
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+WantedBy=multi-user.target

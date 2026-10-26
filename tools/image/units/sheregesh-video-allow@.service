@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Адрес второй платы сеанса для таблицы nftables видео (ADR-0016 §3.3, контракт §8). Экземпляр: none (очистить наборы)
+# или ровно один IPv4/IPv6; всё остальное помощник отвергает (код 2) до вызова nft. polkit разрешает sheregesh-ui только
+# «start» этого шаблона с допустимым экземпляром. Замена наборов — одна транзакция nft. Сети нет, нужен только netlink.
+[Unit]
+Description=Sheregesh: video firewall peer %i
+After=sheregesh-video-nft.service sheregesh-video-nft-remote.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/sheregesh-video-allow %i
+TimeoutStartSec=20
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+RestrictAddressFamilies=AF_NETLINK AF_UNIX
+IPAddressDeny=any
+Environment=PYTHONDONTWRITEBYTECODE=1

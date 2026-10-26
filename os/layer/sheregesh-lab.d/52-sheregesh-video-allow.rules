@@ -1,0 +1,26 @@
+// SPDX-FileCopyrightText: 2026 Sheregesh contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Все образы (ADR-0016 §3.3, контракт видеослужбы §8): пользователь sheregesh-ui может только ЗАПУСТИТЬ (verb "start")
+// юнит sheregesh-video-allow@<экземпляр>.service, где экземпляр — ровно один IPv4, один IPv6 или "none". Остановка,
+// перезапуск, set-property и любые другие юниты и глаголы этим правилом не разрешаются. Помощник ещё раз проверяет имя
+// строго (модуль ipaddress), здесь — первая, более грубая стена по шаблону.
+polkit.addRule(function(action, subject) {
+    if (subject.user != "sheregesh-ui") { return polkit.Result.NOT_HANDLED; }
+    if (action.id != "org.freedesktop.systemd1.manage-units") { return polkit.Result.NOT_HANDLED; }
+    if (action.lookup("verb") != "start") { return polkit.Result.NOT_HANDLED; }
+    var unit = String(action.lookup("unit"));
+    var m = /^sheregesh-video-allow@([0-9a-fA-F:.]{1,45}|none)\.service$/.exec(unit);
+    if (!m) { return polkit.Result.NOT_HANDLED; }
+    var inst = m[1];
+    if (inst == "none") { return polkit.Result.YES; }
+    var v4 = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$/;
+    // IPv6: только шестнадцатеричные группы, ':' и (в хвосте) вложенный IPv4; не больше одного "::", не менее двух ':'.
+    var v6 = /^[0-9a-fA-F:.]+$/;
+    if (v4.test(inst)) { return polkit.Result.YES; }
+    if (v6.test(inst) && inst.indexOf(":") >= 0 && (inst.match(/:/g) || []).length >= 2 &&
+        inst.indexOf(":::") < 0 && inst.split("::").length <= 2 && inst.indexOf("..") < 0 &&
+        !/^:[^:]/.test(inst) && !/[^:]:$/.test(inst)) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});
