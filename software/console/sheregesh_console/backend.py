@@ -31,6 +31,7 @@ from sheregesh_emulators.scenario import TICK_S
 
 from . import journal as jr
 from . import videosource as vsrc
+from .module import ModuleView
 from .video import VideoReceiver
 
 LOG_LIMIT = 2000
@@ -223,6 +224,11 @@ class Backend(QObject):
         self._sel_seq = 0
         self._handover = vsrc.Handover()            # переход источника блока: подтверждён ли он кадрами (GUI-01)
         self._selectDone.connect(self._on_select_done)
+        # Внешний модуль удалённого блока (ADR-0012): только показ status.module и команды module-cmd через клиент
+        self._module = ModuleView(self, command=lambda: getattr(self._module_peer(), "module_command", None),
+                                  log=lambda level, text: self.log(level, "module", text))
+        self._module_key = None                     # (support, seq) последней записи в журналы
+        self._module_fault = ""                     # код активного события MODULE-FAULT
         self.video = VideoReceiver(self, command=video_command)
         self.video.stateChanged.connect(self._journal_video_state)
         self.video.stateChanged.connect(self._update_video_source)
@@ -378,6 +384,7 @@ class Backend(QObject):
             "activeCount": len(s.active),
         }
         self._status.update(self._link_status(s))
+        self._update_module(s)
         self._journal_transitions()
         if p is not None:
             self._power_history.append(round(p.percent, 1))
@@ -467,6 +474,47 @@ class Backend(QObject):
             "batteryCritical": self._rev.data["diagnostics.yaml"]["battery_critical_pct"],
             "undervoltage": bool(s.power and s.power.undervoltage),
         }
+
+    # ---------- внешний модуль удалённого блока (ADR-0012, S6) ----------
+    def _module_peer(self):
+        """Клиент канала с блоком, у которого вызывается module_command (для испытаний подменяется)."""
+        return self.client
+
+    def _update_module(self, s):
+        tel = s.peer.telemetry or {}
+        mv = self._module
+        mv.update(telemetry=tel.get("module"), session=s.peer.session, link=self._status["peerLink"],
+                  mode=self._status["peerMode"], received=bool(tel))
+        # Диагностическое событие: ошибка модуля по данным блока (при потере связи — снимается, ADR-0012, 12.2)
+        code = (mv.lastErrorCode or "MOD-UNKNOWN") if mv.support == "ok" and mv.state == "FAULT" else ""
+        if code != self._module_fault:
+            if self._module_fault:
+                self.bench.events.clear("MODULE-FAULT")
+            if code:                                # у события свой параметр «code»: inject(code, …) его не примет
+                self.bench.monitor.log.raise_(self.bench.clock(), "MODULE-FAULT", code=code)
+            self._module_fault = code
+        key = (mv.support, mv.seq)
+        if key == self._module_key:
+            return
+        state = mv.state if mv.support == "ok" else mv.support
+        hist = mv.history[0] if mv.history and mv.history[0]["seq"] == mv.seq else {}
+        detail = (f"from={hist.get('from') or '-'} reason={mv.reason or '-'} code={hist.get('code') or '-'} "
+                  f"profile={mv.profileId or '-'} backend={mv.backendKind or '-'}")
+        level = {"READY": "info", "FAULT": "error", "DISCONNECTED": "warning", "RECOVERING": "warning"}.get(state, "info")
+        if mv.support != "ok":
+            level = "warning" if mv.support == "no-link" else "info"
+        first, self._module_key = self._module_key is None, key
+        if mv.support == "local" or (first and mv.support != "ok"):
+            return                                  # пульт без блока / запуск до первой телеметрии — не переход
+        self.log(level, "module", f"{state} ({detail})")
+        prio = {"READY": jr.INFO, "FAULT": jr.ERR, "DISCONNECTED": jr.WARNING, "RECOVERING": jr.WARNING,
+                "no-link": jr.WARNING}.get(state, jr.NOTICE)
+        self.journal.emit(prio, f"module: {state} ({detail})")
+
+    @Property(QObject, constant=True)
+    def module(self):
+        """Представление внешнего модуля для ModulePage.qml (sheregesh_console.module.ModuleView)."""
+        return self._module
 
     def _journal_transitions(self):
         """Системный журнал (E2E-12): только смены обобщённого состояния канала и наличия видеопотока."""

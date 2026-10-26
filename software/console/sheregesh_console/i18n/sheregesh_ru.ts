@@ -118,209 +118,213 @@
 <context>
     <name>DashboardPage</name>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="22" />
+        <location filename="../qml/DashboardPage.qml" line="41" />
         <source>System state</source>
         <translation>Состояние системы</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="34" />
+        <location filename="../qml/DashboardPage.qml" line="54" />
         <source>Status indicator: %1</source>
         <translation>Индикатор: %1</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="38" />
+        <location filename="../qml/DashboardPage.qml" line="58" />
         <source>Shutdown requested (emulation): %1</source>
         <translation>Запрошено выключение (эмуляция): %1</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="48" />
+        <location filename="../qml/DashboardPage.qml" line="68" />
         <source>Power</source>
         <translation>Питание</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="58" />
+        <location filename="../qml/DashboardPage.qml" line="78" />
         <source>%1&#160;%</source>
         <translation>%1&#160;%</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="58" />
-        <location filename="../qml/DashboardPage.qml" line="127" />
+        <location filename="../qml/DashboardPage.qml" line="78" />
+        <location filename="../qml/DashboardPage.qml" line="228" />
         <source>No data</source>
         <translation>Нет данных</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="64" />
+        <location filename="../qml/DashboardPage.qml" line="88" />
         <source>Source: %1</source>
         <translation>Источник: %1</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="64" />
+        <location filename="../qml/DashboardPage.qml" line="88" />
         <source>Power telemetry unavailable</source>
         <translation>Телеметрия питания недоступна</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="72" />
+        <location filename="../qml/DashboardPage.qml" line="96" />
         <source>Test link to remote unit</source>
         <translation>Тестовая связь с удалённым блоком</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="82" />
+        <location filename="../qml/DashboardPage.qml" line="109" />
         <source>Connected</source>
         <translation>Связь есть</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="82" />
+        <location filename="../qml/DashboardPage.qml" line="111" />
         <source>Connecting…</source>
         <translation>Соединение…</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="83" />
+        <location filename="../qml/DashboardPage.qml" line="111" />
         <source>No link</source>
         <translation>Нет связи</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="83" />
+        <location filename="../qml/DashboardPage.qml" line="110" />
         <source>Incompatible</source>
         <translation>Несовместимо</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="91" />
+        <location filename="../qml/DashboardPage.qml" line="124" />
         <source>Remote unit process is not running (connection refused)</source>
         <translation>Процесс удалённого блока не запущен (соединение отклонено)</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="92" />
+        <location filename="../qml/DashboardPage.qml" line="125" />
         <source>Remote unit stopped sending heartbeat</source>
         <translation>Удалённый блок перестал отправлять heartbeat</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="93" />
+        <location filename="../qml/DashboardPage.qml" line="126" />
         <source>Connection closed by the remote unit</source>
         <translation>Удалённый блок закрыл соединение</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="94" />
+        <location filename="../qml/DashboardPage.qml" line="127" />
         <source>Too many corrupted messages; reconnecting</source>
         <translation>Слишком много повреждённых сообщений; переподключение</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="95" />
+        <location filename="../qml/DashboardPage.qml" line="128" />
         <source>No response from the remote unit</source>
         <translation>Удалённый блок не отвечает</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="96" />
+        <location filename="../qml/DashboardPage.qml" line="129" />
         <source>Version check failed: %1</source>
         <translation>Проверка версий не пройдена: %1</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="97" />
+        <location filename="../qml/DashboardPage.qml" line="131" />
         <source>Establishing connection</source>
         <translation>Устанавливается соединение</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="100" />
+        <location filename="../qml/DashboardPage.qml" line="138" />
         <source>Remote unit: %1</source>
         <translation>Удалённый блок: %1</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="105" />
+        <location filename="../qml/DashboardPage.qml" line="150" />
         <source>SoC %1&#160;°C · power %2&#160;% · uptime %3&#160;s</source>
         <translation>SoC %1&#160;°C · питание %2&#160;% · работает %3&#160;с</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="108" />
+        <location filename="../qml/DashboardPage.qml" line="160" />
         <source>Protocol: remote %1 / console %2</source>
         <translation>Протокол: удалённый блок %1 / пульт %2</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="110" />
+        <location filename="../qml/DashboardPage.qml" line="211" />
         <source>Last heartbeat %1&#160;s ago</source>
         <translation>Последний heartbeat %1&#160;с назад</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="110" />
+        <location filename="../qml/DashboardPage.qml" line="211" />
         <source>No heartbeat</source>
         <translation>Нет heartbeat</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="118" />
+        <location filename="../qml/DashboardPage.qml" line="219" />
         <source>Temperature and cooling</source>
         <translation>Температура и охлаждение</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="127" />
+        <location filename="../qml/DashboardPage.qml" line="228" />
         <source>SoC %1&#160;°C</source>
         <translation>SoC %1&#160;°C</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="131" />
+        <location filename="../qml/DashboardPage.qml" line="236" />
         <source>Board %1&#160;°C</source>
         <translation>Плата %1&#160;°C</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="134" />
+        <location filename="../qml/DashboardPage.qml" line="239" />
         <source>Fan %1&#160;% · %2 rpm</source>
         <translation>Вентилятор %1&#160;% · %2 об/мин</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="134" />
+        <location filename="../qml/DashboardPage.qml" line="239" />
         <source>Fan %1&#160;% · no speed signal</source>
         <translation>Вентилятор %1&#160;% · нет сигнала оборотов</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="143" />
+        <location filename="../qml/DashboardPage.qml" line="248" />
         <source>Active events</source>
         <translation>Активные события</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="153" />
+        <location filename="../qml/DashboardPage.qml" line="258" />
         <source>No active events</source>
         <translation>Активных событий нет</translation>
     </message>
     <message>
+        <location filename="../qml/DashboardPage.qml" line="109" />
         <source>Reconnecting…</source>
         <translation>Переподключение…</translation>
     </message>
     <message>
+        <location filename="../qml/DashboardPage.qml" line="110" />
         <source>Authentication failed</source>
         <translation>Ошибка аутентификации</translation>
     </message>
     <message>
+        <location filename="../qml/DashboardPage.qml" line="130" />
         <source>Certificate or device identity check failed: %1</source>
         <translation>Не прошла проверка сертификата или идентичности устройства: %1</translation>
     </message>
     <message>
+        <location filename="../qml/DashboardPage.qml" line="167" />
         <source>Mutual TLS %1 · %2 · round trip %3&#160;ms</source>
         <translation>Взаимный TLS %1 · %2 · задержка %3&#160;мс</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="13" />
+        <location filename="../qml/DashboardPage.qml" line="22" />
         <source>stream interrupted</source>
         <translation>поток прерван</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="14" />
+        <location filename="../qml/DashboardPage.qml" line="23" />
         <source>GStreamer missing</source>
         <translation>нет GStreamer</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="113" />
+        <location filename="../qml/DashboardPage.qml" line="139" />
         <source> · role %1</source>
         <translation> · роль %1</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="114" />
+        <location filename="../qml/DashboardPage.qml" line="140" />
         <source> · software %1</source>
         <translation> · ПО %1</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="137" />
+        <location filename="../qml/DashboardPage.qml" line="176" />
         <source>No TLS (local test channel) · round trip %1&#160;ms</source>
         <translation>Без TLS (локальный тестовый канал) · круговая задержка %1&#160;мс</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="144" />
+        <location filename="../qml/DashboardPage.qml" line="184" />
         <source>Authentication failures: %1</source>
         <translation>Отказы аутентификации: %1</translation>
     </message>
@@ -365,12 +369,12 @@
         <translation>режим не поддерживается</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="186" />
+        <location filename="../qml/DashboardPage.qml" line="201" />
         <source>Video (%1): %2</source>
         <translation>Видео (%1): %2</translation>
     </message>
     <message>
-        <location filename="../qml/DashboardPage.qml" line="186" />
+        <location filename="../qml/DashboardPage.qml" line="202" />
         <source>Video: %1</source>
         <translation>Видео: %1</translation>
     </message>
@@ -393,72 +397,72 @@
 <context>
     <name>DiagnosticsPage</name>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="28" />
+        <location filename="../qml/DiagnosticsPage.qml" line="19" />
         <source>Show:</source>
         <translation>Показать:</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="33" />
+        <location filename="../qml/DiagnosticsPage.qml" line="24" />
         <source>All events</source>
         <translation>Все события</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="33" />
+        <location filename="../qml/DiagnosticsPage.qml" line="24" />
         <source>Active only</source>
         <translation>Только активные</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="33" />
+        <location filename="../qml/DiagnosticsPage.qml" line="24" />
         <source>Warnings and errors</source>
         <translation>Предупреждения и ошибки</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="33" />
+        <location filename="../qml/DiagnosticsPage.qml" line="24" />
         <source>Errors only</source>
         <translation>Только ошибки</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="40" />
+        <location filename="../qml/DiagnosticsPage.qml" line="31" />
         <source>%1 of %2 events</source>
         <translation>%1 из %2 событий</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="61" />
+        <location filename="../qml/DiagnosticsPage.qml" line="52" />
         <source>No events</source>
         <translation>Событий нет</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="91" />
+        <location filename="../qml/DiagnosticsPage.qml" line="82" />
         <source>%1&#160;s</source>
         <translation>%1&#160;с</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="94" />
+        <location filename="../qml/DiagnosticsPage.qml" line="85" />
         <source>error</source>
         <translation>ошибка</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="94" />
+        <location filename="../qml/DiagnosticsPage.qml" line="85" />
         <source>warning</source>
         <translation>предупреждение</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="94" />
+        <location filename="../qml/DiagnosticsPage.qml" line="85" />
         <source>info</source>
         <translation>сведения</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="99" />
+        <location filename="../qml/DiagnosticsPage.qml" line="90" />
         <source>ACTIVE</source>
         <translation>АКТИВНО</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="99" />
+        <location filename="../qml/DiagnosticsPage.qml" line="90" />
         <source>resolved at %1&#160;s</source>
         <translation>устранено на %1&#160;с</translation>
     </message>
     <message>
-        <location filename="../qml/DiagnosticsPage.qml" line="99" />
+        <location filename="../qml/DiagnosticsPage.qml" line="90" />
         <source>logged</source>
         <translation>записано</translation>
     </message>
@@ -466,37 +470,37 @@
 <context>
     <name>LogsPage</name>
     <message>
-        <location filename="../qml/LogsPage.qml" line="24" />
+        <location filename="../qml/LogsPage.qml" line="17" />
         <source>Level:</source>
         <translation>Уровень:</translation>
     </message>
     <message>
-        <location filename="../qml/LogsPage.qml" line="29" />
+        <location filename="../qml/LogsPage.qml" line="22" />
         <source>All records</source>
         <translation>Все записи</translation>
     </message>
     <message>
-        <location filename="../qml/LogsPage.qml" line="29" />
+        <location filename="../qml/LogsPage.qml" line="22" />
         <source>Warnings and errors</source>
         <translation>Предупреждения и ошибки</translation>
     </message>
     <message>
-        <location filename="../qml/LogsPage.qml" line="29" />
+        <location filename="../qml/LogsPage.qml" line="22" />
         <source>Errors only</source>
         <translation>Только ошибки</translation>
     </message>
     <message>
-        <location filename="../qml/LogsPage.qml" line="34" />
+        <location filename="../qml/LogsPage.qml" line="27" />
         <source>%1 of %2 records</source>
         <translation>%1 из %2 записей</translation>
     </message>
     <message>
-        <location filename="../qml/LogsPage.qml" line="39" />
+        <location filename="../qml/LogsPage.qml" line="32" />
         <source>Export to USB</source>
         <translation>Выгрузить на USB</translation>
     </message>
     <message>
-        <location filename="../qml/LogsPage.qml" line="81" />
+        <location filename="../qml/LogsPage.qml" line="74" />
         <source>Export removes secrets by template and writes a SHA-256 checksum next to the file.</source>
         <translation>При выгрузке секреты удаляются по шаблону, рядом с файлом записывается контрольная сумма SHA-256.</translation>
     </message>
@@ -509,82 +513,87 @@
         <translation>Шерегеш — пульт (лабораторная эмуляция)</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="24" />
+        <location filename="../qml/Main.qml" line="48" />
         <source>Fault</source>
         <translation>Неисправность</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="24" />
+        <location filename="../qml/Main.qml" line="48" />
         <source>Warning</source>
         <translation>Предупреждение</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="25" />
+        <location filename="../qml/Main.qml" line="49" />
         <source>Starting</source>
         <translation>Запуск</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="25" />
+        <location filename="../qml/Main.qml" line="49" />
         <source>Normal</source>
         <translation>Норма</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="65" />
+        <location filename="../qml/Main.qml" line="89" />
         <source>Sheregesh console</source>
         <translation>Пульт «Шерегеш»</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="70" />
+        <location filename="../qml/Main.qml" line="95" />
         <source>Emulation · synthetic data only</source>
         <translation>Эмуляция · только синтетические данные</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="98" />
+        <location filename="../qml/Main.qml" line="140" />
         <source>Dashboard</source>
         <translation>Главная панель</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="99" />
+        <location filename="../qml/Main.qml" line="141" />
         <source>Video</source>
         <translation>Видео</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="100" />
+        <location filename="../qml/Main.qml" line="142" />
         <source>Diagnostics</source>
         <translation>Диагностика</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="101" />
+        <location filename="../qml/Main.qml" line="143" />
         <source>Power</source>
         <translation>Питание</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="102" />
+        <location filename="../qml/Main.qml" line="144" />
         <source>Logs</source>
         <translation>Журналы</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="103" />
+        <location filename="../qml/Main.qml" line="145" />
         <source>Settings</source>
         <translation>Настройки</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="104" />
+        <location filename="../qml/Main.qml" line="146" />
         <source>About</source>
         <translation>О системе</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="134" />
+        <location filename="../qml/Main.qml" line="147" />
+        <source>Module</source>
+        <translation>Модуль</translation>
+    </message>
+    <message>
+        <location filename="../qml/Main.qml" line="178" />
         <source>Model time %1&#160;s</source>
         <translation>Модельное время %1&#160;с</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="139" />
+        <location filename="../qml/Main.qml" line="183" />
         <source>Scenario: %1</source>
         <translation>Сценарий: %1</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="146" />
+        <location filename="../qml/Main.qml" line="190" />
         <source>Software %1 · protocol %2</source>
         <translation>ПО %1 · протокол %2</translation>
     </message>
@@ -654,7 +663,7 @@
         <translation>ошибка</translation>
     </message>
     <message>
-        <location filename="../qml/Main.qml" line="44" />
+        <location filename="../qml/Main.qml" line="45" />
         <source>not reported</source>
         <translation>не сообщается</translation>
     </message>
@@ -662,6 +671,636 @@
         <location filename="../qml/Main.qml" line="45" />
         <source>reconnecting</source>
         <translation>переподключение</translation>
+    </message>
+</context>
+<context>
+    <name>ModulePage</name>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="20" />
+        <source>Module absent</source>
+        <translation>Модуль отсутствует</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="21" />
+        <source>Module detected</source>
+        <translation>Модуль обнаружен</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="22" />
+        <source>Initializing</source>
+        <translation>Инициализация</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="23" />
+        <source>Ready</source>
+        <translation>Готов</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="24" />
+        <source>Fault</source>
+        <translation>Ошибка</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="25" />
+        <source>Recovering</source>
+        <translation>Восстановление</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="26" />
+        <source>Disabled</source>
+        <translation>Отключён</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="34" />
+        <source>Not supported by the remote unit</source>
+        <translation>Не поддерживается блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="35" />
+        <source>No module data</source>
+        <translation>Нет данных модуля</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="36" />
+        <source>No remote unit</source>
+        <translation>Нет удалённого блока</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="37" />
+        <source>No link to the remote unit</source>
+        <translation>Нет связи с удалённым блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="42" />
+        <source>Commands are unavailable until the link is restored.</source>
+        <translation>Команды недоступны, пока связь не восстановится.</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="43" />
+        <source>The remote unit does not support the external module (protocol %1)</source>
+        <translation>Удалённый блок не поддерживает внешний модуль (протокол %1)</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="44" />
+        <source>The remote unit does not report the module state</source>
+        <translation>Удалённый блок не сообщает состояние модуля</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="45" />
+        <source>The external module is available only with a remote unit</source>
+        <translation>Внешний модуль доступен только с удалённым блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="62" />
+        <location filename="../qml/ModulePage.qml" line="144" />
+        <source>Interface error</source>
+        <translation>Ошибка интерфейса</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="63" />
+        <source>Module does not respond</source>
+        <translation>Модуль не отвечает</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="64" />
+        <source>Initialization did not finish in time</source>
+        <translation>Инициализация не завершилась вовремя</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="65" />
+        <source>Initialization error</source>
+        <translation>Ошибка инициализации</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="66" />
+        <source>Module does not match the profile</source>
+        <translation>Модуль не соответствует профилю</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="67" />
+        <source>Recovery did not finish</source>
+        <translation>Восстановление не завершилось</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="68" />
+        <source>Emulator did not start</source>
+        <translation>Эмулятор не запустился</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="69" />
+        <source>Emulator exited abnormally</source>
+        <translation>Эмулятор аварийно завершился</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="70" />
+        <source>Emulator does not respond</source>
+        <translation>Эмулятор не отвечает</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="71" />
+        <location filename="../qml/ModulePage.qml" line="149" />
+        <source>Emulator unavailable</source>
+        <translation>Эмулятор недоступен</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="77" />
+        <source>Last error: none</source>
+        <translation>Последняя ошибка: нет</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="78" />
+        <source>Last error: %1 at %2 (active)</source>
+        <translation>Последняя ошибка: %1 в %2 (активна)</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="78" />
+        <source>Last error: %1 at %2</source>
+        <translation>Последняя ошибка: %1 в %2</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="83" />
+        <source>running</source>
+        <translation>работает</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="84" />
+        <source>starting</source>
+        <translation>запуск</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="85" />
+        <source>restarting</source>
+        <translation>перезапуск</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="86" />
+        <source>stopped</source>
+        <translation>остановлен</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="87" />
+        <source>unavailable</source>
+        <translation>недоступен</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="93" />
+        <source>Emulator: no data</source>
+        <translation>Эмулятор: нет данных</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="95" />
+        <source>Module backend: %1</source>
+        <translation>Канал к модулю: %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="96" />
+        <source>Emulator: %1 · restarts %2 of %3 · PID %4</source>
+        <translation>Эмулятор: %1 · перезапусков %2 из %3 · PID %4</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="102" />
+        <source>Changed: %1 (%2&#160;min ago)</source>
+        <translation>Изменено: %1 (%2&#160;мин назад)</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="103" />
+        <source>Changed: %1 (%2&#160;s ago)</source>
+        <translation>Изменено: %1 (%2&#160;с назад)</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="107" />
+        <source>reinitialization</source>
+        <translation>переинициализация</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="108" />
+        <source>error reset</source>
+        <translation>сброс ошибки</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="109" />
+        <source>module settings</source>
+        <translation>настройки модуля</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="110" />
+        <source>laboratory scenario</source>
+        <translation>лабораторный сценарий</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="116" />
+        <source>no link to the remote unit</source>
+        <translation>нет связи с удалённым блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="117" />
+        <source>not supported by the remote unit</source>
+        <translation>не поддерживается удалённым блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="118" />
+        <source>no result from the remote unit in time</source>
+        <translation>удалённый блок не сообщил итог вовремя</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="119" />
+        <source>another command is in progress</source>
+        <translation>выполняется другая команда</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="120" />
+        <source>the module is disabled</source>
+        <translation>модуль отключён</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="121" />
+        <source>allowed only with the laboratory emulator</source>
+        <translation>допускается только с лабораторным эмулятором</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="122" />
+        <source>the emulator is not running</source>
+        <translation>эмулятор не запущен</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="123" />
+        <source>value rejected by the remote unit</source>
+        <translation>значение отклонено удалённым блоком</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="124" />
+        <source>the setting could not be saved on the remote unit</source>
+        <translation>настройку не удалось сохранить на удалённом блоке</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="125" />
+        <source>invalid request</source>
+        <translation>неверный запрос</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="132" />
+        <source>Command «%1» is being sent to the remote unit…</source>
+        <translation>Команда «%1» отправляется на удалённый блок…</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="134" />
+        <source>Command «%1»: done</source>
+        <translation>Команда «%1»: выполнена</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="136" />
+        <source>Command «%1» failed: %2</source>
+        <translation>Команда «%1» не выполнена: %2</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="142" />
+        <source>Insert module</source>
+        <translation>Вставить модуль</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="143" />
+        <source>Remove module</source>
+        <translation>Вынуть модуль</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="145" />
+        <source>Module hang</source>
+        <translation>Зависание модуля</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="146" />
+        <source>Clear faults</source>
+        <translation>Снять сбои</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="147" />
+        <source>Slow initialization</source>
+        <translation>Долгая инициализация</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="148" />
+        <source>Emulator crash</source>
+        <translation>Авария эмулятора</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="150" />
+        <source>Emulator available</source>
+        <translation>Эмулятор доступен</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="156" />
+        <source>the module is inserted</source>
+        <translation>модуль вставлен</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="157" />
+        <source>the module is removed and stops answering</source>
+        <translation>модуль вынут и перестаёт отвечать</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="158" />
+        <source>the module reports an interface error</source>
+        <translation>модуль сообщает об ошибке интерфейса</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="159" />
+        <source>the module stays present but stops answering</source>
+        <translation>модуль на месте, но перестаёт отвечать</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="160" />
+        <source>all simulated module faults are cleared</source>
+        <translation>все смоделированные сбои модуля снимаются</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="161" />
+        <source>the next initialization takes longer than allowed</source>
+        <translation>следующая инициализация длится дольше допустимого</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="162" />
+        <source>the emulator process exits abnormally and is restarted</source>
+        <translation>процесс эмулятора аварийно завершается и перезапускается</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="163" />
+        <source>the emulator process is stopped and new starts are refused</source>
+        <translation>процесс эмулятора останавливается, новые запуски отклоняются</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="164" />
+        <source>emulator starts are allowed again (then use «Reset error»)</source>
+        <translation>запуски эмулятора снова разрешены (затем — «Сбросить ошибку»)</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="170" />
+        <source>saved</source>
+        <translation>сохранены</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="171" />
+        <source>factory defaults</source>
+        <translation>заводские значения</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="172" />
+        <source>recovered</source>
+        <translation>восстановлены</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="173" />
+        <source>reset to factory defaults</source>
+        <translation>сброшены к заводским</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="174" />
+        <source>in memory only (not saved)</source>
+        <translation>только в памяти (не сохранены)</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="178" />
+        <source>on</source>
+        <translation>вкл.</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="178" />
+        <source>off</source>
+        <translation>выкл.</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="181" />
+        <source>State code</source>
+        <translation>Код состояния</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="183" />
+        <source>Profile</source>
+        <translation>Профиль</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="185" />
+        <source>Identity</source>
+        <translation>Модуль</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="185" />
+        <source>%1 %2 · firmware %3 · S/N %4</source>
+        <translation>%1 %2 · прошивка %3 · S/N %4</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="187" />
+        <source>Initialization</source>
+        <translation>Инициализация</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="187" />
+        <source>%1&#160;ms</source>
+        <translation>%1&#160;мс</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="188" />
+        <source>Last answer</source>
+        <translation>Последний ответ</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="189" />
+        <source>%1&#160;s ago</source>
+        <translation>%1&#160;с назад</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="190" />
+        <source>Counters</source>
+        <translation>Счётчики</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="191" />
+        <source>faults %1 · recoveries %2 · transitions %3</source>
+        <translation>ошибок %1 · восстановлений %2 · переходов %3</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="198" />
+        <source>Module settings</source>
+        <translation>Настройки модуля</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="199" />
+        <source>module %1 · auto init %2 · auto recovery %3</source>
+        <translation>модуль %1 · автоинициализация %2 · автовосстановление %3</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="192" />
+        <source>Automatic recovery</source>
+        <translation>Автовосстановление</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="193" />
+        <source>stopped: restart limit reached</source>
+        <translation>остановлено: исчерпан лимит перезапусков</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="194" />
+        <source>on · attempt %1</source>
+        <translation>вкл. · попытка %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="195" />
+        <source>next in %1&#160;s</source>
+        <translation>следующая через %1&#160;с</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="196" />
+        <source>Settings</source>
+        <translation>Настройки</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="197" />
+        <source>revision %1 · %2</source>
+        <translation>ревизия %1 · %2</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="202" />
+        <source>Settings notice</source>
+        <translation>Замечание настроек</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="204" />
+        <source>Error text from the unit</source>
+        <translation>Текст ошибки от блока</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="205" />
+        <source>Protocol session</source>
+        <translation>Сеанс протокола</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="234" />
+        <source>Laboratory emulator, not a physical JR module</source>
+        <translation>Лабораторный эмулятор, не физический JR-модуль</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="242" />
+        <source>Control output: unknown value from the unit</source>
+        <translation>Выход управления: неизвестное значение от блока</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="243" />
+        <source>Control output: none (S6)</source>
+        <translation>Выход управления: нет (S6)</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="316" />
+        <source>External module</source>
+        <translation>Внешний модуль</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="325" />
+        <source>Profile: not reported</source>
+        <translation>Профиль: не сообщён</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="356" />
+        <source>Data as of %1</source>
+        <translation>Данные на %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="356" />
+        <source>last known state: %1</source>
+        <translation>последнее известное состояние: %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="379" />
+        <source>Reinitialize</source>
+        <translation>Переинициализировать</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="390" />
+        <source>Reset error</source>
+        <translation>Сбросить ошибку</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="401" />
+        <source>Disable module</source>
+        <translation>Отключить модуль</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="401" />
+        <source>Enable module</source>
+        <translation>Включить модуль</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="415" />
+        <source>The state comes from the remote unit; the console only shows it and sends commands after confirmation. There is no control output in any state.</source>
+        <translation>Состояние сообщает удалённый блок; пульт только показывает его и передаёт команды после подтверждения. Выхода управления нет ни в одном состоянии.</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="440" />
+        <source>Diagnostics</source>
+        <translation>Диагностика</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="441" />
+        <source>Transitions</source>
+        <translation>История переходов</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="489" />
+        <source>No transitions</source>
+        <translation>Переходов нет</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="515" />
+        <source>Laboratory scenarios (emulator only)</source>
+        <translation>Лабораторные сценарии (только эмулятор)</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="565" />
+        <source>Reinitialize the module?</source>
+        <translation>Переинициализировать модуль?</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="566" />
+        <source>Reset the module error?</source>
+        <translation>Сбросить ошибку модуля?</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="567" />
+        <source>Disable the external module?</source>
+        <translation>Отключить внешний модуль?</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="568" />
+        <source>Enable the external module?</source>
+        <translation>Включить внешний модуль?</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="569" />
+        <source>Run laboratory scenario «%1»?</source>
+        <translation>Выполнить лабораторный сценарий «%1»?</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="572" />
+        <source>The remote unit restarts module initialization. The module is not ready until it finishes.</source>
+        <translation>Удалённый блок заново выполнит инициализацию модуля. До её завершения модуль не готов.</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="573" />
+        <source>The emulator restart budget and the recovery delay are reset; after a fault the remote unit starts recovery.</source>
+        <translation>Счётчик перезапусков эмулятора и задержка восстановления сбрасываются; после ошибки удалённый блок начнёт восстановление.</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="574" />
+        <source>The module emulator on the remote unit is stopped. The setting is saved and kept after a restart.</source>
+        <translation>Эмулятор модуля на удалённом блоке будет остановлен. Настройка сохраняется и действует после перезапуска.</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="575" />
+        <source>The remote unit starts the module emulator and initializes the module. The setting is saved.</source>
+        <translation>Удалённый блок запустит эмулятор модуля и выполнит инициализацию. Настройка сохраняется.</translation>
+    </message>
+    <message>
+        <location filename="../qml/ModulePage.qml" line="576" />
+        <source>Laboratory emulator on the remote unit: %1. Only the emulator is affected: there is no physical module and no control output.</source>
+        <translation>Лабораторный эмулятор на удалённом блоке: %1. Действует только на эмулятор: физического модуля и выхода управления нет.</translation>
     </message>
 </context>
 <context>
@@ -753,177 +1392,177 @@
 <context>
     <name>SettingsPage</name>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="67" />
+        <location filename="../qml/SettingsPage.qml" line="73" />
         <source>Active revision: %1</source>
         <translation>Активная ревизия: %1</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="68" />
+        <location filename="../qml/SettingsPage.qml" line="74" />
         <source>unsaved changes</source>
         <translation>есть несохранённые изменения</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="68" />
+        <location filename="../qml/SettingsPage.qml" line="74" />
         <source>no changes</source>
         <translation>изменений нет</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="70" />
+        <location filename="../qml/SettingsPage.qml" line="76" />
         <source>Test configuration · emulation</source>
         <translation>Тестовая конфигурация · эмуляция</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="79" />
+        <location filename="../qml/SettingsPage.qml" line="85" />
         <source>Device name</source>
         <translation>Имя устройства</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="81" />
+        <location filename="../qml/SettingsPage.qml" line="87" />
         <source>Language</source>
         <translation>Язык</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="84" />
+        <location filename="../qml/SettingsPage.qml" line="90" />
         <source>Theme</source>
         <translation>Тема</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="85" />
+        <location filename="../qml/SettingsPage.qml" line="91" />
         <source>Light</source>
         <translation>Светлая</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="85" />
+        <location filename="../qml/SettingsPage.qml" line="91" />
         <source>Dark</source>
         <translation>Тёмная</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="86" />
+        <location filename="../qml/SettingsPage.qml" line="92" />
         <source>Interface scale</source>
         <translation>Масштаб интерфейса</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="89" />
+        <location filename="../qml/SettingsPage.qml" line="95" />
         <source>Screen timeout, s</source>
         <translation>Гашение экрана, с</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="91" />
+        <location filename="../qml/SettingsPage.qml" line="97" />
         <source>Heartbeat timeout, s</source>
         <translation>Тайм-аут heartbeat, с</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="94" />
+        <location filename="../qml/SettingsPage.qml" line="100" />
         <source>Temperature warning, °C</source>
         <translation>Предупреждение о температуре, °C</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="96" />
+        <location filename="../qml/SettingsPage.qml" line="102" />
         <source>Temperature critical, °C</source>
         <translation>Критическая температура, °C</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="99" />
+        <location filename="../qml/SettingsPage.qml" line="105" />
         <source>Battery warning, %</source>
         <translation>Предупреждение о заряде, %</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="101" />
+        <location filename="../qml/SettingsPage.qml" line="107" />
         <source>Battery critical, %</source>
         <translation>Критический заряд, %</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="104" />
+        <location filename="../qml/SettingsPage.qml" line="110" />
         <source>Remote unit address</source>
         <translation>Адрес удалённого блока</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="106" />
+        <location filename="../qml/SettingsPage.qml" line="112" />
         <source>Port</source>
         <translation>Порт</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="123" />
+        <location filename="../qml/SettingsPage.qml" line="134" />
         <source>Check</source>
         <translation>Проверить</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="126" />
+        <location filename="../qml/SettingsPage.qml" line="137" />
         <source>Apply…</source>
         <translation>Применить…</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="131" />
+        <location filename="../qml/SettingsPage.qml" line="142" />
         <source>Discard changes</source>
         <translation>Отменить изменения</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="133" />
+        <location filename="../qml/SettingsPage.qml" line="144" />
         <source>Back up to USB</source>
         <translation>Резервная копия на USB</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="136" />
+        <location filename="../qml/SettingsPage.qml" line="147" />
         <source>Restore from USB…</source>
         <translation>Восстановить с USB…</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="150" />
+        <location filename="../qml/SettingsPage.qml" line="161" />
         <source>Revision history</source>
         <translation>История ревизий</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="155" />
+        <location filename="../qml/SettingsPage.qml" line="166" />
         <source>not confirmed</source>
         <translation>не подтверждена</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="175" />
+        <location filename="../qml/SettingsPage.qml" line="186" />
         <source>Apply settings?</source>
         <translation>Применить настройки?</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="179" />
+        <location filename="../qml/SettingsPage.qml" line="190" />
         <source>A new configuration revision will be created and checked by the affected services. If the check fails, the previous revision is restored automatically.</source>
         <translation>Будет создана новая ревизия конфигурации, затронутые службы её проверят. Если проверка не пройдёт, прежняя ревизия восстановится автоматически.</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="200" />
+        <location filename="../qml/SettingsPage.qml" line="211" />
         <source>Restore configuration from USB?</source>
         <translation>Восстановить конфигурацию с USB?</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="206" />
+        <location filename="../qml/SettingsPage.qml" line="217" />
         <source>The backup will be checked for integrity and compatibility, then applied as a new revision.</source>
         <translation>Резервная копия будет проверена на целостность и совместимость, затем применена как новая ревизия.</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="206" />
+        <location filename="../qml/SettingsPage.qml" line="217" />
         <source>No backups found on the USB drive.</source>
         <translation>На USB-накопителе нет резервных копий.</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="102" />
+        <location filename="../qml/SettingsPage.qml" line="115" />
         <source>Video source</source>
         <translation>Видеоисточник</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="103" />
+        <location filename="../qml/SettingsPage.qml" line="116" />
         <source>Synthetic</source>
         <translation>Синтетический</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="103" />
+        <location filename="../qml/SettingsPage.qml" line="116" />
         <source>Standard UVC device</source>
         <translation>Стандартное UVC-устройство</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="103" />
+        <location filename="../qml/SettingsPage.qml" line="116" />
         <source>Off</source>
         <translation>Выключено</translation>
     </message>
     <message>
-        <location filename="../qml/SettingsPage.qml" line="104" />
+        <location filename="../qml/SettingsPage.qml" line="117" />
         <source>UVC video mode</source>
         <translation>Режим UVC</translation>
     </message>
@@ -931,132 +1570,133 @@
 <context>
     <name>VideoPage</name>
     <message>
-        <location filename="../qml/VideoPage.qml" line="15" />
+        <location filename="../qml/VideoPage.qml" line="63" />
         <source>Playing</source>
         <translation>Воспроизведение</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="16" />
+        <location filename="../qml/VideoPage.qml" line="64" />
         <source>Waiting for stream</source>
         <translation>Ожидание потока</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="17" />
+        <location filename="../qml/VideoPage.qml" line="65" />
+        <location filename="../qml/VideoPage.qml" line="75" />
         <source>No video</source>
         <translation>Нет видео</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="18" />
+        <location filename="../qml/VideoPage.qml" line="66" />
         <source>Restarting decoder</source>
         <translation>Перезапуск декодера</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="19" />
+        <location filename="../qml/VideoPage.qml" line="67" />
         <source>Video unavailable</source>
         <translation>Видео недоступно</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="20" />
+        <location filename="../qml/VideoPage.qml" line="77" />
         <source>No video source</source>
         <translation>Нет источника видео</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="41" />
+        <location filename="../qml/VideoPage.qml" line="143" />
         <source>Synthetic test pattern · %1 · port %2 · %3&#160;fps · frames %4 · decoder restarts %5</source>
         <translation>Синтетическая испытательная таблица · %1 · порт %2 · %3&#160;к/с · кадров %4 · перезапусков декодера %5</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="79" />
+        <location filename="../qml/VideoPage.qml" line="48" />
         <source>GStreamer is not installed; the rest of the interface works normally.</source>
         <translation>GStreamer не установлен; остальной интерфейс работает штатно.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="80" />
+        <location filename="../qml/VideoPage.qml" line="52" />
         <source>The remote unit does not report a video stream.</source>
         <translation>Удалённый блок не сообщает о видеопотоке.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="81" />
+        <location filename="../qml/VideoPage.qml" line="56" />
         <source>The interface keeps working; the stream is restored automatically when frames arrive.</source>
         <translation>Интерфейс продолжает работать; поток восстановится автоматически, когда придут кадры.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="91" />
+        <location filename="../qml/VideoPage.qml" line="276" />
         <source>Laboratory bench: synthetic test image or a standard UVC lab device only. No connection to real receivers or vehicles.</source>
         <translation>Лабораторный стенд: только синтетическое тестовое изображение или стандартное лабораторное UVC-устройство. Подключения к реальным приёмникам и аппаратам нет.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="22" />
+        <location filename="../qml/VideoPage.qml" line="68" />
         <source>No video device</source>
         <translation>Нет видеоустройства</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="23" />
+        <location filename="../qml/VideoPage.qml" line="69" />
         <source>Video mode not supported</source>
         <translation>Режим не поддерживается</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="46" />
+        <location filename="../qml/VideoPage.qml" line="135" />
         <source>%1 · %2 %3 at %4&#160;fps · shown %5&#160;fps · frames %6 · capture restarts %7</source>
         <translation>%1 · %2 %3, %4&#160;к/с · показано %5&#160;к/с · кадров %6 · перезапусков захвата %7</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="91" />
+        <location filename="../qml/VideoPage.qml" line="51" />
         <source>The video source is turned off in the settings.</source>
         <translation>Видеоисточник выключен в настройках.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="19" />
+        <location filename="../qml/VideoPage.qml" line="23" />
         <source>%1×%2 at %3&#160;fps</source>
         <translation>%1×%2, %3&#160;к/с</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="23" />
+        <location filename="../qml/VideoPage.qml" line="27" />
         <source>Source: none</source>
         <translation>Источник: нет</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="25" />
+        <location filename="../qml/VideoPage.qml" line="31" />
         <source> (input type not reported by the unit)</source>
         <translation> (тип входа блоком не сообщается)</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="26" />
+        <location filename="../qml/VideoPage.qml" line="32" />
         <source>Source: %1 · %2 · state: %3</source>
         <translation>Источник: %1 · %2 · состояние: %3</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="26" />
+        <location filename="../qml/VideoPage.qml" line="32" />
         <source>console input</source>
         <translation>вход пульта</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="26" />
+        <location filename="../qml/VideoPage.qml" line="32" />
         <source>remote unit</source>
         <translation>удалённый блок</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="33" />
+        <location filename="../qml/VideoPage.qml" line="39" />
         <source>No signal on the %1 input. The last frame is not shown; video returns automatically when the signal is back.</source>
         <translation>Нет сигнала на входе %1. Последний кадр не показывается; видео вернётся автоматически, когда появится сигнал.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="34" />
+        <location filename="../qml/VideoPage.qml" line="40" />
         <source>No capture device for the %1 input.</source>
         <translation>Нет устройства захвата для входа %1.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="35" />
+        <location filename="../qml/VideoPage.qml" line="41" />
         <source>Cannot connect to the %1 stream; retrying automatically.</source>
         <translation>Не удаётся подключиться к потоку %1; повтор выполняется автоматически.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="36" />
+        <location filename="../qml/VideoPage.qml" line="42" />
         <source>The %1 video source reports an error.</source>
         <translation>Видеоисточник %1 сообщает об ошибке.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="37" />
+        <location filename="../qml/VideoPage.qml" line="43" />
         <source>The %1 video source is starting.</source>
         <translation>Видеоисточник %1 запускается.</translation>
     </message>
@@ -1066,17 +1706,17 @@
         <translation>Подключение к источнику %1: ожидаются его первые кадры. Кадры прежнего источника не показываются.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="38" />
+        <location filename="../qml/VideoPage.qml" line="47" />
         <source>The selected video mode is not supported by the device.</source>
         <translation>Выбранный режим видео устройство не поддерживает.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="61" />
+        <location filename="../qml/VideoPage.qml" line="70" />
         <source>No signal</source>
         <translation>Нет сигнала</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="62" />
+        <location filename="../qml/VideoPage.qml" line="71" />
         <source>Source starting</source>
         <translation>Запуск источника</translation>
     </message>
@@ -1086,17 +1726,17 @@
         <translation>Подключение…</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="63" />
+        <location filename="../qml/VideoPage.qml" line="73" />
         <source>Connection error</source>
         <translation>Ошибка подключения</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="64" />
+        <location filename="../qml/VideoPage.qml" line="74" />
         <source>Video source error</source>
         <translation>Ошибка видеоисточника</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="100" />
+        <location filename="../qml/VideoPage.qml" line="140" />
         <source>Source mode %1 · shown %2&#160;fps · %3 · frames %4 · decoder restarts %5</source>
         <translation>Режим источника %1 · показано %2&#160;к/с · %3 · кадров %4 · перезапусков декодера %5</translation>
     </message>
@@ -1106,92 +1746,93 @@
         <translation>Источник: удалённый блок · состояние: %1</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="44" />
+        <location filename="../qml/VideoPage.qml" line="46" />
         <source>Reconnecting to the remote unit: the link is being restored. The last frame is not shown; video returns automatically.</source>
         <translation>Переподключение к удалённому блоку: связь восстанавливается. Последний кадр не показывается; видео вернётся автоматически.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="79" />
+        <location filename="../qml/VideoPage.qml" line="83" />
         <source>The remote unit does not know the source «%1»; the list of sources may have changed.</source>
         <translation>Удалённый блок не знает источник «%1»; возможно, список источников изменился.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="80" />
+        <location filename="../qml/VideoPage.qml" line="84" />
         <source>Source «%1» is unavailable on the remote unit; choose another source.</source>
         <translation>Источник «%1» на удалённом блоке недоступен; выберите другой источник.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="81" />
+        <location filename="../qml/VideoPage.qml" line="85" />
         <source>Source selection is not supported by the link to the remote unit.</source>
         <translation>Выбор источника не поддерживается каналом связи с удалённым блоком.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="82" />
+        <location filename="../qml/VideoPage.qml" line="86" />
         <source>No link to the remote unit; switching to «%1» is not confirmed.</source>
         <translation>Нет связи с удалённым блоком; переключение на «%1» не подтверждено.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="83" />
+        <location filename="../qml/VideoPage.qml" line="87" />
         <source>The remote unit is busy switching sources; try again in a few seconds.</source>
         <translation>Удалённый блок занят переключением источника; повторите через несколько секунд.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="84" />
+        <location filename="../qml/VideoPage.qml" line="88" />
         <source>The remote unit did not confirm switching to «%1».</source>
         <translation>Удалённый блок не подтвердил переключение на «%1».</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="85" />
+        <location filename="../qml/VideoPage.qml" line="89" />
         <source>Switching to «%1» failed.</source>
         <translation>Переключение на «%1» не выполнено.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="91" />
+        <location filename="../qml/VideoPage.qml" line="45" />
+        <location filename="../qml/VideoPage.qml" line="95" />
         <source>Switching to «%1»…</source>
         <translation>Переключение на «%1»…</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="95" />
+        <location filename="../qml/VideoPage.qml" line="99" />
         <source>The remote unit does not report a list of sources: only the synthetic source, selection is not available.</source>
         <translation>Удалённый блок не сообщает список источников: только синтетический источник, выбор недоступен.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="97" />
+        <location filename="../qml/VideoPage.qml" line="101" />
         <source>Source selection is not available: the link client of this console does not support it.</source>
         <translation>Выбор источника недоступен: клиент канала связи этого пульта его не поддерживает.</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="101" />
+        <location filename="../qml/VideoPage.qml" line="76" />
         <source>Switching…</source>
         <translation>Переключение…</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="203" />
+        <location filename="../qml/VideoPage.qml" line="209" />
         <source>active</source>
         <translation>активный</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="203" />
+        <location filename="../qml/VideoPage.qml" line="209" />
         <source>switching…</source>
         <translation>переключение…</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="204" />
+        <location filename="../qml/VideoPage.qml" line="210" />
         <source>available</source>
         <translation>доступен</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="204" />
+        <location filename="../qml/VideoPage.qml" line="210" />
         <source>unavailable</source>
         <translation>недоступен</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="294" />
+        <location filename="../qml/VideoPage.qml" line="300" />
         <source>Switch video source?</source>
         <translation>Переключить источник видео?</translation>
     </message>
     <message>
-        <location filename="../qml/VideoPage.qml" line="299" />
+        <location filename="../qml/VideoPage.qml" line="305" />
         <source>The remote unit will switch to «%1» (%2). The current picture is interrupted until the new source starts.</source>
         <translation>Удалённый блок переключится на «%1» (%2). Текущее изображение прервётся, пока не запустится новый источник.</translation>
     </message>

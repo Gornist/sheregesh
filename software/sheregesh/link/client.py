@@ -25,6 +25,7 @@ from pathlib import Path
 from .. import PROTOCOL_VERSION, __version__
 from ..faults import CATALOG
 from ..hal import PeerStatus
+from ..module import wire
 from ..protocol import negotiate
 from . import tls
 from .codec import TYPES, BadMessage, Decoder, encode
@@ -101,6 +102,8 @@ class PeerClient:
         self._outbox = []                   # (тип, тело) от других потоков; отправляет только поток канала
         self._vsel_req = 0
         self._vsel = None                   # последний запрос выбора видеоисточника (snapshot()["video_select"])
+        self._mcmd_req = 0
+        self._mcmd = None                   # последняя команда внешнему модулю (snapshot()["module_cmd"])
 
     # ---------- жизненный цикл ----------
     def start(self):
@@ -164,6 +167,61 @@ class PeerClient:
             time.sleep(0.05)
         return None
 
+    def module_command(self, op: str, args: dict | None = None, wait_s: float = 5.0) -> dict:
+        """Команда подсистеме внешнего модуля блока (протокол 1.3, module-cmd; ADR-0012, разделы 6.3 и 9.2).
+
+        → {"ok": bool, "result": str, "error": str, "req": int}. Вызывать не из GUI-потока. result: код блока
+        (sheregesh.module.wire.RESULTS) | not-connected (нет соединения, или потеряно до отправки или до итога — итог
+        тогда неизвестен) | unsupported (сессия < 1.3, или блок 1.3 не сообщает status.module: подсистема выключена)
+        | timeout (нет итога с этим req за wait_s; для configure — итог ещё pending) | bad-request (op не из OPS,
+        неверные args — проверка wire.check_command до отправки). Состояние запроса —
+        snapshot()["module_cmd"] = {"req", "op", "state": queued|sent|offline|unsupported}."""
+        with self._lock:
+            self._mcmd_req += 1
+            req = self._mcmd_req
+        body = {"req": req, "op": op, "args": dict(args or {})}
+        try:
+            wire.check_command(body)
+        except wire.BadCommand as e:
+            return {"ok": False, "result": "bad-request", "error": e.text, "req": req}
+        with self._lock:
+            st = self._st
+            if st.phase != "connected":
+                state = "offline"
+            elif "module-cmd" not in TYPES.get(st.session or "", ()):
+                state = "unsupported"
+            elif st.telemetry is not None and "module" not in st.telemetry:
+                state = "unsupported"               # блок 1.3 без подсистемы модуля (--no-module)
+            else:
+                state = "queued"
+                self._outbox.append(("module-cmd", body))
+            self._mcmd = {"req": req, "op": op, "state": state}
+            connects = self.counters.connects
+        if state == "offline":
+            return {"ok": False, "result": "not-connected", "error": "no link to remote unit", "req": req}
+        if state == "unsupported":
+            return {"ok": False, "result": "unsupported", "req": req,
+                    "error": "remote unit does not support the external module"
+                             + (f" (protocol {st.session})" if st.session and "module-cmd" not in TYPES.get(st.session, ())
+                                else " (module subsystem disabled)")}
+        deadline = time.monotonic() + max(0.0, wait_s)
+        cmd = None
+        while not self._stop.is_set():
+            with self._lock:
+                cmd = ((self._st.telemetry or {}).get("module") or {}).get("cmd")
+                lost = (self._mcmd is not None and self._mcmd["req"] == req and self._mcmd["state"] == "offline") \
+                    or self.counters.connects != connects or self._st.phase != "connected"
+            if cmd and cmd.get("req") == req and cmd.get("result") != "pending":
+                return {"ok": cmd["result"] == "ok", "result": cmd["result"], "error": cmd.get("error", ""), "req": req}
+            if lost:
+                return {"ok": False, "result": "not-connected", "req": req,
+                        "error": "link lost before the result (outcome unknown)"}
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+        return {"ok": False, "result": "timeout", "req": req,
+                "error": f"no result in {wait_s:g} s" + (" (still pending)" if cmd and cmd.get("req") == req else "")}
+
     # ---------- интерфейс Peer ----------
     def heartbeat_age(self):
         with self._lock:
@@ -178,7 +236,8 @@ class PeerClient:
                     "host": st.host, "port": self.port, "tls": st.tls, "secure": self.ctx is not None,
                     "lost_s": None if st.lost_at is None else round(time.monotonic() - st.lost_at, 1),
                     "peer_uri": self.tls_cfg.peer_uri if self.tls_cfg else None,
-                    "video_select": dict(self._vsel) if self._vsel else None}
+                    "video_select": dict(self._vsel) if self._vsel else None,
+                    "module_cmd": dict(self._mcmd) if self._mcmd else None}
 
     def drain_link_events(self):
         with self._lock:
@@ -395,6 +454,8 @@ class PeerClient:
                 for mtype, body in self._outbox:          # соединение потеряно до отправки
                     if mtype == "video-select" and self._vsel and self._vsel["req"] == body["req"]:
                         self._vsel["state"] = "offline"
+                    if mtype == "module-cmd" and self._mcmd and self._mcmd["req"] == body["req"]:
+                        self._mcmd["state"] = "offline"
                 self._outbox.clear()
             try:
                 sock.close()
@@ -462,6 +523,10 @@ class PeerClient:
                 with self._lock:
                     if self._vsel and self._vsel["req"] == body["req"]:
                         self._vsel["state"] = "sent"
+            elif mtype == "module-cmd":
+                with self._lock:
+                    if self._mcmd and self._mcmd["req"] == body["req"]:
+                        self._mcmd["state"] = "sent"
 
     def _ack(self, seq):
         if "ack" in TYPES.get(self._st.session or "", ()) and self._sock is not None:
@@ -571,6 +636,9 @@ def _sanitize_status(body):
         sel = _sanitize_video_select(v.get("select"))
         if sel is not None:                       # результат последнего video-select (протокол 1.2)
             out["video"]["select"] = sel
+    m = wire.sanitize_module(body.get("module"))
+    if m is not None:                             # внешний модуль блока (протокол 1.3, ADR-0012): необязательное поле
+        out["module"] = m
     ev = body.get("active_events")
     out["active_events"] = [str(c)[:32] for c in ev if isinstance(c, str)][:20] if isinstance(ev, list) else []
     if isinstance(body.get("uptime_s"), (int, float)):

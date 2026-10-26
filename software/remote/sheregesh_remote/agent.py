@@ -14,8 +14,12 @@ sheregesh.videoingest) переживает отключение устройс�
 Список источников (synthetic, найденные устройства V4L2, адреса rtsp_urls из video-input.json) — в
 status.video.sources; пульт выбирает источник сообщением video-select (протокол 1.2), выбор сохраняется в
 video-input.json, результат — в status.video.select.
-От пульта принимает только hello, ack, bye и (сессия 1.2) video-select; остальные сообщения не исполняются, а
-учитываются. Команд ОС, управления устройствами и радиоинтерфейсов нет.
+Внешний модуль (S6, ADR-0012; сетевой профиль — по умолчанию, loopback — по --module): подсистема sheregesh.module с
+лабораторным эмулятором модуля дочерним процессом (sheregesh_emulators.jrmodule); состояние — в status.module,
+команды — сообщением module-cmd (протокол 1.3), настройки — в remote-config/ рядом с link.json (ConfigStore).
+Выхода управления нет: эмулятор моделирует только состояние модуля, радиосигналов не формирует.
+От пульта принимает только hello, ack, bye, (сессия ≥ 1.2) video-select и (сессия 1.3) module-cmd; остальные
+сообщения не исполняются, а учитываются. Команд ОС, управления устройствами и радиоинтерфейсов нет.
 
 Неисправности для испытаний задаются расписанием (--fault AT:KIND[:ARG]), время — в секундах от старта:
   silence:DUR   не отправлять heartbeat и status DUR секунд (соединение не рвётся)
@@ -42,11 +46,15 @@ from sheregesh.videoingest import Ingest
 from sheregesh.videolink import VideoServer
 from sheregesh.link import tls
 from sheregesh.link.codec import TYPES, BadMessage, Decoder, encode
+from sheregesh.module.service import ModuleService
 from sheregesh.protocol import negotiate
 from sheregesh_emulators.devices import FanEmulator, PowerEmulator, SimClock, ThermalEmulator
 
 # Демонстрационный сценарий удалённого блока (секунды модельного времени, как у пульта — sheregesh_emulators.demo)
 DEMO_FAULTS = ["60:video-off:15", "95:silence:20"]
+# Внеочередной status при смене состояния модуля — не чаще (ADR-0012, раздел 6.2)
+MODULE_STATUS_MIN_S = 0.5
+REMOTE_CONFIG_DIR = "remote-config"
 # Пульт не забирает данные дольше — соединение зависло (буфер отправки полон): разрыв, а не ожидание в основном цикле,
 # который же шлёт WATCHDOG (WatchdogSec=15 у службы) и heartbeat новому сеансу.
 DRAIN_TIMEOUT_S = 3.0
@@ -110,6 +118,12 @@ class Agent:
                       "events_acked": 0, "rtt_last_ms": None, "rtt_avg_ms": None, "rtt_max_ms": None}
         faults = list(args.fault) + (DEMO_FAULTS if args.scenario == "demo-s1" else [])
         self.faults = sorted((self._parse_fault(f) for f in faults), key=lambda f: f[0])
+        # Внешний модуль (ADR-0012, раздел 7.4): дочерний процесс эмулятора, настройки — ConfigStore remote-1.
+        self.module = ModuleService(module_config_dir(args), log=lambda s: log(f"module: {s}"),
+                                    emulator_command=args.module_emulator_command) if module_enabled(args) else None
+        self.module_sent = None                     # (seq, итог команды) модуля в последнем отправленном status
+        self.module_seq_written = None              # … и в последнем записанном файле состояния
+        self.last_status = 0.0                      # monotonic последней отправки status
 
     def open_video_source(self, spec=None):
         a = self.args
@@ -260,12 +274,26 @@ class Agent:
 
     def status_body(self):
         p = self.power.read()
-        return {"state": "alert" if self.alerts else "normal", "uptime_s": round(self.now(), 1),
+        body = {"state": "alert" if self.alerts else "normal", "uptime_s": round(self.now(), 1),
                 "temperatures": self.thermal.read(),
                 "power": {"source": p.source, "percent": p.percent, "low_battery": p.low_battery},
                 "video": self.video_status(),
                 "active_events": list(self.alerts),
                 "link": {k: v for k, v in self.stats.items() if isinstance(v, (int, float))}}
+        if self.module is not None and "module-cmd" in TYPES.get(self.session or "", ()):
+            body["module"] = self.module.status()     # только сессия ≥ 1.3: старый пульт модуль не видит
+        return body
+
+    async def send_status(self):
+        self.last_status = time.monotonic()
+        if self.module is not None:
+            self.module_sent = self.module_key()
+        await self.send("status", self.status_body())
+
+    def module_key(self):
+        """Смена состояния модуля (seq) или итога команды (configure: pending → ok) — повод для внеочередного status."""
+        cmd = self.module.cmd
+        return self.module.seq, (cmd["req"], cmd["result"]) if cmd else None
 
     # ---------- видео ----------
     def video_start(self):
@@ -329,6 +357,8 @@ class Agent:
         self.writer = writer
         self.hb_wait = None
         self.video_select = None                    # результат выбора — только для сеанса, который его запросил
+        if self.module is not None:
+            self.module.new_session()               # и итог команды модулю — тоже
         await self.send("hello", self.info())
         dec = Decoder()
         try:
@@ -431,6 +461,14 @@ class Agent:
                 self.writer = None
         elif mtype == "video-select" and mtype in TYPES.get(self.session or "", ()):
             self.select_video(body)
+        elif mtype == "module-cmd" and mtype in TYPES.get(self.session or "", ()):
+            if self.module is not None:
+                self.module.command(body)
+                if self.writer is not None:         # итог (или pending) — сразу, не ждать heartbeat
+                    await self.send_status()
+            else:                                   # подсистема выключена: status.module нет, пульт видит «absent»
+                self.ignored += 1
+                log("module-cmd ignored: module subsystem disabled (--no-module)")
         elif mtype == "ack" and mtype in TYPES.get(self.session or self.proto, ()):
             sent = self.sent.pop(body.get("seq"), None) if isinstance(body.get("seq"), int) else None
             if sent:
@@ -460,8 +498,11 @@ class Agent:
                 sdnotify.ping()
                 next_ping = mono + wd
             self.check_peer_alive(mono)
-            if self.args.status_file and (mono >= next_status or (self.writer is not None) != self.written_connected):
-                self.write_status()                   # смена «есть/нет пульта» — сразу, иначе раз в 2 с
+            if self.module is not None:
+                self.module.tick()                    # миллисекунды: события эмулятора и таймеры, без ожиданий
+            if self.args.status_file and (mono >= next_status or (self.writer is not None) != self.written_connected
+                                          or (self.module is not None and self.module.seq != self.module_seq_written)):
+                self.write_status()                   # смена «есть/нет пульта» и состояния модуля — сразу, иначе раз в 2 с
                 next_status = mono + 2.0
             if self.args.event_interval and self.writer is not None and mono >= self.next_event:
                 self.event_k += 1
@@ -485,8 +526,11 @@ class Agent:
                 if self.hb_delay:
                     await asyncio.sleep(self.hb_delay)
                 await self.send("heartbeat", {"uptime_s": round(t, 1)})
-                await self.send("status", self.status_body())
+                await self.send_status()
                 next_hb = time.monotonic() + self.args.heartbeat_interval
+            elif self.module is not None and self.writer is not None and t >= self.silent_until \
+                    and self.module_key() != self.module_sent and mono - self.last_status >= MODULE_STATUS_MIN_S:
+                await self.send_status()              # смена состояния модуля или итога команды — внеочередной status
 
     def write_status(self):
         """Состояние канала для sheregesh-health (RuntimeDirectory службы), атомарно."""
@@ -494,12 +538,14 @@ class Agent:
               "tls": self.ctx is not None, "listen": f"{self.args.host}:{self.port}", "connected": self.writer is not None,
               "session": self.session if self.writer is not None else None, "peer": self.peer_desc, "stats": self.stats,
               "own_uri": self.tls_cfg.own_uri if self.tls_cfg else None,
-              "video": self.vserver.stats() if self.vserver is not None else None}
+              "video": self.vserver.stats() if self.vserver is not None else None,
+              "module": self.module.health() if self.module is not None else None}
         path = Path(self.args.status_file)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(st, ensure_ascii=False))
         os.replace(tmp, path)
         self.written_connected = st["connected"]
+        self.module_seq_written = self.module.seq if self.module is not None else None
 
     async def run(self):
         self.handshakes = asyncio.Semaphore(4)
@@ -526,6 +572,8 @@ class Agent:
             print(f"VIDEO unavailable: {why}", flush=True)
         if self.vserver is not None or self.args.video:
             self.catalog.start()
+        if self.module is not None:
+            self.module.start()                       # эмулятора не ждёт: READY придёт по событиям
         sdnotify.ready(f"listening {self.args.host}:{port}" + (" mTLS" if self.ctx else " loopback"))
         async with server:
             await asyncio.gather(server.serve_forever(), self.ticker())
@@ -538,6 +586,20 @@ def log(text):
 VIDEO_CONFIG_NAME = "video-input.json"
 SPEC_KEYS = {"source", "device", "mode", "format", "standard", "input", "url", "codec", "transport", "latency_ms",
              "timeout_s"}
+
+
+def module_enabled(args):
+    """Подсистема модуля: по умолчанию только в сетевом профиле (pi2); loopback — по --module; --no-module — выкл."""
+    return not args.no_module and (args.module or bool(getattr(args, "link_config", None)))
+
+
+def module_config_dir(args):
+    """Хранилище настроек модуля: --remote-config-dir или remote-config/ рядом с link.json; без них — в памяти."""
+    if args.remote_config_dir:
+        return Path(args.remote_config_dir).expanduser()
+    if getattr(args, "link_config", None):
+        return Path(args.link_config).expanduser().with_name(REMOTE_CONFIG_DIR)
+    return None
 
 
 def video_config_path(args):
@@ -644,6 +706,13 @@ def main(argv=None):
     ap.add_argument("--event-interval", type=float, default=0, help="синтетическое событие EMU-TEST каждые N с (0 — нет)")
     ap.add_argument("--status-file", help="состояние канала в JSON для sheregesh-health")
     ap.add_argument("--bind", help="адрес прослушивания в сетевом профиле (по умолчанию 0.0.0.0; тесты — 127.0.0.1)")
+    ap.add_argument("--module", action="store_true",
+                    help="внешний модуль (лабораторный эмулятор) в loopback; в сетевом профиле включён по умолчанию")
+    ap.add_argument("--no-module", action="store_true", help="без подсистемы внешнего модуля")
+    ap.add_argument("--remote-config-dir", default=None,
+                    help="настройки модуля (ConfigStore, схема remote-1); по умолчанию remote-config/ рядом с "
+                         "--link-config, без него — только в памяти")
+    ap.add_argument("--module-emulator-command", nargs="+", default=None, help=argparse.SUPPRESS)  # испытания
     args = ap.parse_args(argv)
     args.tls_cfg = None
     if args.link_config:
@@ -667,6 +736,8 @@ def main(argv=None):
         agent.catalog.close()
         if agent.vserver is not None:
             agent.vserver.close()
+        if agent.module is not None:
+            agent.module.close()
         sys.exit(0)
     signal.signal(signal.SIGTERM, stop)
     try:
@@ -675,4 +746,6 @@ def main(argv=None):
         pass
     finally:
         agent.video_stop()
+        if agent.module is not None:
+            agent.module.close()
     return 0

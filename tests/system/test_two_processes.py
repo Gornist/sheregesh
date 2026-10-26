@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from procs import Agent, free_port, wait_for
+from sheregesh import PROTOCOL_VERSION
 from sheregesh.config import console_defaults
 from sheregesh.link.client import PeerClient, RemotePeer
 from sheregesh_emulators import Bench
@@ -78,7 +79,7 @@ def test_successful_connection_exchanges_synthetic_state(agents, client):
     c = client(a.port)
     assert wait_for(lambda: phase(c) == "connected", 5)
     snap = wait_for(lambda: c.snapshot()["telemetry"] and c.snapshot(), 5)
-    assert snap["session"] == "1.2" and snap["peer"]["device_id"] == "remote-emu-01"
+    assert snap["session"] == PROTOCOL_VERSION and snap["peer"]["device_id"] == "remote-emu-01"
     t = snap["telemetry"]
     assert {"soc", "board"} <= set(t["temperatures"]) and 0 < t["power"]["percent"] <= 100
     b = bench_for(c)
@@ -120,7 +121,7 @@ def test_newer_minor_peer_negotiates_lower_session(agents, client):
     a = agents("--protocol", "1.4")
     c = client(a.port)
     assert wait_for(lambda: phase(c) == "connected", 5)
-    assert c.snapshot()["session"] == "1.2"
+    assert c.snapshot()["session"] == PROTOCOL_VERSION
 
 
 # ---------------- 3. второго процесса нет ----------------

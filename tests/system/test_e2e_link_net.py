@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from procs import ENV, ROOT, Agent, free_port, wait_for
+from sheregesh import PROTOCOL_VERSION
 from sheregesh.link import pki
 
 pytestmark = pytest.mark.skipif(not shutil.which("openssl"), reason="нет openssl")
@@ -329,7 +330,7 @@ def test_e2e03_connect_both_sides(lab, tmp_path):
         assert st["peer"]["uri"] == "urn:sheregesh:console:PI1SERIAL" and st["peer"]["tls"] == "TLSv1.3"
         cs = json.loads(c.status.read_text())
         assert cs["phase"] == "connected" and cs["tls"] == "TLSv1.3"
-        assert cs["peer_uri"] == "urn:sheregesh:remote:PI2SERIAL" and cs["session"] == "1.2"
+        assert cs["peer_uri"] == "urn:sheregesh:remote:PI2SERIAL" and cs["session"] == PROTOCOL_VERSION
         REPORT["E2E-03"] = {"console_connected_s": round(t_console, 2), "remote_status_connected_s": round(t_remote, 2),
                             "note": "от запуска процесса пульта (интерпретатор + TLS)"}
     finally:

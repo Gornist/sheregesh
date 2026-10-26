@@ -3,7 +3,7 @@
 """Кадрирование и проверка сообщений SHRG-LAB (ADR-0007): JSON UTF-8, одно сообщение на строку.
 
 S1.5: только синтетические диагностические данные. Набор типов закрыт по версиям; команд управления нет
-(1.2: выбор видеоисточника video-select — см. TYPES).
+(1.2: выбор видеоисточника video-select; 1.3: команда подсистеме внешнего модуля module-cmd — см. TYPES).
 """
 import json
 from dataclasses import dataclass
@@ -19,6 +19,12 @@ TYPES["1.1"] = TYPES["1.0"] | {"ack"}
 # радиоинтерфейсов); результат — в телеметрии status.video.select. Сессия 1.1 (старый пульт или старый блок) его не
 # отправляет и не исполняет (CHG-012).
 TYPES["1.2"] = TYPES["1.1"] | {"video-select"}
+# 1.3 (S6, ADR-0012): module-cmd — команда подсистеме внешнего модуля блока, body {"req": int, "op": str, "args": {}}:
+# status | reinit | reset | configure (enabled, auto_init, auto_recover, profile) | lab (лабораторный сценарий
+# эмулятора, только при лабораторном бэкенде). Каналов, значений органов управления и команд «взвести» нет; выхода
+# управления нет (status.module.output = "none"). Состояние — в status.module, итог — в status.module.cmd. Сессия 1.2
+# (старый пульт или старый блок) его не отправляет и не исполняет, status.module не передаётся (CHG-012).
+TYPES["1.3"] = TYPES["1.2"] | {"module-cmd"}
 
 
 @dataclass(frozen=True)

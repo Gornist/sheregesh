@@ -1,0 +1,22 @@
+{
+  "$comment": "Схема конфигурации удалённого блока, версия 1 (ADR-0012, раздел 8). Каждый ключ files — отдельный YAML-файл набора. Новые ключи в будущих версиях — необязательные.",
+  "schema_version": 1,
+  "device": "remote",
+  "files": {
+    "module.yaml": {
+      "x-services": ["module"],
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["enabled", "profile", "backend", "auto_init", "auto_recover"],
+        "properties": {
+          "enabled": {"type": "boolean"},
+          "profile": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"},
+          "backend": {"enum": ["lab-emulator"], "$comment": "S6: только лабораторный эмулятор; аппаратного бэкенда нет"},
+          "auto_init": {"type": "boolean"},
+          "auto_recover": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

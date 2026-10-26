@@ -35,7 +35,7 @@ PKG = Path(__file__).resolve().parent
 QML = PKG / "qml"
 I18N = PKG / "i18n"
 LANGS = ("ru",)
-PAGE_NAMES = ["dashboard", "video", "diagnostics", "power", "logs", "settings", "about"]   # порядок вкладок Main.qml   # исходные строки QML — английские; переводы — файлы .ts/.qm
+PAGE_NAMES = ["dashboard", "video", "diagnostics", "power", "logs", "settings", "about", "module"]   # порядок вкладок Main.qml   # исходные строки QML — английские; переводы — файлы .ts/.qm
 
 
 def qt_tool(name):
@@ -68,6 +68,24 @@ def compile_translations(out_dir: Path = I18N) -> list[Path]:
             print(f"перевод {qm.name}: lrelease нет, используется готовый .qm", file=sys.stderr, flush=True)
             out.append(qm)
     return out
+
+
+def module_ui_state(ui):
+    """Что показывает страница «Модуль» (ADR-0012, 10.4): тексты QML и состояние ModuleView для ui-state.json."""
+    b = ui.backend
+    mv = b.module
+
+    def text(name):                      # видимость — по условию элемента (shown), а не по текущей вкладке
+        o = ui.find(name)
+        return o.property("text") if o is not None and o.property("shown") is not False else ""
+    banner = ui.find("moduleLabBanner")
+    return {"support": mv.support, "state": mv.state, "seq": mv.seq, "stale": mv.stale,
+            "stateText": text("moduleStateText"), "stateDetail": text("moduleStateDetail"),
+            "supportText": text("moduleSupportText"), "profileText": text("moduleProfileText"),
+            "errorText": text("moduleErrorText"), "emulatorText": text("moduleEmulatorText"),
+            "changedText": text("moduleChangedText"), "outputText": text("moduleOutputText"),
+            "labBanner": bool(banner is not None and banner.property("shown")),
+            "faultEvent": b.bench.monitor.log.is_active("MODULE-FAULT"), "command": dict(mv.command)}
 
 
 class Ui:
@@ -241,7 +259,8 @@ def main(argv=None):
                     "linkRttMs": st.get("linkRttMs"), "peerValueText": label.property("text") if label else None,
                     "peerDetailText": detail.property("text") if detail and detail.property("visible") else "",
                     "video": backend.video.metrics(),   # фактически декодированные кадры и видеоканал (S3.1-VIDEO)
-                    "videoSource": backend.videoSource}  # вход/состояние источника и решение для кадра (display, live)
+                    "videoSource": backend.videoSource,  # вход/состояние источника и решение для кадра (display, live)
+                    "module": module_ui_state(ui)}       # страница «Модуль» (ADR-0012, S6)
             try:
                 tmp = Path(ui_state + ".tmp")
                 tmp.write_text(json.dumps(data, ensure_ascii=False))
@@ -256,7 +275,9 @@ def main(argv=None):
 
         def dump_on_change():
             st = backend.status
-            key = (st.get("linkView"), st.get("peerLink"), st.get("peerDetail"), backend.video.state)
+            mv = backend.module
+            key = (st.get("linkView"), st.get("peerLink"), st.get("peerDetail"), backend.video.state,
+                   mv.support, mv.state, mv.seq)
             if key != last_key["k"]:
                 last_key["k"] = key
                 dump_ui()

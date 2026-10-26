@@ -15,6 +15,14 @@ Backend.selectVideoSource(id, True), что кнопка экрана «Виде
   {"cmd": "select", "id": "rtsp:0", "wait": 15}     → то же; result: ok | unknown | unavailable | unsupported |
                                                       no-link | busy | timeout | failed | bad-request
 id проверяется по списку источников блока (status.video.sources); вызовы бэкенда — только в потоке интерфейса.
+
+Внешний модуль блока (S6, ADR-0012, 9.3) — те же слоты ModuleView с confirmed=True, что кнопки экрана «Модуль»:
+  {"cmd": "module", "op": "status"}                                  → {"result": "ok", "detail": "", "module": M}
+  {"cmd": "module", "op": "reinit"|"reset", "wait": 15}              → {"result": код, "detail": текст, "module": M}
+  {"cmd": "module", "op": "lab", "args": {"scenario": "detach"}, "wait": 15}
+  {"cmd": "module", "op": "configure", "args": {"enabled": false}, "wait": 30}
+M = ModuleView.snapshot(); result: ok | коды блока (disabled, forbidden, not-running, invalid, not-saved, error, …) |
+no-link | unsupported | timeout | busy | bad-request | failed.
 """
 import json
 import os
@@ -28,9 +36,13 @@ from PySide6.QtCore import QObject, Qt, Signal, Slot
 
 from sheregesh.link import videoselect
 
+from .module import CONFIGURE_KEYS
+
 MAX_REQUEST = 4096
 WAIT_MAX_S = 60.0
 CALL_TIMEOUT_S = 5.0        # поток интерфейса не ответил за это время — «busy», а не зависшая команда
+MODULE_OPS = ("status", "reinit", "reset", "lab", "configure")
+MODULE_WAIT_S = {"configure": 30.0}         # по умолчанию 15 с
 
 
 def server_path(env=None):
@@ -130,11 +142,13 @@ class ControlServer(QObject):
             req = json.loads(raw.decode("utf-8").strip() or "null")
         except (UnicodeDecodeError, ValueError):
             return self._fail("bad-request", "not a JSON line")
-        if not isinstance(req, dict) or req.get("cmd") not in ("list", "select"):
-            return self._fail("bad-request", "cmd: list | select")
+        if not isinstance(req, dict) or req.get("cmd") not in ("list", "select", "module"):
+            return self._fail("bad-request", "cmd: list | select | module")
         if not self._busy.acquire(blocking=False):
             return self._fail("busy", "another request is in progress")
         try:
+            if req["cmd"] == "module":
+                return self._module(req)
             snap = self._invoke(self._snapshot)
             if req["cmd"] == "list":
                 return self._reply("ok", "", snap)
@@ -168,6 +182,53 @@ class ControlServer(QObject):
             if time.monotonic() >= end:
                 return self._reply("timeout", f"{sid} not active after {wait:g} s", snap)
             time.sleep(0.1)
+
+    # ---------- внешний модуль (S6) ----------
+    def _module(self, req):
+        mv = self.backend.module
+        snap = lambda: self._invoke(mv.snapshot)          # noqa: E731
+        op, args = req.get("op"), req.get("args", {})
+        wait = req.get("wait", MODULE_WAIT_S.get(op, 15.0))
+        if op not in MODULE_OPS:
+            return self._module_reply("bad-request", "op: " + " | ".join(MODULE_OPS), snap())
+        if not isinstance(args, dict) or not isinstance(wait, (int, float)) or isinstance(wait, bool):
+            return self._module_reply("bad-request", "args: object, wait: seconds", snap())
+        if op == "status":
+            return self._module_reply("ok", "", snap())
+        if op in ("reinit", "reset") and args:
+            return self._module_reply("bad-request", f"{op}: no args", snap())
+        if op == "lab" and (set(args) != {"scenario"} or not isinstance(args["scenario"], str)):
+            return self._module_reply("bad-request", "lab: args {\"scenario\": name}", snap())
+        if op == "configure" and (not args or any(k not in CONFIGURE_KEYS or type(v) is not CONFIGURE_KEYS[k]
+                                                  for k, v in args.items())):
+            return self._module_reply("bad-request", "configure: args subset of " + ", ".join(CONFIGURE_KEYS), snap())
+        call = {"reinit": lambda: mv.requestReinit(True), "reset": lambda: mv.requestReset(True),
+                "lab": lambda: mv.runLabScenario(args.get("scenario", ""), True),
+                "configure": lambda: mv.configure(args, True)}[op]
+        before = self._invoke(lambda: mv.command)
+        accepted = self._invoke(call)
+        cmd = self._invoke(lambda: mv.command)
+        if not accepted:
+            if cmd["state"] == "sending":
+                return self._module_reply("busy", f"command {cmd['op']} is in progress", snap())
+            if cmd["state"] == "error" and cmd["id"] != before["id"]:
+                return self._module_reply(cmd["result"] or "failed", cmd["detail"], snap())
+            return self._module_reply("failed", "command not accepted", snap())
+        cid, end = cmd["id"], time.monotonic() + min(max(float(wait), 0.0), WAIT_MAX_S)
+        while True:
+            cmd = self._invoke(lambda: mv.command)
+            if cmd["id"] != cid:
+                return self._module_reply("busy", "another command replaced this one", snap())
+            if cmd["state"] != "sending":
+                return self._module_reply(cmd["result"] or ("ok" if cmd["state"] == "done" else "failed"),
+                                          cmd["detail"], snap())
+            if time.monotonic() >= end:
+                return self._module_reply("timeout", f"no result after {wait:g} s", snap())
+            time.sleep(0.1)
+
+    @staticmethod
+    def _module_reply(code, detail, module):
+        return {"result": code, "detail": detail, "module": module}
 
     @staticmethod
     def _reply(code, detail, snap):

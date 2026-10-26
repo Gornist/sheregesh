@@ -65,9 +65,9 @@ ApplicationWindow {
     palette.light: p.panel
     palette.dark: p.border
 
-    // Экраны: Ctrl+1…7 или F1…F7 (без сенсора, REQ-P-003)
+    // Экраны: Ctrl+1…8 или F1…F8 (без сенсора, REQ-P-003); «Модуль» — последней, индексы 0…6 прежние
     Repeater {
-        model: 7
+        model: 8
         delegate: Item {
             required property int index
             Shortcut { sequences: ["Ctrl+" + (index + 1), "F" + (index + 1)]; onActivated: { tabs.currentIndex = index; tabs.forceActiveFocus() } }
@@ -144,6 +144,7 @@ ApplicationWindow {
                 TabButton { objectName: "tabLogs"; text: qsTr("Logs"); width: implicitWidth + 32 * win.s }
                 TabButton { objectName: "tabSettings"; text: qsTr("Settings"); width: implicitWidth + 32 * win.s }
                 TabButton { objectName: "tabAbout"; text: qsTr("About"); width: implicitWidth + 32 * win.s }
+                TabButton { objectName: "tabModule"; text: qsTr("Module"); width: implicitWidth + 32 * win.s }
             }
         }
     }
@@ -160,6 +161,7 @@ ApplicationWindow {
         LogsPage { objectName: "logsPage" }
         SettingsPage { objectName: "settingsPage" }
         AboutPage { objectName: "aboutPage" }
+        ModulePage { objectName: "modulePage" }
     }
 
     footer: Rectangle {
