@@ -232,7 +232,7 @@ def test_every_catalog_entry_has_ru_en_text_and_action(code):
     for lang in ("ru", "en"):
         assert f.text[lang].strip() and f.action[lang].strip()
     params = {"sensor": "soc", "value": 71.2, "limit": 70, "rpm": 5000, "duty": 40, "percent": 15, "source": "battery",
-              "timeout": 3, "peer": "2.0", "local": "1.0", "reason": "major", "state": "no-video", "age": 2.0, "count": 1, "code": "TEMP-HIGH", "codes": "TEMP-HIGH", "detail": "x", "revision": "r000002", "active": "r000001", "reason": "x"}
+              "timeout": 3, "peer": "2.0", "local": "1.0", "reason": "major", "state": "no-video", "age": 2.0, "count": 1, "code": "TEMP-HIGH", "codes": "TEMP-HIGH", "detail": "x", "revision": "r000002", "active": "r000001"}
     for lang in ("ru", "en"):
         text, action = render(code, lang, params)
         assert "{" not in text and "{" not in action
