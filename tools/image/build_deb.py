@@ -35,7 +35,11 @@ DEPENDS = [
     "qml6-module-qtquick-templates", "qml6-module-qtquick-window", "qml6-module-qtqml-workerscript",
     "qt6-wayland", "fonts-dejavu-core",
     "gstreamer1.0-tools", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good", "gstreamer1.0-x",
-    "gstreamer1.0-plugins-bad",   # h264parse (videoparsersbad) — связка v4l2 H.264 на Pi 4
+    "gstreamer1.0-plugins-bad",   # h264parse (videoparsersbad) — связка v4l2 H.264 на Pi 4; unixfdsink/unixfdsrc
+    # Кадр видео пульта мимо Python (ADR-0015): декодер (отдельный процесс) → dmabuf по unixfd → glupload →
+    # qml6glsink (элемент QML); конвейер приёма в процессе пульта строится через GObject Introspection
+    "gstreamer1.0-gl", "gstreamer1.0-qt6", "python3-gi", "gir1.2-gstreamer-1.0", "gir1.2-gst-plugins-base-1.0",
+    "qml6-module-qtquick-shapes",  # значки интерфейса Minimal (MiniIcon.qml)
     "util-linux",
     "cage", "seatd", "openssl",
 ]
