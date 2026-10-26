@@ -171,7 +171,7 @@ def test_stk1160_auto_detects_ntsc_and_uses_uyvy(v4l2, elements):
     assert src.mode == vi.Mode(720, 480, 30, "UYVY", "30000/1001")
     text = " ".join(gst.stream_sender_args("h264", src=src))
     assert "video/x-raw,format=UYVY,width=720,height=480,framerate=30000/1001 ! " \
-           "deinterlace mode=auto method=linear fields=top ! videoconvert ! video/x-raw,format=I420 ! v4l2h264enc" in text
+           "deinterlace mode=auto method=linear fields=top ! v4l2h264enc" in text
 
 
 def test_ambiguous_querystd_falls_back_to_default(v4l2):

@@ -133,15 +133,15 @@ def elements(monkeypatch):
 
 
 def test_synthetic_pipeline_unchanged(elements):
-    """Регрессия: синтетический источник даёт ровно прежний конвейер (до S3.3)."""
-    before = [gst.GST_LAUNCH, "-q", "videotestsrc", "is-live=true", "pattern=smpte", "!",
+    """Регрессия: синтетический источник даёт прежний конвейер (до S3.3); в аппаратный кодер H.264 — без videoconvert."""
+    gen = [gst.GST_LAUNCH, "-q", "videotestsrc", "is-live=true", "pattern=smpte", "!",
               "video/x-raw,width=1280,height=720,framerate=30/1", "!",
               "timeoverlay", "halignment=right", "valignment=bottom", "font-desc=Sans 28", "!",
-              "textoverlay", "text=SHEREGESH SYNTHETIC TEST PATTERN", "valignment=top", "font-desc=Sans 24", "!",
-              "videoconvert", "!", "video/x-raw,format=I420", "!"]
+              "textoverlay", "text=SHEREGESH SYNTHETIC TEST PATTERN", "valignment=top", "font-desc=Sans 24", "!"]
+    before = gen + ["videoconvert", "!", "video/x-raw,format=I420", "!"]
     assert gst.stream_sender_args("jpeg") == before + gst.ENCODERS["jpeg"] + ["!", "rtpstreampay", "!", "fdsink",
                                                                                "fd=1", "sync=false"]
-    assert gst.sender_args("h264", 5600) == before + gst.V4L2_ENC + gst.RTP_H264 + \
+    assert gst.sender_args("h264", 5600) == gen + gst.V4L2_ENC + gst.RTP_H264 + \
         ["!", "udpsink", "host=127.0.0.1", "port=5600", "bind-address=127.0.0.1", "sync=false"]
 
 

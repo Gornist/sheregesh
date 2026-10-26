@@ -76,7 +76,10 @@ def available() -> bool:
 
 
 # Pi 4: аппаратный кодер требует уровень в caps и повтор SPS/PPS (иначе приёмник, подключившийся позже, не декодирует).
-V4L2_ENC = ["v4l2h264enc", "extra-controls=controls,repeat_sequence_header=1,video_bitrate=2000000,h264_i_frame_period=30",
+# 6 Мбит/с, переменный битрейт: на pi2 (720p30, сложная сцена) задержка кодера та же, что при 2 Мбит/с (p50 10,0 мс
+# против 9,7), качество выше; при минимальном QP 20 кодер выше ≈ 5,7 Мбит/с и не поднимается. Постоянный битрейт
+# (video_bitrate_mode=1) не включать: кодер копит кадры, задержка ≈ 450 мс.
+V4L2_ENC = ["v4l2h264enc", "extra-controls=controls,repeat_sequence_header=1,video_bitrate=6000000,h264_i_frame_period=30",
             "!", "video/x-h264,level=(string)4", "!", "h264parse"]
 OPENH264_ENC = ["openh264enc", "complexity=0", "gop-size=30", "bitrate=2000000"]
 RTP_H264 = ["!", "rtph264pay", "config-interval=1", "pt=96"]
@@ -171,10 +174,26 @@ def synthetic(width=1280, height=720, fps=30, pattern="smpte"):
     return SyntheticSource(width, height, fps, pattern, overlays)
 
 
-def _source(width, height, fps, pattern, src=None):
-    """Сырые кадры I420 от источника (по умолчанию — синтетического) для кодера."""
-    return _raw(src or synthetic(width, height, fps, pattern)) + \
-        ["videoconvert", "!", "video/x-raw,format=I420", "!"]   # rtpjpegpay принимает только 4:2:0/4:2:2
+# Форматы источника, которые аппаратный кодер Pi 4 (bcm2835-codec) принимает сам: videoconvert на CPU перед ним
+# лишний. Замер на pi2: 720p30 — 9,5 мс до выхода кодера вместо 14,9 и вдвое меньше CPU; 1080p30 — 21,6 мс и 30 к/с
+# вместо 30,5 мс и ≈ 24 к/с. I420 — синтетический генератор (формат согласуется с кодером напрямую). MJPEG сюда не
+# входит: jpegdec выдаёт и 4:2:2 (Y42B), которого кодер не принимает.
+V4L2_ENC_DIRECT = frozenset({"YUYV", "UYVY", "I420"})
+
+
+def _direct_to_encoder(codec, src):
+    """Сырые кадры источника идут в аппаратный кодер H.264 без videoconvert."""
+    if codec != "h264" or (h264_elements() or ([""],))[0][0] != "v4l2h264enc":
+        return False
+    mode = getattr(src, "mode", None)
+    return mode is not None and mode.pixfmt in V4L2_ENC_DIRECT
+
+
+def _source(width, height, fps, pattern, src=None, direct=False):
+    """Сырые кадры от источника (по умолчанию — синтетического) для кодера: I420 через videoconvert, либо формат
+    источника как есть, если его принимает кодер (direct)."""
+    raw = _raw(src or synthetic(width, height, fps, pattern))
+    return raw if direct else raw + ["videoconvert", "!", "video/x-raw,format=I420", "!"]   # rtpjpegpay — только 4:2:0/4:2:2
 
 
 def _raw(src):
@@ -199,7 +218,8 @@ def _encoded(codec, width, height, fps, pattern, src):
     through = _PASSTHROUGH.get((mode.pixfmt, codec)) if mode is not None else None
     if through:
         return [GST_LAUNCH, "-q", *src.capture(), *through]
-    return _source(width, height, fps, pattern, src) + encoder_args(codec)
+    src = src or synthetic(width, height, fps, pattern)
+    return _source(width, height, fps, pattern, src, _direct_to_encoder(codec, src)) + encoder_args(codec)
 
 
 def capture_args(src, width, height):
