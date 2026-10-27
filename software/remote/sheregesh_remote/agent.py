@@ -525,7 +525,7 @@ class Agent:
         elif mtype == "video-select" and mtype in TYPES.get(self.session or "", ()):
             self.select_video(body)
             await self.vtx.on_select()              # SRTP: новое поколение с новым источником
-        elif mtype in ("video-key-ack", "video-fallback") and mtype in TYPES.get(self.session or "", ()):
+        elif mtype in ("video-key-ack", "video-fallback", "video-renew") and mtype in TYPES.get(self.session or "", ()):
             await self.vtx.on_message(mtype, body)
         elif mtype == "module-cmd" and mtype in TYPES.get(self.session or "", ()):
             if self.module is not None:

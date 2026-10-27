@@ -228,26 +228,38 @@ def test_stale_state_json_is_ignored(env):
     assert rx.read_state() == {}
 
 
-def test_rx_service_restart_repeats_same_start(env):
-    """Служба rx перезапущена (state.json — idle без нашего поколения): пульт повторяет тот же start, не чаще раза в 2 с."""
+def test_rx_lost_generation_sends_renew_not_same_start(env):
+    """Служба rx перезапущена: тот же ключ повторять нельзя (ROC SRTP) — video-renew блоку, не чаще раза в 10 с."""
     rx, svc, tmp = env
     body = key_body()
     rx.handle("video-key", body)
     write_state(tmp, session=body["session"], gen=body["gen"])
     rx.tick()
-    assert rx.phase == "streaming" and len(svc.cmds("start")) == 1
+    assert rx.phase == "streaming"
     write_state(tmp, state="idle", session="", gen=0)
     rx.tick()
-    starts = svc.cmds("start")
-    assert len(starts) == 2 and starts[1] == starts[0]
-    svc.t += 1
-    rx.tick()
-    assert len(svc.cmds("start")) == 2
-    svc.t += 1.1
-    rx.tick()
-    assert len(svc.cmds("start")) == 3
-    write_state(tmp, session=body["session"], gen=body["gen"])
+    renews = [b for t, b in svc.sent if t == "video-renew"]
+    assert len(svc.cmds("start")) == 1 and len(renews) == 1
+    assert renews[0]["session"] == body["session"] and renews[0]["gen"] == body["gen"]
     svc.t += 5
     rx.tick()
-    assert len(svc.cmds("start")) == 3 and rx.phase == "streaming"
+    assert len([b for t, b in svc.sent if t == "video-renew"]) == 1
+    svc.t += 6
+    rx.tick()
+    assert len([b for t, b in svc.sent if t == "video-renew"]) == 2
+
+
+def test_long_stall_sends_renew(env):
+    """Кадров нет дольше 5 с (degraded) — тоже video-renew."""
+    rx, svc, tmp = env
+    body = key_body()
+    rx.handle("video-key", body)
+    write_state(tmp, session=body["session"], gen=body["gen"])
+    rx.tick()
+    write_state(tmp, state="degraded", session=body["session"], gen=body["gen"], last_frame_age_s=2.0)
+    rx.tick()
+    assert not [b for t, b in svc.sent if t == "video-renew"]
+    write_state(tmp, state="recovering", session=body["session"], gen=body["gen"], last_frame_age_s=6.0)
+    rx.tick()
+    assert [b["reason"] for t, b in svc.sent if t == "video-renew"] == ["no frames (recovering)"]
 

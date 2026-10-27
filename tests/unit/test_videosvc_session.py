@@ -686,3 +686,15 @@ def test_validate_fallback_schema():
     for bad in ({**body, "extra": 1}, {**body, "reason": ""}, {**body, "gen": 0}, {k: v for k, v in body.items() if k != "reason"}):
         with pytest.raises(S.SchemaError):
             S.validate_fallback(bad)
+
+
+def test_renew_matches_only_current_generation():
+    tx = S.TxSessions()
+    tx.new_control_session()
+    first = tx.begin("main", "aes-128-gcm")
+    second = tx.begin("main", "aes-128-gcm")
+    assert tx.renew_matches(S.renew_body("main", second.session, second.gen, "rx lost generation"))
+    assert not tx.renew_matches(S.renew_body("main", first.session, first.gen, "rx lost generation"))
+    with pytest.raises(S.SchemaError):
+        S.validate_renew({**S.renew_body("main", second.session, second.gen, "x"), "extra": 1})
+

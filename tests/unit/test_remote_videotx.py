@@ -689,3 +689,30 @@ def test_second_hello_tears_down_previous_session_then_starts_new_one():
         assert rig.allow_calls == [PEER, "none", PEER]           # адрес снова открыт для нового сеанса
         assert len(rig.ctl_args("start")) == 2
     asyncio.run(scenario())
+
+
+# --- video-renew (контракт v8) -------------------------------------------------------------------------------
+
+def test_renew_of_current_generation_issues_new_key_and_ssrc():
+    """video-renew текущего поколения → новое поколение (новый ключ и SSRC); чужое и слишком частое — игнорируются."""
+    async def scenario():
+        rig = Rig()
+        body = await start_srtp(rig)
+        await ack(rig, body)
+        rig.advance(3)
+        await rig.vtx.on_message("video-renew", {"stream": STREAM, "session": OTHER_SESSION, "gen": body["gen"],
+                                                 "reason": "rx lost generation"})
+        await rig.vtx.on_message("video-renew", {"stream": STREAM, "session": body["session"], "gen": body["gen"] + 7,
+                                                 "reason": "rx lost generation"})
+        assert len(rig.video_keys()) == 1
+        await rig.vtx.on_message("video-renew", {"stream": STREAM, "session": body["session"], "gen": body["gen"],
+                                                 "reason": "rx lost generation"})
+        keys = rig.video_keys()
+        assert len(keys) == 2 and keys[1]["gen"] == body["gen"] + 1
+        assert keys[1]["ssrc"] != body["ssrc"] and keys[1]["srtp"]["key_b64"] != body["srtp"]["key_b64"]
+        await ack(rig, keys[1])
+        await rig.vtx.on_message("video-renew", {"stream": STREAM, "session": body["session"], "gen": keys[1]["gen"],
+                                                 "reason": "again"})
+        assert len(rig.video_keys()) == 2                 # раньше 2 с после прошлого поколения — игнорируется
+    asyncio.run(scenario())
+

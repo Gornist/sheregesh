@@ -170,6 +170,16 @@ class VideoTx:
                 return
             if mtype == "video-key-ack":
                 await self._on_ack(body)
+            elif mtype == "video-renew":
+                if self.tx.renew_matches(body):
+                    now = self._clock()
+                    if now - self.last_gen_at >= MIN_GEN_INTERVAL_S:
+                        self._log(f"video: video-renew: {mask(body)}")
+                        await self._offer(f"renew: {body.get('reason', '')}"[:64])
+                    else:
+                        self._log("video: video-renew too soon after the last generation — ignored")
+                else:
+                    self._log("video: video-renew of another generation ignored")
             elif mtype == "video-fallback":
                 if self.tx.fallback_matches(body):
                     self._log(f"video: video-fallback: {mask(body)}")

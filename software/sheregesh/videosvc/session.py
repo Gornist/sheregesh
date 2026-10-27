@@ -183,6 +183,19 @@ def validate_fallback(body) -> None:
         raise SchemaError("video-fallback: неверный reason")
 
 
+def renew_body(stream: str, session: str, gen: int, reason: str) -> dict:
+    """video-renew (пульт → блок): приёмник потерял поколение (перезапуск службы rx, долгий обрыв — счётчик ROC SRTP
+    уже не восстановить), блок выдаёт новое поколение: новый ключ и SSRC, номера RTP с нуля."""
+    return {"stream": stream, "session": session, "gen": gen, "reason": reason}
+
+
+def validate_renew(body) -> None:
+    _exact(body, {"stream", "session", "gen", "reason"}, "video-renew")
+    _check_ident(body, "video-renew")
+    if not isinstance(body["reason"], str) or not _REASON_RE.fullmatch(body["reason"]):
+        raise SchemaError("video-renew: неверный reason")
+
+
 # --- сторона блока ---------------------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -257,6 +270,15 @@ class TxSessions:
     def current_gen(self, stream: str) -> int | None:
         cur = self._cur.get(stream)
         return cur[0] if cur else None
+
+    def renew_matches(self, body) -> bool:
+        """video-renew относится к текущему поколению; иначе его игнорируют (старый запрос не трогает новое)."""
+        try:
+            validate_renew(body)
+        except SchemaError:
+            return False
+        cur = self._cur.get(body["stream"])
+        return cur is not None and body["session"] == self.session and body["gen"] == cur[0]
 
     def fallback_matches(self, body) -> bool:
         """video-fallback относится к текущему поколению (stream, session, gen); иначе его игнорируют (контракт v5)."""

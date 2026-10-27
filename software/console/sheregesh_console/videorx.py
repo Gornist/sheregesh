@@ -27,7 +27,8 @@ RX_PORT = 7444                   # порт видео пульта (UDP SRTP); 
 RTCP_PORT = 7445
 FIRST_FRAME_TIMEOUT_S = 5.0      # контракт v5 §6
 OFFSET_EVERY_S = 5.0
-RESTART_EVERY_S = 2.0            # повтор start после перезапуска службы rx, не чаще
+RENEW_AFTER_S = 5.0              # кадров нет дольше — просим новое поколение (video-renew)
+RENEW_EVERY_S = 10.0             # video-renew не чаще
 STATE_MAX_AGE_S = 5.0            # state.json старше — сведений нет (служба не пишет)
 SYSTEMCTL_TIMEOUT_S = 10.0
 STREAM = "main"
@@ -103,8 +104,7 @@ class VideoRx:
         self._mu = threading.Lock()             # короткая защита полей, которые читает GUI
         self._phase = "idle"                    # idle | starting | streaming | fallback
         self._ident = None                      # (stream, session, gen) запущенного приёма
-        self._start_args = None                 # аргументы start текущего поколения (повтор после перезапуска rx)
-        self._restart_at = None
+        self._renew_at = None                   # время последнего video-renew
         self._codec = "h264"
         self._ack_at = None
         self._last_offset_at = None
@@ -285,8 +285,6 @@ class VideoRx:
             self._fallback(ident, "start-failed")
             return
         self._ident, self._codec = ident, body["codec"]
-        self._start_args = args                     # для повтора start, если служба rx перезапустилась (ключ — только в памяти)
-        self._restart_at = None
         self._ack_at = self._clock()
         self._last_offset_at = None
         self._set("starting")
@@ -300,7 +298,6 @@ class VideoRx:
         """Остановить приём и закрыть порт (если что-то было запущено/разрешено)."""
         started = self._ident is not None
         self._ident = None
-        self._start_args = None
         if started:
             try:
                 self._ctl("stop", {"stream": self.stream, "reason": reason})
@@ -323,7 +320,6 @@ class VideoRx:
             pass
         self._allow("none")
         self._ident = None
-        self._start_args = None
         self._set("fallback", reason)
 
     # ---------- периодическое ----------
@@ -351,17 +347,19 @@ class VideoRx:
         with self._op:
             if self._ident is None:
                 return
-            if "gen" in st and self._start_args is not None and (st.get("session") != self._ident[1]
-                                                        or st.get("gen") != self._ident[2]):
-                # Служба rx перезапущена (или потеряла поток): её состояние не про наше поколение. Повторяем тот же
-                # start — для приёма это безопасно (ключ и SSRC те же, шифрует только блок), не чаще раза в 2 с.
-                if self._restart_at is None or now - self._restart_at >= RESTART_EVERY_S:
-                    self._restart_at = now
-                    self._log("warning", "video rx lost the session (service restarted?) — repeating start")
-                    try:
-                        self._ctl("start", self._start_args)
-                    except (CtlError, OSError):
-                        pass
+            lost = "gen" in st and (st.get("session") != self._ident[1] or st.get("gen") != self._ident[2])
+            stalled = (phase == "streaming" and st.get("state") in ("degraded", "recovering", "error", "stuck")
+                       and (st.get("last_frame_age_s") is None or st.get("last_frame_age_s") > RENEW_AFTER_S))
+            if lost or stalled:
+                # Приёмник потерял поколение: служба rx перезапущена или долгий обрыв. Тот же ключ повторять нельзя —
+                # счётчик переполнений ROC SRTP уже не восстановить (после ~65 тыс. пакетов, ≈ 2 мин при 6 Мбит/с,
+                # приёмник с ROC = 0 отбрасывает всё). Просим у блока новое поколение (video-renew).
+                if self._renew_at is None or now - self._renew_at >= RENEW_EVERY_S:
+                    self._renew_at = now
+                    why = "rx lost generation" if lost else f"no frames ({st.get('state')})"
+                    out = vsession.renew_body(*self._ident, why)
+                    self._log_msg("->", "video-renew", out)
+                    self._send("video-renew", out)
                 return
             if phase == "starting":
                 if st.get("state") == "streaming":

@@ -33,9 +33,10 @@ TYPES["1.3"] = TYPES["1.2"] | {"module-cmd"}
 # передаётся (CHG-012).
 TYPES["1.4"] = TYPES["1.3"] | {"rc", "rc-state"}
 # 1.5 (ADR-0016): видеосеанс SRTP по UDP через службы видео. video-key — блок → пульт (поколение, SSRC, ключ SRTP;
-# поле key_b64 в журнал не пишется), video-key-ack и video-fallback — пульт → блок, video-stop — блок → пульт.
+# поле key_b64 в журнал не пишется), video-key-ack, video-fallback и video-renew (приёмник потерял поколение —
+# нужен новый ключ и SSRC) — пульт → блок, video-stop — блок → пульт.
 # Схемы и правила устаревания — sheregesh.videosvc.session и docs/architecture/VIDEO-SERVICE-CONTRACT.md §6.
-TYPES["1.5"] = TYPES["1.4"] | {"video-key", "video-key-ack", "video-stop", "video-fallback"}
+TYPES["1.5"] = TYPES["1.4"] | {"video-key", "video-key-ack", "video-stop", "video-fallback", "video-renew"}
 
 
 @dataclass(frozen=True)
