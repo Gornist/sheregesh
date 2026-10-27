@@ -108,6 +108,22 @@ class VerifyTests(unittest.TestCase):
             self.assertTrue(after['dirty'])
 
 
+class SnapshotScopeTests(unittest.TestCase):
+    def test_untracked_research_images_do_not_invalidate_source_checks(self):
+        verify = load('verify')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            (root / 'analysis').mkdir()
+            image = root / 'analysis/card.img'
+            image.write_bytes(b'first')
+            before = verify.snapshot(root)
+            image.write_bytes(b'second')
+            after = verify.snapshot(root)
+            self.assertEqual(before['fingerprint'], after['fingerprint'])
+            self.assertEqual(after['untracked_excluded'], 1)
+
+
 class ContextTests(unittest.TestCase):
     def test_context_is_short_local_and_claude_hook_output(self):
         context = load('session_context')

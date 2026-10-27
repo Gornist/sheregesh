@@ -51,8 +51,18 @@ def snapshot(root):
         commit = None
     status = git('status', '--porcelain', '-z')
     digest = hashlib.sha256()
-    # Hash worktree content (including untracked source) without recording it in the report.
-    paths = set(git('ls-files', '-z').split(b'\0')) | set(git('ls-files', '--others', '--exclude-standard', '-z').split(b'\0'))
+    # Hash tracked content plus untracked source roots, not unrelated research disk images.
+    tracked = set(git('ls-files', '-z').split(b'\0')) - {b''}
+    untracked = set(git('ls-files', '--others', '--exclude-standard', '-z').split(b'\0')) - {b''}
+    roots = {'software', 'tools', 'tests', 'docs', 'os', 'hardware', '.github'}
+    top_suffixes = {'.py', '.md', '.toml', '.json', '.yaml', '.yml', '.sh'}
+    def source(raw):
+        path = Path(os.fsdecode(raw))
+        return (path.parts[0] in roots or
+                path.as_posix().startswith(('.claude/skills/', '.claude/agents/')) or
+                (len(path.parts) == 1 and (path.suffix in top_suffixes or path.name in {'Makefile', 'justfile'})))
+    selected = {raw for raw in untracked if source(raw)}
+    paths = tracked | selected
     for raw in sorted(paths - {b''}):
         digest.update(raw + b'\0')
         path = Path(root) / os.fsdecode(raw)
@@ -65,7 +75,8 @@ def snapshot(root):
                     digest.update(chunk)
         else:
             digest.update(b'missing\0')
-    return {'commit': commit, 'dirty': bool(status), 'fingerprint': digest.hexdigest()}
+    return {'commit': commit, 'dirty': bool(status), 'fingerprint': digest.hexdigest(),
+            'untracked_excluded': len(untracked - selected)}
 
 
 def pytest_outcomes(path):

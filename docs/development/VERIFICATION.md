@@ -20,7 +20,10 @@
 Точные команды перечислены в `tools/dev/verify.py`. Профили выбираются явно; полный pytest остаётся в CI.
 summary.json хранит commit, dirty, fingerprint содержимого до/после, окружение, команды, exit codes,
 длительность и общий результат. Изменение исходников во время прогона даёт ERROR: доказательство устарело.
-Fingerprint не учитывает gitignored зависимости и системные библиотеки — их состояние требует окружения CI.
+Fingerprint покрывает все tracked-файлы и untracked в source-каталогах software/tools/tests/docs/os/hardware/.github,
+.claude/skills и .claude/agents, а также корневые файлы кода/конфигурации/документации.
+Посторонние untracked, например образы дисков в analysis/, не читаются; их число — untracked_excluded.
+Gitignored зависимости и системные библиотеки не хешируются — их состояние требует окружения CI.
 `PASS` профиля требует успешных команд без SKIP pytest. JUnit сохраняет пропуски и причины;
 при пропусках результат INCOMPLETE и exit 1, при отсутствии JUnit — ERROR.
 Аппаратный L4 и релизный GO этим runner не выдаются. `reqgen.py gate` запускается отдельно.
