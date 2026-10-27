@@ -12,7 +12,7 @@ install: копия пакета читается в память (O_NOFOLLOW, �
 ssh-keygen -Y по /etc/sheregesh/deploy/allowed_signers (пространство sheregesh-deploy) → строгий разбор и SHA-256
 каждого файла → распаковка в /var/lib/sheregesh-deploy/releases/.tmp-* (root, 0755/0644), RELEASE.json
 последним, rename в releases/<id> → атомарное переключение symlink current (rename) с отметкой pending →
-перезапуск только служб роли платы (пульт: sheregesh-console; блок: sheregesh-remote-net; без роли: эмулятор и
+перезапуск только служб роли платы (пульт: video-rx и console; блок: video-tx и remote-net; без роли: эмулятор и
 пульт) → ожидание READY (Type=notify) и окно наблюдения без перезапусков → pending снимается.
 Если служба не вышла в READY или перезапустилась в окне — current возвращается на прежний выпуск (или заводской
 код) и службы перезапускаются снова: итог ROLLED_BACK. После перезагрузки до подтверждения launcher сам выбирает
@@ -42,8 +42,10 @@ from . import launcher, sig
 from .bundle import MAX_BUNDLE, BundleError, parse_bundle
 
 ACTIONS = ("install", "rollback", "factory", "status")
-UNITS = {"remote": ["sheregesh-remote-net"], "console": ["sheregesh-console"],
+UNITS = {"remote": ["sheregesh-video-tx", "sheregesh-remote-net"],
+         "console": ["sheregesh-video-rx", "sheregesh-console"],
          "standalone": ["sheregesh-remote-emu", "sheregesh-console"]}
+OPTIONAL_UNITS = frozenset({"sheregesh-video-tx", "sheregesh-video-rx"})
 KEEP_RELEASES = 3
 EX_USAGE = 64
 HISTORY = 20
@@ -71,7 +73,7 @@ class DeployError(Exception):
 class Systemd:
     """Управление службами через systemctl (установщик работает от root)."""
 
-    PROPS = "ActiveState,SubState,Result,NRestarts,MainPID,InvocationID,ConditionResult"
+    PROPS = "LoadState,ActiveState,SubState,Result,NRestarts,MainPID,InvocationID,ConditionResult"
 
     def __init__(self, systemctl="systemctl"):
         self.systemctl = systemctl
@@ -270,6 +272,14 @@ class Installer:
         """Перезапуск служб роли и окно наблюдения. → (успех, {служба: пояснение})."""
         details, ok = {}, True
         for unit in units:
+            before = self.svc.show(unit)
+            if unit in OPTIONAL_UNITS and before.get("LoadState") == "not-found":
+                details[unit] = "нет юнита в старом образе — не оценивается"
+                continue
+            if before.get("LoadState") in ("error", "bad-setting", "masked"):
+                details[unit] = f"юнит не загружен: {before['LoadState']}"
+                ok = False
+                continue
             started, msg = self.svc.restart(unit, self.cfg.restart_timeout)
             s = self.svc.show(unit)
             if s.get("ConditionResult") == "no" and s.get("ActiveState") != "active":

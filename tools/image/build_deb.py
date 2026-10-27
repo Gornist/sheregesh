@@ -50,6 +50,8 @@ LAUNCHER = f"/{PREFIX}/software/sheregesh/deploy/launcher.py"
 LAUNCHED = {
     "usr/bin/sheregesh-console": "sheregesh_console",
     "usr/bin/sheregesh-remote-emu": "sheregesh_remote",
+    "usr/bin/sheregesh-video-tx": "sheregesh.videosvc.tx",
+    "usr/bin/sheregesh-video-rx": "sheregesh.videosvc.rx",
 }
 WRAPPERS = {   # команда → модуль (-m) или скрипт из /usr/lib/sheregesh (пробы S2 и длительный прогон)
     "usr/bin/sheregesh-probe": "tools/probe/s2probe.py",
@@ -60,10 +62,7 @@ WRAPPERS = {   # команда → модуль (-m) или скрипт из /
     "usr/bin/sheregesh-deployd": "sheregesh.deploy.installer",    # установщик выпусков, root (S3.1-DEPLOY)
     "usr/bin/sheregesh-ota-agent": "sheregesh.update.ota",        # агент обновления A/B, root (S3.1-DEPLOY)
     "usr/bin/sheregesh-ota-client": "sheregesh.update.ota_client",  # клиент агента для sheregesh-ui
-    # ADR-0016: видеослужбы (модули sheregesh.videosvc.tx/rx — отдельный трек; launcher выпусков DEV deploy знает
-    # только sheregesh_console/sheregesh_remote, поэтому службы видео стартуют из /usr, как системные команды)
-    "usr/bin/sheregesh-video-tx": "sheregesh.videosvc.tx",
-    "usr/bin/sheregesh-video-rx": "sheregesh.videosvc.rx",
+
 }
 # ADR-0016: помощник межсетевого экрана видео (root, юнит sheregesh-video-allow@) и таблицы nftables по ролям.
 # Помощник лежит в /usr/lib/sheregesh, команда в /usr/bin — обёртка python3 -I, как у прочих системных команд.

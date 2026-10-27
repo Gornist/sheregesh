@@ -186,7 +186,7 @@ def test_install_switches_atomically_and_restarts_only_role_service(tmp_path):
     rc, st = b.run("install")
     assert rc == 0 and st["last"]["result"] == "OK" and st["current"] == "0.1.0+g1" and st.get("previous") is None
     assert os.readlink(b.settings.deploy_dir / "current") == "releases/0.1.0+g1"
-    assert b.svc.restarts == ["sheregesh-console"]                       # только служба роли пульта
+    assert b.svc.restarts == ["sheregesh-video-rx", "sheregesh-console"]  # только службы роли пульта
     assert b.code()[1] == "0.1.0+g1" and "pending" not in st
     assert not list(b.settings.incoming.iterdir())                         # входящие убраны
     rel = b.settings.deploy_dir / "releases/0.1.0+g1"
@@ -194,7 +194,7 @@ def test_install_switches_atomically_and_restarts_only_role_service(tmp_path):
 
 
 @needs_ssh_keygen
-@pytest.mark.parametrize("role, units", [("remote", ["sheregesh-remote-net"]),
+@pytest.mark.parametrize("role, units", [("remote", ["sheregesh-video-tx", "sheregesh-remote-net"]),
                                          (None, ["sheregesh-remote-emu", "sheregesh-console"])])
 def test_role_selects_services(tmp_path, role, units):
     b = Board(tmp_path, role=role)
@@ -212,7 +212,7 @@ def test_failed_service_rolls_back_to_previous_release(tmp_path, behaviour):
     rc, st = b.run("install")
     assert rc == 1 and st["last"]["result"] == "ROLLED_BACK" and st["last"]["rejected"] == "0.1.0+bad"
     assert st["current"] == "0.1.0+good" and b.code()[1] == "0.1.0+good"
-    assert b.svc.restarts == ["sheregesh-console"] * 3                    # установка, плохой, возврат
+    assert b.svc.restarts == ["sheregesh-video-rx", "sheregesh-console"] * 3                    # установка, плохой, возврат
     assert b.svc.units["sheregesh-console"]["release"] == "0.1.0+good"
 
 
@@ -467,3 +467,52 @@ def test_release_files_get_commit_time(tmp_path):
     rel = b.settings.deploy_dir / "releases/0.1.0+t"
     stamps = {os.stat(rel / p).st_mtime for p in files}
     assert stamps == {1790000000}
+
+
+@needs_ssh_keygen
+@pytest.mark.parametrize('role, video, client', [
+    ('console', 'sheregesh-video-rx', 'sheregesh-console'),
+    ('remote', 'sheregesh-video-tx', 'sheregesh-remote-net'),
+])
+def test_deploy_restarts_video_before_client_and_rolls_back_video_failure(tmp_path, role, video, client):
+    b = Board(tmp_path, role=role)
+    b.push(make_bundle('0.1.0+good'))
+    assert b.run('install')[0] == 0
+    assert b.svc.restarts == [video, client]
+    restart = b.svc.restart
+
+    def fail_new_video(unit, timeout):
+        result = restart(unit, timeout)
+        if unit == video and b.code()[1] == '0.1.0+bad':
+            b.svc.units[unit].update(ActiveState='failed', SubState='failed')
+            return False, 'video failed'
+        return result
+
+    b.svc.restart = fail_new_video
+    b.push(make_bundle('0.1.0+bad'))
+    rc, st = b.run('install')
+    assert rc == 1 and st['last']['result'] == 'ROLLED_BACK'
+    assert st['current'] == '0.1.0+good'
+    assert b.svc.units[video]['release'] == b.svc.units[client]['release'] == '0.1.0+good'
+    assert video in st['last']['units'] and video in st['last']['rollback_units']
+
+
+@needs_ssh_keygen
+def test_deploy_old_image_skips_only_missing_video_unit(tmp_path):
+    b = Board(tmp_path, role='console')
+    show = b.svc.show
+    b.svc.show = lambda unit: {'LoadState': 'not-found'} if unit == 'sheregesh-video-rx' else show(unit)
+    b.push(make_bundle())
+    rc, st = b.run('install')
+    assert rc == 0 and b.svc.restarts == ['sheregesh-console']
+    assert 'sheregesh-video-rx' in st['last']['units']
+
+
+@needs_ssh_keygen
+def test_deploy_broken_video_unit_is_not_treated_as_old_image(tmp_path):
+    b = Board(tmp_path, role='console')
+    show = b.svc.show
+    b.svc.show = lambda unit: {'LoadState': 'error', 'ActiveState': 'inactive'} if unit == 'sheregesh-video-rx' else show(unit)
+    b.push(make_bundle())
+    rc, st = b.run('install')
+    assert rc == 1 and st['last']['result'] == 'BROKEN'

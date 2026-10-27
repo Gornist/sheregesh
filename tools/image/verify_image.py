@@ -306,6 +306,10 @@ def video_checks(rep, root, packages_tsv):
     """ADR-0016: видеослужбы, таблицы nftables, помощник адреса, правило polkit обычного образа, пакет nftables."""
     units = {u: root.cat(f"/usr/lib/systemd/system/{u}") for u in VIDEO_UNITS}
     tx, rx = units["sheregesh-video-tx.service"], units["sheregesh-video-rx.service"]
+    rep.add("video.launcher", "видеослужбы запускают выбранный DEV-выпуск через launcher",
+            root.exists(LAUNCHER) and all(
+                f"python3 -I {LAUNCHER} sheregesh.videosvc.{role}" in root.cat(f"/usr/bin/sheregesh-video-{role}")
+                for role in ("tx", "rx")))
     common = ("Type=notify", "NotifyAccess=main", "User=sheregesh-ui", "WatchdogSec=15", "LimitCORE=0",
               "RuntimeDirectory=sheregesh-video", "RuntimeDirectoryMode=0700", "NoNewPrivileges=yes",
               "ProtectSystem=strict", "IPAddressDeny=any", "StartLimitBurst=")

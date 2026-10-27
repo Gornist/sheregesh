@@ -57,3 +57,50 @@ def test_ssh_probe_records_failures(monkeypatch):
             time.sleep(0.1)
     r = p.result()
     assert r["ssh_probes_ok"] >= 1 and [f["rc"] for f in r["ssh_probes_failed"]] == [255, 0]
+
+
+def test_runtime_releases_use_fresh_launcher_logs_for_every_role_service(monkeypatch):
+    calls = []
+    def ssh(host, cmd, timeout=120, data=None):
+        calls.append(cmd)
+        if cmd.startswith('systemctl'):
+            return 0, 'InvocationID=abc123\nMainPID=42', ''
+        module = 'sheregesh.videosvc.rx' if 'sheregesh-video-rx' in cmd else 'sheregesh_console'
+        return 0, f'sheregesh-launcher: {module}: выпуск 0.1.0+gnew', ''
+    monkeypatch.setattr(cp, 'ssh', ssh)
+    releases = cp.runtime_releases('host', {'sheregesh-video-rx': 'READY', 'sheregesh-console': 'READY'}, 123)
+    assert set(releases) == {'sheregesh-video-rx', 'sheregesh-console'}
+    assert all(r['release'] == '0.1.0+gnew' for r in releases.values())
+    assert all('--since @123' in cmd and '_SYSTEMD_INVOCATION_ID=abc123' in cmd for cmd in calls if cmd.startswith('journalctl'))
+    assert all(r['invocation']['MainPID'] == '42' for r in releases.values())
+
+
+def test_runtime_releases_missing_log_is_unknown_not_current_symlink(monkeypatch):
+    monkeypatch.setattr(cp, 'ssh', lambda *a, **kw: (0, '', ''))
+    releases = cp.runtime_releases('host', {'sheregesh-video-tx': 'READY'}, 123)
+    assert releases['sheregesh-video-tx']['release'] == 'unknown'
+
+
+def test_role_inventory_does_not_trust_old_installers_unit_list(monkeypatch):
+    monkeypatch.setattr(cp, 'ssh', lambda *a, **kw: (0, 'LoadState=loaded\nConditionResult=yes\nActiveState=active', ''))
+    units, skipped = cp.role_service_units('host', 'pi1')
+    assert units == {'sheregesh-console': 'READY', 'sheregesh-video-rx': 'READY'}
+    assert not skipped
+
+
+def test_role_inventory_marks_missing_video_as_unverified_coverage(monkeypatch):
+    monkeypatch.setattr(cp, 'ssh', lambda *a, **kw: (0, 'LoadState=not-found', ''))
+    units, skipped = cp.role_service_units('host', 'pi2')
+    assert units == {'sheregesh-remote-net': 'READY'}
+    assert 'sheregesh-video-tx' in skipped
+
+
+def test_runtime_releases_rejects_restarted_invocation(monkeypatch):
+    shows = iter(['InvocationID=abc123\nMainPID=42', 'InvocationID=abc456\nMainPID=43'])
+    def ssh(host, cmd, **kwargs):
+        if cmd.startswith('systemctl'):
+            return 0, next(shows), ''
+        return 0, 'sheregesh-launcher: sheregesh.videosvc.tx: выпуск new', ''
+    monkeypatch.setattr(cp, 'ssh', ssh)
+    result = cp.runtime_releases('host', {'sheregesh-video-tx': 'READY'}, 123)
+    assert result['sheregesh-video-tx']['release'] == 'unknown'

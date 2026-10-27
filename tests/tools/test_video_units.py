@@ -116,9 +116,9 @@ class VideoPackageTest(unittest.TestCase):
             self.assertIn(f"/usr/lib/systemd/system/{u}", files)
         for n in vi.VIDEO_NFT:
             self.assertIn(f"/usr/share/sheregesh/nft/{n}", files)
-        self.assertIn("-m sheregesh.videosvc.tx", files["/usr/bin/sheregesh-video-tx"])
-        self.assertIn("-m sheregesh.videosvc.rx", files["/usr/bin/sheregesh-video-rx"])
-        self.assertIn("python3 -s ", files["/usr/bin/sheregesh-video-tx"])
+        self.assertIn(f"python3 -I {build_deb.LAUNCHER} sheregesh.videosvc.tx", files["/usr/bin/sheregesh-video-tx"])
+        self.assertIn(f"python3 -I {build_deb.LAUNCHER} sheregesh.videosvc.rx", files["/usr/bin/sheregesh-video-rx"])
+        self.assertNotIn("-m sheregesh.videosvc.tx", files["/usr/bin/sheregesh-video-tx"])
         self.assertIn("python3 -I /usr/lib/sheregesh/tools/image/bin/sheregesh-video-allow", files["/usr/bin/sheregesh-video-allow"])
         for path in ("/usr/bin/sheregesh-video-allow", "/usr/lib/sheregesh/tools/image/bin/sheregesh-video-allow",
                      "/usr/bin/sheregesh-video-tx", "/usr/bin/sheregesh-video-rx"):
@@ -156,7 +156,7 @@ class VideoPackageTest(unittest.TestCase):
         files, tsv = self.image()
         r = self.run_checks(files, tsv)
         self.assertEqual({k: v for k, v in r.items() if v != "PASS"}, {})
-        self.assertEqual(len(r), 9)
+        self.assertEqual(len(r), 10)
         _, tsv2 = self.image(listed=("python3",))
         self.assertEqual(self.run_checks(files, tsv2)["video.nftables"], "FAIL")
         broken = dict(files)
@@ -165,9 +165,10 @@ class VideoPackageTest(unittest.TestCase):
         del broken["/usr/share/sheregesh/nft/sheregesh-video-remote.nft"]
         del broken["/etc/polkit-1/rules.d/52-sheregesh-video-allow.rules"]
         del broken["/usr/bin/sheregesh-video-allow"]
+        broken["/usr/bin/sheregesh-video-tx"] = "exec python3 -s -m sheregesh.videosvc.tx"
         del broken["/etc/systemd/system/multi-user.target.wants/sheregesh-video-rx.service"]
         r = self.run_checks(broken, tsv)
-        for cid in ("video.rx_nft", "video.nft", "video.polkit", "video.allow", "video.enabled"):
+        for cid in ("video.rx_nft", "video.nft", "video.polkit", "video.allow", "video.enabled", "video.launcher"):
             self.assertEqual(r[cid], "FAIL", cid)
 
 

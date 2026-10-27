@@ -141,6 +141,51 @@ def app_release(host):
     return {"launcher": line}
 
 
+def role_service_units(host, board):
+    """Inventory independent of an old root installer's incomplete last.units."""
+    client, video = (("sheregesh-console", "sheregesh-video-rx") if board == "pi1" else
+                     ("sheregesh-remote-net", "sheregesh-video-tx"))
+    units, skipped = {client: "READY"}, {}
+    rc, out, _ = ssh(host, f"systemctl show {video} -p LoadState,ConditionResult,ActiveState")
+    props = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    if rc == 0 and (props.get("LoadState") == "not-found" or
+                    (props.get("ConditionResult") == "no" and props.get("ActiveState") != "active")):
+        skipped[video] = props
+    else:
+        units[video] = "READY"  # unknown/broken must not silently disappear from coverage
+    return units, skipped
+
+
+def runtime_releases(host, units, since):
+    """Launcher evidence bound to a stable running systemd invocation, not to current symlink."""
+    modules = {"sheregesh-console": "sheregesh_console", "sheregesh-remote-net": "sheregesh_remote",
+               "sheregesh-remote-emu": "sheregesh_remote", "sheregesh-video-tx": "sheregesh.videosvc.tx",
+               "sheregesh-video-rx": "sheregesh.videosvc.rx"}
+    def invocation(unit):
+        rc, out, _ = ssh(host, f"systemctl show {unit} -p InvocationID,MainPID")
+        return dict(line.split("=", 1) for line in out.splitlines() if "=" in line) if rc == 0 else {}
+    results = {}
+    for unit, detail in units.items():
+        if unit not in modules or not str(detail).startswith("READY"):
+            continue
+        module = modules[unit]
+        before = invocation(unit)
+        iid = before.get("InvocationID", "")
+        release, text = "unknown", ""
+        # systemd IDs contain only hex; refuse malformed values rather than interpolating them into SSH.
+        if iid and all(c in "0123456789abcdef" for c in iid) and before.get("MainPID", "0") != "0":
+            selector = "SYSLOG_IDENTIFIER=sheregesh-notify-relay" if unit == "sheregesh-console" else f"-u {unit}"
+            rc, out, _ = ssh(host, f"journalctl -b --since @{int(since)} -o cat --no-pager {selector} "
+                                  f"_SYSTEMD_INVOCATION_ID={iid} "
+                                  f"| grep -F 'sheregesh-launcher: {module}:' | tail -1")
+            text = out.rsplit(f"sheregesh-launcher: {module}:", 1)[-1].strip() if rc == 0 else ""
+            if invocation(unit) == before:
+                release = (text.split()[1] if text.startswith("выпуск ") else
+                           None if text.startswith("заводской код") else "unknown")
+        results[unit] = {"release": release, "launcher": text, "invocation": before}
+    return results
+
+
 def journal(host, since, unit="sheregesh-console", pattern="."):
     """Записи службы и её процессов в сеансе входа: пульт под PAMName пишет из session-N.scope под идентификатором
     ретранслятора/cage, поэтому одного -u мало. ExecStopPost («stopped: result=…») тоже идёт через PAM — его
@@ -333,16 +378,20 @@ def _deploy_case(a, action, rev=None, expect="OK", expect_release=None):
     s1 = state(h)
     last = s1.get("last") or {}
     rel = app_release(h)
-    res = {"rev": rev, "shdeploy_rc": rc, "shdeploy_out": out, "shdeploy_err": err, "result": last.get("result"),
+    units, skipped = role_service_units(h, a.board)
+    runtime = runtime_releases(h, units, t0)
+    res = {"unverified_services": skipped, "runtime_releases": runtime, "rev": rev, "shdeploy_rc": rc, "shdeploy_out": out, "shdeploy_err": err, "result": last.get("result"),
            "reason": last.get("reason"), "current_before": s0.get("current"), "current_after": s1.get("current"),
            "app_env": rel, "service_active_after_s": back, **p.result(),
            "journal": journal(h, t0, pattern="sheregesh-launcher|stopped:|Started|Main process")}
     ok = last.get("result") == expect and back is not None and not p.fail
+    if units:
+        ok = ok and bool(runtime) and all(r["release"] == s1.get("current") for r in runtime.values())
     if expect == "ROLLED_BACK":
         ok = ok and s1.get("current") == s0.get("current")
     if expect_release is not None:
         ok = ok and rel.get("SHEREGESH_RELEASE") == expect_release
-    return {**res, "verdict": "PASS" if ok else "FAIL"}
+    return {**res, "verdict": ("SKIP" if skipped else "PASS") if ok else "FAIL"}
 
 
 def sc_deploy_good(a):
