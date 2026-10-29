@@ -284,8 +284,10 @@ class Agent:
             body["video_transports"] = self.vtx.transports()
         return body
 
-    async def send(self, mtype, body):
-        if self.writer is None:
+    async def send(self, mtype, body, writer=None):
+        """writer — соединение, которому предназначено сообщение: если оно уже заменено или закрыто, не отправляется
+        (задачи прежнего сеанса не пишут в новый)."""
+        if self.writer is None or (writer is not None and writer is not self.writer):
             return
         self.seq += 1
         if mtype == "heartbeat" and self.hb_wait is None:
@@ -399,6 +401,7 @@ class Agent:
         if self.vserver is not None:                # видеосеанс привязан к сеансу управления — новый сеанс, новое видео
             self.vserver.drop("сеанс управления заменён")
         self.writer = writer
+        self.session = self.hello_writer = None     # согласование версии — заново, своим hello этого соединения
         self.peer_addr = (writer.get_extra_info("peername") or (None,))[0]
         if "video-key" in TYPES.get(self.proto, ()):
             await self.vtx.probe()                  # hello объявляет srtp, только если сокет службы tx отвечает
@@ -418,9 +421,9 @@ class Agent:
                 if self.writer is writer:
                     self.hb_wait = None             # пульт жив: любой приём от него
                 for msg in dec.feed(data):
-                    if self.writer is not writer and isinstance(msg, dict) and msg.get("type") == "rc":
-                        continue                    # кадр закрытого или заменённого сеанса не исполняется
-                    await self.on_message(msg)
+                    if self.writer is not writer:
+                        break                       # закрытое или заменённое соединение ничего не исполняет
+                    await self.on_message(msg, writer)
         except ConnectionError:
             pass
         finally:
@@ -434,6 +437,7 @@ class Agent:
                 await self.vtx.end("control session closed")
             if self.writer is None:                 # не заменён новым: команды органов управления — FAILSAFE сразу
                 self.control.on_link_lost()
+                self.session = self.hello_writer = None
             writer.close()
 
     def authorize_video(self, addr):
@@ -497,7 +501,19 @@ class Agent:
             self.vserver.drop("пульт не отвечает")
         self.vtx_end_task = asyncio.ensure_future(self.vtx.end("console silent"))
 
-    async def on_message(self, msg):
+    def established(self, writer, mtype) -> bool:
+        """Прикладная команда исполняется только в сеансе актуального соединения после его собственного hello и только
+        если согласованная версия её знает. Проверяется перед каждым изменением общего состояния, в том числе после
+        await."""
+        return writer is self.writer and writer is self.hello_writer and mtype in TYPES.get(self.session or "", ())
+
+    async def on_message(self, msg, writer=None):
+        """Сообщение соединения writer (по умолчанию — текущего). Сообщения заменённого или закрытого соединения не
+        исполняются: они не закрывают новое соединение и не меняют его версию, видео и выход управления."""
+        writer = self.writer if writer is None else writer
+        if writer is None or writer is not self.writer:
+            self.ignored += 1
+            return
         if isinstance(msg, BadMessage):
             self.bad += 1
             log(f"bad message from console: {msg.reason}")
@@ -506,43 +522,46 @@ class Agent:
         if mtype == "hello":
             n = negotiate(self.proto, body.get("proto"), body.get("software"), body.get("hardware"))
             log(f"hello from console proto={body.get('proto')} -> {n.reason}")
-            self.session = n.session
-            self.hello_writer = self.writer
+            self.session = n.session if n.compatible else None
+            self.hello_writer = writer if n.compatible else None
             if self.peer_desc is not None:          # что сообщил пульт — для проверки версий в sheregesh-health
                 self.peer_desc["hello"] = {k: body.get(k) for k in ("proto", "software", "hardware")}
             if not n.compatible:
-                await self.send("error", {"code": "PEER-INCOMPAT", "reason": n.reason, "local": self.proto})
-                if self.writer:
-                    self.writer.close()
+                await self.send("error", {"code": "PEER-INCOMPAT", "reason": n.reason, "local": self.proto}, writer)
+                writer.close()
+                if self.writer is writer:
                     self.writer = None
             else:                                   # выбор транспорта видео (SRTP при 1.5 и объявлении обеих сторон)
                 peer_ip = self.peer_desc.get("addr") if self.peer_desc else self.peer_addr
                 await self.vtx.begin(body, peer_ip, n.session)
+                if self.writer is not writer and self.hello_writer is None:
+                    await self.vtx.end("control session replaced")   # заменён во время выбора: видео не для него
         elif mtype == "bye":
-            if self.writer:
-                self.writer.close()
+            writer.close()
+            if self.writer is writer:
                 self.writer = None
-        elif mtype == "video-select" and mtype in TYPES.get(self.session or "", ()):
+        elif mtype == "video-select" and self.established(writer, mtype):
             self.select_video(body)
-            await self.vtx.on_select()              # SRTP: новое поколение с новым источником
-        elif mtype in ("video-key-ack", "video-fallback", "video-renew") and mtype in TYPES.get(self.session or "", ()):
+            if self.established(writer, mtype):
+                await self.vtx.on_select()          # SRTP: новое поколение с новым источником
+        elif mtype in ("video-key-ack", "video-fallback", "video-renew") and self.established(writer, mtype):
             await self.vtx.on_message(mtype, body)
-        elif mtype == "module-cmd" and mtype in TYPES.get(self.session or "", ()):
+        elif mtype == "module-cmd" and self.established(writer, mtype):
             if self.module is not None:
                 self.module.command(body)
-                if self.writer is not None:         # итог (или pending) — сразу, не ждать heartbeat
+                if self.writer is writer:           # итог (или pending) — сразу, не ждать heartbeat
                     await self.send_status()
             else:                                   # подсистема выключена: status.module нет, пульт видит «absent»
                 self.ignored += 1
                 log("module-cmd ignored: module subsystem disabled (--no-module)")
-        elif mtype == "rc" and mtype in TYPES.get(self.session or "", ()):
+        elif mtype == "rc" and self.established(writer, mtype):
             mono = time.monotonic()
             try:
                 self.control.on_rc(control_wire.check_rc(body), mono)
             except control_wire.BadRc as e:
                 self.control.on_bad(e.text, mono)
             self.control_tick(mono)                 # переход — rc-state сразу
-        elif mtype == "ack" and mtype in TYPES.get(self.session or self.proto, ()):
+        elif mtype == "ack" and writer is self.hello_writer and mtype in TYPES.get(self.session or "", ()):
             sent = self.sent.pop(body.get("seq"), None) if isinstance(body.get("seq"), int) else None
             if sent:
                 rtt = (time.monotonic() - sent[1]) * 1000
@@ -574,7 +593,7 @@ class Agent:
         period = RC_STATE_IDLE_S if self.control.state() == "IDLE" else RC_STATE_ACTIVE_S
         if self.control.transitions != self.rc_state_sent or mono - self.rc_state_at >= period:
             self.rc_state_at, self.rc_state_sent = mono, self.control.transitions
-            self.rc_state_task = asyncio.ensure_future(self.send("rc-state", self.control.snapshot(mono)))
+            self.rc_state_task = asyncio.ensure_future(self.send("rc-state", self.control.snapshot(mono), self.writer))
 
     async def control_ticker(self):
         while True:

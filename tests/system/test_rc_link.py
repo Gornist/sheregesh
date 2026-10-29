@@ -52,14 +52,18 @@ class Sender(threading.Thread):
 class Raw:
     """Пульт «по проводу»: hello с версией proto, отправка кадров, все принятые сообщения с временем приёма."""
 
-    def __init__(self, port, proto=PROTOCOL_VERSION):
+    def __init__(self, port, proto=PROTOCOL_VERSION, hello=True):
         self.proto, self.seq = proto, 1
         self.s = socket.create_connection(("127.0.0.1", port), timeout=5)
-        self.s.sendall(encode(proto, "hello", 1, 0.0, {"role": "console", "proto": proto, "software": "t",
-                                                         "hardware": "HW-1.0 Rev A", "device_id": "t"}))
+        if hello:
+            self.hello()
         self.msgs, self.lock = [], threading.Lock()
         self.t = threading.Thread(target=self._read, daemon=True)
         self.t.start()
+
+    def hello(self):
+        self.s.sendall(encode(self.proto, "hello", 1, 0.0, {"role": "console", "proto": self.proto, "software": "t",
+                                                              "hardware": "HW-1.0 Rev A", "device_id": "t"}))
 
     def _read(self):
         dec = Decoder()
@@ -205,6 +209,36 @@ def test_session_close_link_lost(agent):
         c2.close()
     a.stop()
     assert "control: ACTIVE -> FAILSAFE (link-lost)" in a.stderr()
+
+
+def test_new_connection_without_hello_does_not_control(agent):
+    """Сеанс принадлежит соединению: после завершённого нормального сеанса новое соединение без своего hello шлёт rc —
+    сторож не переходит в ACTIVE и кадры не учитываются; после hello этого соединения — ACTIVE с n=1."""
+    a = agent()
+    c = Raw(a.port)
+    for n in range(1, 11):
+        c.send("rc", {"n": n, **rc()})
+        time.sleep(0.02)
+    assert wait_for(lambda: health(a).get("state") == "ACTIVE", 2.0, 0.02)
+    c.close()
+    assert wait_for(lambda: health(a).get("state") == "FAILSAFE", 2.0, 0.02)
+    frames = health(a)["frames"]
+    c2 = Raw(a.port, hello=False)
+    try:
+        for n in range(1, 26):
+            c2.send("rc", {"n": n, **rc()})
+            time.sleep(0.02)
+        time.sleep(0.3)
+        h = health(a)
+        assert (h["state"], h["reason"], h["frames"]) == ("FAILSAFE", "link-lost", frames), h
+        assert not c2.states()
+        c2.hello()
+        c2.send("rc", {"n": 1, **rc()})
+        assert wait_for(lambda: c2.states() and c2.states()[-1][1]["state"] == "ACTIVE", 1.0, 0.01)
+    finally:
+        c2.close()
+    a.stop()
+    assert "FAILSAFE -> ACTIVE" in a.stderr()
 
 
 def test_console_stop_link_lost_via_client(agent):
