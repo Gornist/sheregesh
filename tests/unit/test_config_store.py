@@ -117,12 +117,76 @@ def test_failed_health_check_rolls_back_and_quarantines(store, check):
 
 @pytest.mark.test_id("TEST-CFG-004")
 def test_health_check_timeout_rolls_back(store):
+    """timeout ограничивает именно ожидание проверки: apply возвращается до освобождения зависшей проверки, поздний
+    успех ревизию не подтверждает, следующее apply после её завершения работает."""
+    import threading
+    import time
+    release, finished = threading.Event(), threading.Event()
+
+    def hung(r, s):
+        try:
+            release.wait(10)
+            return True                              # поздний успех
+        finally:
+            finished.set()
+    t0 = time.monotonic()
+    try:
+        res = store.apply(changed(system__theme="light"), hung, timeout_s=0.2)
+        elapsed = time.monotonic() - t0
+        assert not release.is_set() and not finished.is_set()   # вернулся раньше, чем проверка завершилась
+    finally:
+        release.set()                                # уборка: worker не остаётся висеть после теста
+    assert elapsed < 1.0, elapsed
+    assert not res.ok and res.stage == "health-check" and "0.2" in res.message
+    assert finished.wait(2)
+    st = store.state()
+    assert store.active().data["system.yaml"]["theme"] == "dark"
+    assert st["pending"] is None and st["confirmed"] != res.revision and (store.quarantine / res.revision).is_dir()
+    restarted = ConfigStore(store.root, SCHEMA)       # перезапуск после позднего успеха: подтверждённая — прежняя
+    restarted.recover()
+    assert restarted.active().data["system.yaml"]["theme"] == "dark" and restarted.state()["confirmed"] == st["confirmed"]
+    assert store.apply(changed(system__theme="light"), OK).ok
+
+
+def test_hung_health_check_bounds_workers_and_refuses_explicitly(store):
+    """Пока предыдущая проверка висит, новое apply не создаёт ещё один поток: явный отказ busy без новой ревизии;
+    поздний успех зависшей проверки не меняет более новую конфигурацию."""
     import threading
     release = threading.Event()
-    res = store.apply(changed(system__theme="light"), lambda r, s: release.wait(5), timeout_s=0.2)
-    release.set()
-    assert not res.ok and "0.2" in res.message
+    before = threading.active_count()
+    try:
+        res = store.apply(changed(system__theme="light"), lambda r, s: release.wait(10) or True, timeout_s=0.1)
+        assert not res.ok and res.stage == "health-check"
+        state = store.state()
+        for _ in range(5):
+            busy = store.apply(changed(system__language="en"), OK, timeout_s=0.1)
+            assert not busy.ok and busy.stage == "busy" and busy.revision is None
+            assert "health-check" in busy.message
+        assert store.state() == state
+        assert threading.active_count() - before <= 1
+    finally:
+        release.set()
+    for _ in range(100):
+        if threading.active_count() <= before:
+            break
+        threading.Event().wait(0.02)
+    assert threading.active_count() <= before
+    ok = store.apply(changed(system__language="en"), OK)
+    assert ok.ok and store.active().data["system.yaml"]["language"] == "en"
     assert store.active().data["system.yaml"]["theme"] == "dark"
+
+
+def test_health_check_exception_and_refusal_release_worker(store):
+    import threading
+    before = threading.active_count()
+
+    def boom(r, s):
+        raise RuntimeError("служба не ответила")
+    res = store.apply(changed(system__theme="light"), boom)
+    assert not res.ok and "служба не ответила" in res.message
+    assert not store.apply(changed(system__theme="light"), FAIL).ok
+    assert threading.active_count() <= before
+    assert store.apply(changed(system__theme="light"), OK).ok
 
 
 @pytest.mark.test_id("TEST-CFG-002")

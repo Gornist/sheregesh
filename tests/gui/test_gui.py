@@ -251,6 +251,20 @@ def test_invalid_settings_are_reported_and_not_applied(ui):
     assert "Не применено" in ui.backend.lastResult
 
 
+def test_busy_store_reported_without_rollback_event(ui):
+    """Хранилище отказало «busy» (предыдущая проверка служб висит): ревизия не создана — сообщение об этом, а не об
+    откате, и без события CFG-ROLLBACK."""
+    from sheregesh.config.store import ApplyResult
+    before = ui.backend.revision
+    ui.backend.store.apply = lambda *a, **kw: ApplyResult(False, "busy", active=before, message="busy")
+    form = dict(ui.backend.config)
+    form["language"] = "en"
+    assert ui.backend.applyForm(form, True) is False
+    assert ui.backend.revision == before
+    assert "проверка служб ещё идёт" in ui.backend.lastResult and before in ui.backend.lastResult
+    assert not [e for e in ui.backend.bench.events.log.events if e.code == "CFG-ROLLBACK"]
+
+
 def test_settings_persist_across_reload(ui):
     set_appearance(ui, language="en", theme="light", ui_scale=125)
     rev = ui.backend.revision

@@ -11,6 +11,12 @@
 Единственная точка переключения набора — атомарная замена state.json (запись во временный файл,
 fsync, rename, fsync каталога). Все изменяющие операции ФС идут через FsOps, чтобы тесты могли
 имитировать прерывание в любой точке.
+
+Health-check (ADR-0004, шаг 6) идёт в отдельном потоке-демоне: timeout_s ограничивает ожидание его итога, а не
+fsync/rollback, у которых свои расходы. Commit или откат делает только владелец транзакции (apply) после ожидания:
+поздний успех проверки, завершившейся после таймаута, ничего не подтверждает. Python не может прервать работающий
+поток, поэтому зависшая проверка остаётся одна на каталог хранилища: пока она не завершилась, новое apply получает
+явный отказ busy, и потоки не накапливаются.
 """
 import fcntl
 import hashlib
@@ -20,9 +26,8 @@ import os
 import re
 import shutil
 import tarfile
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +40,8 @@ HEALTH_TIMEOUT_S = 60       # ADR-0004, шаг 6
 STATE_FORMAT = 1
 BACKUP_FORMAT = 1
 _REV = re.compile(r"^r(\d{6})$")
+_HUNG = {}                  # каталог хранилища → поток health-check, не завершившийся к таймауту
+_HUNG_LOCK = threading.Lock()
 
 
 class ConfigError(Exception):
@@ -97,7 +104,7 @@ class Revision:
 @dataclass
 class ApplyResult:
     ok: bool
-    stage: str                       # validation | health-check | confirmed
+    stage: str                       # validation | busy | health-check | confirmed
     revision: str | None = None      # id новой ревизии (если создавалась)
     active: str | None = None        # id активной ревизии после операции
     issues: list = field(default_factory=list)
@@ -364,6 +371,11 @@ class ConfigStore:
         if issues:
             return ApplyResult(False, "validation", issues=issues, active=self.state()["current"],
                                message="конфигурация не прошла проверку; активная ревизия не изменена")
+        busy = self._busy()
+        if busy:
+            return ApplyResult(False, "busy", active=self.state()["current"],
+                               message=f"предыдущий health-check ({busy}) ещё не завершился; активная ревизия не "
+                                       "изменена, повторите позже")
         with self._lock():
             st = self.state()
             if st["pending"]:
@@ -379,15 +391,7 @@ class ConfigStore:
 
         rev = self._verify(rev_id)
         services = self.schema.services_for(changed_files)
-        ok, why = False, ""
-        try:
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                ok = bool(ex.submit(health_check, rev, services).result(timeout=timeout_s))
-            why = "" if ok else "health-check вернул отказ"
-        except FutureTimeout:
-            why = f"health-check не завершился за {timeout_s} с"
-        except Exception as e:  # noqa: BLE001 — любой сбой проверки = провал
-            why = f"health-check завершился ошибкой: {e}"
+        ok, why = self._run_check(health_check, rev, services, rev_id, timeout_s)
 
         with self._lock():
             st = self.state()
@@ -404,6 +408,43 @@ class ConfigStore:
             self._to_quarantine(rev_id)
             return ApplyResult(False, "health-check", revision=rev_id, active=st["confirmed"],
                                message=f"{why}; восстановлена ревизия {st['confirmed']}")
+
+    def _busy(self):
+        with _HUNG_LOCK:
+            t = _HUNG.get(self._key())
+            if t is not None and not t.is_alive():
+                del _HUNG[self._key()]
+                t = None
+            return None if t is None else t.name.removeprefix("health-check-")
+
+    def _key(self):
+        return str(self.root.resolve())
+
+    def _run_check(self, health_check, rev, services, rev_id, timeout_s):
+        """Итог health-check за timeout_s: (ok, причина отказа). Поток проверки только сообщает итог."""
+        box = {}
+        done = threading.Event()
+
+        def worker():
+            try:
+                box["ok"] = bool(health_check(rev, services))
+            except Exception as e:  # noqa: BLE001 — любой сбой проверки = провал
+                box["error"] = e
+            except BaseException as e:  # noqa: BLE001 — не «ошибка проверки» (питание, выход): поднять у владельца
+                box["raise"] = e
+            finally:
+                done.set()
+        t = threading.Thread(target=worker, name=f"health-check-{rev_id}", daemon=True)
+        t.start()
+        if not done.wait(timeout_s):
+            with _HUNG_LOCK:
+                _HUNG[self._key()] = t
+            return False, f"health-check не завершился за {timeout_s} с"
+        if "raise" in box:
+            raise box["raise"]
+        if "error" in box:
+            return False, f"health-check завершился ошибкой: {box['error']}"
+        return (True, "") if box["ok"] else (False, "health-check вернул отказ")
 
     def rollback(self, health_check, timeout_s=HEALTH_TIMEOUT_S) -> ApplyResult:
         """Ручной возврат к предыдущему подтверждённому снимку (новая ревизия с его содержимым)."""

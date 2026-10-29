@@ -69,6 +69,8 @@ RESULTS = {
     "rolled-back": {"ru": "Проверка служб не пройдена; восстановлена ревизия {active}",
                     "en": "Service check failed; revision {active} restored"},
     "invalid": {"ru": "Не применено: {issues}", "en": "Not applied: {issues}"},
+    "busy": {"ru": "Не применено: предыдущая проверка служб ещё идёт; активна ревизия {active}",
+             "en": "Not applied: the previous service check is still running; revision {active} is active"},
     "backup": {"ru": "Резервная копия записана: {name}", "en": "Backup written: {name}"},
     "backup-bad": {"ru": "Резервная копия отклонена: {reason}", "en": "Backup rejected: {reason}"},
     "logs": {"ru": "Журнал выгружен: {name} ({count} записей)", "en": "Log exported: {name} ({count} records)"},
@@ -935,6 +937,8 @@ class Backend(QObject):
             self._last_result = self._result(ok_key, revision=res.revision)
         elif res.stage == "validation":
             self._last_result = self._result("invalid", issues="; ".join(self.issue_text(i) for i in res.issues))
+        elif res.stage == "busy":                     # ревизия не создавалась: не откат, событие CFG-ROLLBACK не нужно
+            self._last_result = self._result("busy", active=res.active)
         else:
             self.bench.events.inject("CFG-ROLLBACK", revision=res.revision, active=res.active)
             self._last_result = self._result("rolled-back", active=res.active)
