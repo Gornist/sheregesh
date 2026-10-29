@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from . import media as M
 from .ctl import CtlError
+from .state import RTP_UNMEASURED
 
 log = logging.getLogger("sheregesh.videosvc.tx")
 
@@ -151,7 +152,7 @@ class TxService(M.ServiceBase):
         self._act[stream] = act
         self.state.update(stream, session=session, gen=gen, ssrc=ssrc, peer=ip, error="", frames=0, fps=0.0,
                           bitrate_kbps=int(profile["bitrate"]), source=med.info,
-                          rtp={"packets": 0, "lost": 0, "jitter_ms": 0.0, "reordered": 0},
+                          rtp=dict(RTP_UNMEASURED),          # контракт v9: lost/jitter у tx не измеряются
                           rtcp={"pli_sent": 0, "pli_received": 0, "keyframes_requested": 0,
                                 "keyframe_unsupported": med.passthrough},
                           last_frame_age_s=None)

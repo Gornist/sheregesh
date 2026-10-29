@@ -329,3 +329,21 @@ def test_shutdown(env):
     svc.shutdown_streams()
     assert st(svc)["state"] == "idle" and f.pipes[0].stops == 1
     assert svc.status_line().startswith("rx ")
+
+
+def test_unmeasured_counters_null_from_generation_start(env):
+    """Контракт v9: с начала поколения rtp — null до первой статистики, auth_fail/replay_fail/reordered не
+    измеряются (null), unknown_ssrc — счётчик службы (0); статистика конвейера даёт числа, null остаётся null."""
+    svc, f, clock, _ = env
+    svc.handle("start", args())
+    s = st(svc)
+    assert s["rtp"] == {"packets": None, "lost": None, "jitter_ms": None, "reordered": None}
+    assert s["srtp"] == {"auth_fail": None, "replay_fail": None, "unknown_ssrc": 0}
+    assert s["latency_ms"] == {"p50": None, "p95": None, "max": None, "samples": 0}
+    f.pipes[0].frame(1)
+    clock.advance(1.1)
+    svc.tick()
+    s = st(svc)
+    assert isinstance(s["rtp"]["packets"], int) and s["rtp"]["reordered"] is None
+    assert s["srtp"]["auth_fail"] is None and s["srtp"]["replay_fail"] is None
+    assert validate_state(svc.state.snapshot()) == []

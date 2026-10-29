@@ -89,3 +89,37 @@ def test_sc_sender_kill_recovers_in_same_session(monkeypatch):
     r = cv.sc_sender_kill("c", "r", timeout=5)
     assert r["verdict"] == "PASS", r["problems"]
     assert r["new_pids"] == ["57"] and r["new_session"] is False and r["sessions"] == [1, 1]
+
+
+def _win(link0, link1, dec0=0, dec1=600, frames0=0, frames1=600):
+    c0 = {"link": {"connected": True, **link0}, "sessions": 1, "frames_decoded": dec0, "restarts": 0,
+          "codec": "h264", "output": "640x360"}
+    c1 = {"link": {"connected": True, "stream_sps": {"width": 1280, "height": 720}, **link1}, "sessions": 1,
+          "frames_decoded": dec1, "restarts": 0, "codec": "h264", "output": "640x360"}
+    return c0, c1, {"frames": frames0}, {"frames": frames1}
+
+
+def test_stream_window_measured_zero_passes_unmeasured_fails():
+    """Контракт видео v9: «ноль потерь» — только измеренный ноль; неизмеренный счётчик (None) не превращается в 0."""
+    base = {"frames": 0, "packets": 0, "bytes": 0, "seq_gaps": 0, "lost_packets": 0, "bad_rtp": 0}
+    end = {"frames": 600, "packets": 900, "bytes": 1_500_000, "seq_gaps": 0, "lost_packets": 0, "bad_rtp": 0}
+    r = cv.judge_stream(*_win(base, end), 20.0)
+    assert r["verdict"] == "PASS" and r["metrics"]["seq_gaps"] == 0 and "unmeasured" not in r
+    r = cv.judge_stream(*_win({**base, "seq_gaps": None}, {**end, "seq_gaps": None}), 20.0)
+    assert r["verdict"] == "FAIL" and r["metrics"]["seq_gaps"] is None and r["unmeasured"] == ["seq_gaps"]
+    assert cv.delta({"x": None}, {"x": 5}, "x") is None and cv.delta({}, {"x": 5}, "x") is None
+    assert cv.delta({"x": 0}, {"x": 0}, "x") == 0
+
+
+def test_latency_judged_by_metric_with_same_bounds():
+    srtp = {"transport": "srtp", "capture_to_decoded_ms": {"p50": 80.0, "p95": 95.0, "max": 120.0, "samples": 600},
+            "transport_latency_ms": {"p50": None, "p95": None, "max": None, "samples": 0},
+            "decode_latency_ms": {"p50": None, "p95": None, "samples": 0, "desync_resets": 0}}
+    r = cv.judge_latency(srtp)
+    assert r["verdict"] == "PASS" and r["capture_to_decoded_ms"]["p50"] == 80.0
+    assert "measured_part_p50_ms" not in r and "transport_pi2_to_pi1_ms" not in r     # не складывается с TLS
+    assert cv.judge_latency({**srtp, "capture_to_decoded_ms": {"p50": None, "samples": 0}})["verdict"] == "FAIL"
+    tls = {"transport": "tls", "transport_latency_ms": {"p50": 4.0, "samples": 600},
+           "decode_latency_ms": {"p50": 30.0, "samples": 600, "desync_resets": 0}}
+    r = cv.judge_latency(tls)
+    assert r["verdict"] == "PASS" and r["measured_part_p50_ms"] == 34.0 and "capture_to_decoded_ms" not in r

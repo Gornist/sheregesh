@@ -82,6 +82,18 @@ def _ident(body):
     return stream, sess, gen
 
 
+
+UNMEASURED_LATENCY = {"p50": None, "p95": None, "max": None, "samples": 0}
+
+
+def _count(v):
+    """Счётчик службы: целое ≥ 0 или None (не измерено) — без подмены нулём."""
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+
+
+def _measure(v):
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
 class VideoRx:
     """Логика видеосеанса SRTP пульта. Все внешние эффекты подменяемы (ctl_factory, systemctl, clock)."""
 
@@ -190,22 +202,26 @@ class VideoRx:
         return frames_socket(self.runtime, self.stream)
 
     def stats(self):
-        """Метрики канала для ui-state/metrics (поля как у VideoClient.stats; ключа нет)."""
+        """Метрики канала для ui-state/metrics (поля как у VideoClient.stats; ключа нет). Контракт видео v9, §4:
+        null службы остаётся None (не измерено), измеренный ноль — 0. latency_ms службы — «захват → декодирован»,
+        поэтому capture_to_decoded_ms; transport/decode_latency_ms — границы пути TLS, у SRTP не измеряются."""
         with self._mu:
             st, phase, reason = dict(self._state), self._phase, self._reason
         rtp, srtp = st.get("rtp") or {}, st.get("srtp") or {}
         lat = st.get("latency_ms") or {}
-        lost = int(rtp.get("lost") or 0)
+        lost = _count(rtp.get("lost"))
         fps = st.get("fps")
         return {"transport": "srtp", "phase": phase, "service_state": st.get("state", ""),
                 "connected": st.get("state") in ("streaming", "degraded", "recovering"),
                 "error": reason or st.get("error", ""), "gen": st.get("gen"),
-                "packets": int(rtp.get("packets") or 0), "seq_gaps": lost, "lost_packets": lost,
-                "jitter_ms": rtp.get("jitter_ms"), "auth_fail": int(srtp.get("auth_fail") or 0),
+                "packets": _count(rtp.get("packets")), "seq_gaps": lost, "lost_packets": lost,
+                "jitter_ms": _measure(rtp.get("jitter_ms")), "reordered": _count(rtp.get("reordered")),
+                "auth_fail": _count(srtp.get("auth_fail")), "replay_fail": _count(srtp.get("replay_fail")),
                 "received_fps_5s": round(float(fps), 1) if isinstance(fps, (int, float)) else 0.0,
-                "transport_latency_ms": {"p50": lat.get("p50"), "p95": lat.get("p95"), "max": lat.get("max"),
-                                         "samples": int(lat.get("samples") or 0)},
-                "decode_latency_ms": {"p50": None, "p95": None, "samples": 0, "desync_resets": 0}}
+                "capture_to_decoded_ms": {"p50": _measure(lat.get("p50")), "p95": _measure(lat.get("p95")),
+                                          "max": _measure(lat.get("max")), "samples": _count(lat.get("samples")) or 0},
+                "transport_latency_ms": dict(UNMEASURED_LATENCY),
+                "decode_latency_ms": {**UNMEASURED_LATENCY, "desync_resets": 0}}
 
     # ---------- обработка ----------
     def handle(self, mtype, body):

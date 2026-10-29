@@ -447,6 +447,7 @@ class VideoClient:
                 "transport_latency_ms": {"p50": _pct(lat, 0.5), "p95": _pct(lat, 0.95), "max": round(max(lat), 2)
                                          if lat else None, "samples": len(lat)},
                 "ping_rtt_ms": round(best[0] * 1000, 2) if best else None,
+                "capture_to_decoded_ms": {"p50": None, "p95": None, "max": None, "samples": 0},   # контракт v9
                 "decode_latency_ms": {"p50": _pct(list(self.decode_latency), 0.5),
                                       "p95": _pct(list(self.decode_latency), 0.95), "samples": len(self.decode_latency),
                                       "desync_resets": self.decode_desync}}

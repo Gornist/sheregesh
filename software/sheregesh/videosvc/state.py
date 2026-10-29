@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """state.json видеослужбы: схема v1, атомарная запись, кольцо переходов (ADR-0016, контракт §4).
 
+Контракт v9: null — метрика не измеряется или ещё не измерена, измеренный ноль — 0. Схема остаётся v1: у полей из
+RTP_UNMEASURED/SRTP_UNMEASURED (кроме unknown_ssrc) тип расширен до «число | null»; прежние документы с нулями верны.
+
 Ключа в состоянии нет никогда: `update` отказывает полям с именами ключей, `validate_state` их ищет.
 """
 from __future__ import annotations
@@ -29,8 +32,8 @@ def _default_stream() -> dict:
     return {
         "state": "idle", "transport": "srtp", "session": "", "gen": 0, "ssrc": 0, "peer": "",
         "since_s": 0.0, "frames": 0, "fps": 0.0, "bitrate_kbps": 0,
-        "rtp": {"packets": 0, "lost": 0, "jitter_ms": 0.0, "reordered": 0},
-        "srtp": {"auth_fail": 0, "replay_fail": 0, "unknown_ssrc": 0},
+        "rtp": dict(RTP_UNMEASURED),
+        "srtp": dict(SRTP_UNMEASURED),
         "rtcp": {"pli_sent": 0, "pli_received": 0, "keyframes_requested": 0, "keyframe_unsupported": False},
         "latency_ms": {"p50": None, "p95": None, "max": None, "samples": 0},
         "last_frame_age_s": None, "restarts": 0, "error": "",
@@ -39,6 +42,10 @@ def _default_stream() -> dict:
 
 
 _NESTED = ("rtp", "srtp", "rtcp", "latency_ms")   # обновляются слиянием по подполям
+# Начало поколения (контракт v9, §4): rtp — до первой статистики rtpbin; reordered, auth_fail, replay_fail текущий
+# конвейер не измеряет вовсе; unknown_ssrc — счётчик самой службы.
+RTP_UNMEASURED = {"packets": None, "lost": None, "jitter_ms": None, "reordered": None}
+SRTP_UNMEASURED = {"auth_fail": None, "replay_fail": None, "unknown_ssrc": 0}
 _SETTABLE = set(_default_stream()) - {"state", "since_s", "transitions"}
 
 
@@ -207,6 +214,10 @@ def _opt_num(v) -> bool:
     return v is None or _num(v)
 
 
+def _opt_count(v) -> bool:
+    return v is None or (_int(v) and v >= 0)
+
+
 _STREAM_FIELDS = {
     "state": lambda v: v in STATES,
     "transport": lambda v: v == "srtp",
@@ -225,8 +236,8 @@ _STREAM_FIELDS = {
     "nft_dropped": lambda v: v is None or (_int(v) and v >= 0),   # null: счётчик nftables доступен только root (контракт v3)
 }
 _NESTED_FIELDS = {
-    "rtp": {"packets": _int, "lost": _int, "jitter_ms": _num, "reordered": _int},
-    "srtp": {"auth_fail": _int, "replay_fail": _int, "unknown_ssrc": _int},
+    "rtp": {"packets": _opt_count, "lost": _opt_count, "jitter_ms": _opt_num, "reordered": _opt_count},
+    "srtp": {"auth_fail": _opt_count, "replay_fail": _opt_count, "unknown_ssrc": _int},
     "rtcp": {"pli_sent": _int, "pli_received": _int, "keyframes_requested": _int,
              "keyframe_unsupported": lambda v: isinstance(v, bool)},
     "latency_ms": {"p50": _opt_num, "p95": _opt_num, "max": _opt_num, "samples": _int},

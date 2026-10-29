@@ -65,8 +65,8 @@ def test_file_has_schema_v1_defaults(tmp_path):
     expected = {
         "state": "idle", "transport": "srtp", "session": "", "gen": 0, "ssrc": 0, "peer": "",
         "since_s": main["since_s"], "frames": 1, "fps": 0.0, "bitrate_kbps": 0,
-        "rtp": {"packets": 0, "lost": 0, "jitter_ms": 0.0, "reordered": 0},
-        "srtp": {"auth_fail": 0, "replay_fail": 0, "unknown_ssrc": 0},
+        "rtp": {"packets": None, "lost": None, "jitter_ms": None, "reordered": None},   # контракт v9: не измерено
+        "srtp": {"auth_fail": None, "replay_fail": None, "unknown_ssrc": 0},
         "rtcp": {"pli_sent": 0, "pli_received": 0, "keyframes_requested": 0, "keyframe_unsupported": False},
         "latency_ms": {"p50": None, "p95": None, "max": None, "samples": 0},
         "last_frame_age_s": None, "restarts": 0, "error": "", "source": {}, "nft_dropped": None,
@@ -98,7 +98,7 @@ def test_update_merges_nested_subfields(tmp_path):
     w.update("main", rtp={"lost": 3})
     w.update("main", rtp={"packets": 5})
     rtp = w.snapshot()["streams"]["main"]["rtp"]
-    assert rtp == {"packets": 5, "lost": 3, "jitter_ms": 0.0, "reordered": 0}
+    assert rtp == {"packets": 5, "lost": 3, "jitter_ms": None, "reordered": None}   # не обновлённые — не 0
 
 
 def test_update_merges_all_nested_groups(tmp_path):
@@ -485,3 +485,29 @@ def test_update_rejects_bad_types_and_values(tmp_path, fields):
         w.update("main", **fields)
     w.write()
     assert ST.validate_state(json.loads((tmp_path / "state.json").read_text())) == []
+
+
+def test_unmeasured_counters_are_null_and_measured_zero_stays_zero(tmp_path):
+    """Контракт v9, §4: неизмеряемые счётчики — null, не 0; null принимается схемой v1 у этих полей и только у них;
+    измеренный ноль остаётся нулём, а новое значение поверх null — числом."""
+    from sheregesh.videosvc.state import validate_state
+    w = _writer(tmp_path / "state.json", "rx")
+    w.update("main", frames=0)
+    s = w.snapshot()["streams"]["main"]
+    assert s["rtp"] == {"packets": None, "lost": None, "jitter_ms": None, "reordered": None}
+    assert s["srtp"] == {"auth_fail": None, "replay_fail": None, "unknown_ssrc": 0}
+    assert validate_state(w.snapshot()) == []
+    w.update("main", rtp={"packets": 0, "lost": 0, "jitter_ms": 0.0})
+    s = w.snapshot()["streams"]["main"]
+    assert s["rtp"] == {"packets": 0, "lost": 0, "jitter_ms": 0.0, "reordered": None}
+    w.update("main", srtp={"auth_fail": 0})
+    assert w.snapshot()["streams"]["main"]["srtp"]["auth_fail"] == 0
+    with pytest.raises(ValueError):
+        w.update("main", srtp={"unknown_ssrc": None})                # счётчик службы: всегда число
+    doc = w.snapshot()
+    doc["streams"]["main"]["rtcp"]["pli_sent"] = None
+    assert validate_state(doc)
+    old = w.snapshot()                                               # состояние прежней службы: нули
+    old["streams"]["main"]["rtp"]["reordered"] = 0
+    old["streams"]["main"]["srtp"].update(auth_fail=0, replay_fail=0)
+    assert validate_state(old) == []

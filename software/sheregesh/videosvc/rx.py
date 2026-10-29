@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from . import media as M
 from .ctl import CtlError
+from .state import RTP_UNMEASURED, SRTP_UNMEASURED
 
 log = logging.getLogger("sheregesh.videosvc.rx")
 
@@ -174,8 +175,7 @@ class RxService(M.ServiceBase):
         self._remove_frames_socket(stream)
         self.state.update(stream, session=session, gen=gen, ssrc=ssrc, peer=ip, error="", frames=0, fps=0.0,
                           restarts=0, last_frame_age_s=None,
-                          rtp={"packets": 0, "lost": 0, "jitter_ms": 0.0, "reordered": 0},
-                          srtp={"auth_fail": 0, "replay_fail": 0, "unknown_ssrc": 0},
+                          rtp=dict(RTP_UNMEASURED), srtp=dict(SRTP_UNMEASURED),   # контракт v9: не 0
                           rtcp={"pli_sent": 0, "pli_received": 0, "keyframes_requested": 0,
                                 "keyframe_unsupported": False},
                           latency_ms={"p50": None, "p95": None, "max": None, "samples": 0})

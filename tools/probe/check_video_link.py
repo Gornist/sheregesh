@@ -169,25 +169,49 @@ def sc_stream(ch, rh, window=20.0):
     c0, r0, t0 = cv(ch), rv(rh), time.time()
     time.sleep(window)
     c1, r1, t1 = cv(ch), rv(rh), time.time()
-    dt = t1 - t0
+    return judge_stream(c0, c1, r0, r1, t1 - t0)
+
+
+def delta(a, b, k):
+    """Прирост счётчика за окно; None — счётчик не измерен в начале или в конце окна (контракт видео v9, §4:
+    null не равен 0)."""
+    x, y = a.get(k), b.get(k)
+    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)) or isinstance(x, bool) or isinstance(y, bool):
+        return None
+    return y - x
+
+
+def _rate(v, dt):
+    return None if v is None or dt <= 0 else round(v / dt, 2)
+
+
+def judge_stream(c0, c1, r0, r1, dt):
+    """Окно живого потока: приросты счётчиков пульта и блока. Проверка «ноль ошибок» требует измеренного нуля:
+    неизмеренный счётчик (None) — FAIL с перечнем в unmeasured, а не PASS."""
     l0, l1 = c0.get("link") or {}, c1.get("link") or {}
     same = l0.get("connected") and c1.get("sessions") == c0.get("sessions")
-    d = lambda a, b, k: (b.get(k) or 0) - (a.get(k) or 0)                       # noqa: E731
+    byt = delta(l0, l1, "bytes")
     m = {"window_s": round(dt, 1), "same_session": bool(same),
-         "sender_frames": d(r0, r1, "frames"), "sender_fps": round(d(r0, r1, "frames") / dt, 2),
-         "received_frames": d(l0, l1, "frames"), "received_fps": round(d(l0, l1, "frames") / dt, 2),
-         "decoded_frames": d(c0, c1, "frames_decoded"), "decoded_fps": round(d(c0, c1, "frames_decoded") / dt, 2),
-         "packets": d(l0, l1, "packets"), "bitrate_kbit_s": round(d(l0, l1, "bytes") * 8 / dt / 1000, 1),
-         "seq_gaps": d(l0, l1, "seq_gaps"), "lost_packets": d(l0, l1, "lost_packets"), "bad_rtp": d(l0, l1, "bad_rtp"),
-         "decoder_restarts": d(c0, c1, "restarts")}
+         "sender_frames": delta(r0, r1, "frames"), "received_frames": delta(l0, l1, "frames"),
+         "decoded_frames": delta(c0, c1, "frames_decoded"), "packets": delta(l0, l1, "packets"),
+         "bitrate_kbit_s": None if byt is None or dt <= 0 else round(byt * 8 / dt / 1000, 1),
+         "seq_gaps": delta(l0, l1, "seq_gaps"), "lost_packets": delta(l0, l1, "lost_packets"),
+         "bad_rtp": delta(l0, l1, "bad_rtp"), "decoder_restarts": delta(c0, c1, "restarts")}
+    m.update(sender_fps=_rate(m["sender_frames"], dt), received_fps=_rate(m["received_frames"], dt),
+             decoded_fps=_rate(m["decoded_frames"], dt))
     sps, src = l1.get("stream_sps") or {}, l1.get("source") or {}
     res = {"metrics": m, "stream_sps": sps, "source_announced": src, "decoder_output": c1.get("output"),
            "codec": c1.get("codec"), "console_state": c1.get("state")}
-    ok = (same and m["received_frames"] > 0 and m["decoded_frames"] > 0 and sps.get("width") == 1280
-          and sps.get("height") == 720 and c1.get("codec") == "h264" and c1.get("output") == "640x360"
-          and m["seq_gaps"] == 0 and m["bad_rtp"] == 0 and m["decoder_restarts"] == 0
-          and m["decoded_fps"] >= 0.9 * m["received_fps"] and m["sender_fps"] > 0)
-    res["fps_target_30"] = {"sender": m["sender_fps"], "decoded": m["decoded_fps"], "meets_29": m["decoded_fps"] >= 29.0}
+    need = ("sender_frames", "received_frames", "decoded_frames", "seq_gaps", "bad_rtp", "decoder_restarts")
+    unmeasured = [k for k in need if m[k] is None]
+    if unmeasured:
+        res["unmeasured"] = unmeasured
+    ok = (not unmeasured and same and m["received_frames"] > 0 and m["decoded_frames"] > 0
+          and sps.get("width") == 1280 and sps.get("height") == 720 and c1.get("codec") == "h264"
+          and c1.get("output") == "640x360" and m["seq_gaps"] == 0 and m["bad_rtp"] == 0
+          and m["decoder_restarts"] == 0 and m["decoded_fps"] >= 0.9 * m["received_fps"] and m["sender_fps"] > 0)
+    dec = m["decoded_fps"]
+    res["fps_target_30"] = {"sender": m["sender_fps"], "decoded": dec, "meets_29": dec is not None and dec >= 29.0}
     return {**res, "verdict": "PASS" if ok else "FAIL"}
 
 
@@ -197,15 +221,29 @@ def sc_latency(ch, rh):
     if not wait(playing(ch), 60):
         return {"verdict": "FAIL", "reason": "нет видео"}
     time.sleep(20)
-    link = cv(ch).get("link") or {}
+    return judge_latency(cv(ch).get("link") or {})
+
+
+def judge_latency(link):
+    """Задержка по метрикам с одинаковыми границами (контракт видео v9, §4). TLS: «отправка → приём» +
+    «запись в декодер → RGBx» — измеренная часть без захвата и кодера. SRTP: «захват → декодирован»
+    (capture_to_decoded_ms) — отдельной строкой, с суммой TLS не складывается и не сравнивается."""
     tr, dec = link.get("transport_latency_ms") or {}, link.get("decode_latency_ms") or {}
+    c2d = link.get("capture_to_decoded_ms") or {}
+    if link.get("transport") == "srtp":
+        res = {"transport": "srtp", "capture_to_decoded_ms": c2d, "ping_rtt_ms": link.get("ping_rtt_ms"),
+               "method": "метка захвата кадра на pi2 (rtphdrextntp64, PTS источника) → выход декодера на pi1, "
+                         "смещение часов set-clock-offset; включает кодер, сеть, джиттер-буфер и декодер"}
+        ok = (c2d.get("samples") or 0) > 50 and c2d.get("p50") is not None
+        return {**res, "verdict": "PASS" if ok else "FAIL"}
     part = round(tr["p50"] + dec["p50"], 1) if tr.get("p50") is not None and dec.get("p50") is not None else None
-    res = {"transport_pi2_to_pi1_ms": tr, "receiver_pi1_ms": dec, "ping_rtt_ms": link.get("ping_rtt_ms"),
-           "measured_part_p50_ms": part, "not_measured": "захват и кодирование на pi2 (videotestsrc → v4l2h264enc → RTP)",
+    res = {"transport": link.get("transport") or "tls", "transport_pi2_to_pi1_ms": tr, "receiver_pi1_ms": dec,
+           "ping_rtt_ms": link.get("ping_rtt_ms"), "measured_part_p50_ms": part,
+           "not_measured": "захват и кодирование на pi2 (videotestsrc → v4l2h264enc → RTP)",
            "method": "транспорт — время отправки каждого пакета блоком и время приёма пультом, смещение часов по "
                      "PING/PONG с минимальным RTT; приёмная часть — запись последнего пакета кадра в stdin декодера → "
                      "выход кадра RGBx (те же часы пульта): jitterbuffer 50 мс, депакетизация, v4l2h264dec, масштаб, цвет"}
-    ok = tr.get("samples", 0) > 50 and dec.get("samples", 0) > 50 and dec.get("desync_resets", 1) == 0
+    ok = (tr.get("samples") or 0) > 50 and (dec.get("samples") or 0) > 50 and dec.get("desync_resets", 1) == 0
     return {**res, "verdict": "PASS" if ok else "FAIL"}
 
 

@@ -214,7 +214,8 @@ def test_stats_from_state_json_and_no_key_leak(env):
     rx.tick()
     st = rx.stats()
     assert st["received_fps_5s"] == 29.8 and st["seq_gaps"] == 3 and st["lost_packets"] == 3
-    assert st["transport_latency_ms"]["p50"] == 20.0 and st["decode_latency_ms"]["p50"] is None
+    assert st["capture_to_decoded_ms"]["p50"] == 20.0 and st["transport_latency_ms"]["p50"] is None
+    assert st["decode_latency_ms"]["p50"] is None
     assert st["transport"] == "srtp" and st["connected"] is True
     blob = json.dumps(st) + "\n".join(svc.logs) + json.dumps([b for t, b in svc.sent if t != "video-key-ack"])
     assert canary_b64 not in blob and CANARY not in blob
@@ -263,3 +264,26 @@ def test_long_stall_sends_renew(env):
     rx.tick()
     assert [b["reason"] for t, b in svc.sent if t == "video-renew"] == ["no frames (recovering)"]
 
+
+
+def test_stats_keep_unmeasured_null_and_name_latency_by_bounds(env):
+    """Контракт v9: null службы не становится 0 на пульте; «захват → декодирован» SRTP — capture_to_decoded_ms,
+    а transport/decode_latency_ms (границы пути TLS) у SRTP не измеряются и пусты; измеренный ноль — ноль."""
+    rx, svc, tmp = env
+    rx.handle("video-key", key_body())
+    write_state(tmp, rtp={"packets": None, "lost": None, "jitter_ms": None, "reordered": None},
+                srtp={"auth_fail": None, "replay_fail": None, "unknown_ssrc": 0})
+    rx.tick()
+    st = rx.stats()
+    assert st["packets"] is None and st["seq_gaps"] is None and st["lost_packets"] is None
+    assert st["jitter_ms"] is None and st["auth_fail"] is None and st["replay_fail"] is None
+    assert st["reordered"] is None
+    assert st["capture_to_decoded_ms"] == {"p50": 20.0, "p95": 30.0, "max": 40.0, "samples": 10}
+    assert st["transport_latency_ms"] == {"p50": None, "p95": None, "max": None, "samples": 0}
+    assert st["decode_latency_ms"]["samples"] == 0 and st["decode_latency_ms"]["p50"] is None
+    write_state(tmp, rtp={"packets": 50, "lost": 0, "jitter_ms": 0.0, "reordered": None},
+                srtp={"auth_fail": 0, "replay_fail": None, "unknown_ssrc": 0}, latency_ms=None)
+    rx.tick()
+    st = rx.stats()
+    assert (st["packets"], st["seq_gaps"], st["jitter_ms"], st["auth_fail"]) == (50, 0, 0.0, 0)
+    assert st["capture_to_decoded_ms"]["samples"] == 0 and st["capture_to_decoded_ms"]["p50"] is None
