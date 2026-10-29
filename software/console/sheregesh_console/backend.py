@@ -13,7 +13,7 @@ import yaml
 from PySide6 import __version__ as PYSIDE_VERSION
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot, qVersion
 
-from sheregesh import PROTOCOL_VERSION, __version__
+from sheregesh import PROTOCOL_VERSION, __version__, timepeer
 from sheregesh import video as gst
 from sheregesh.config import BackupError, ConfigStore, Schema, console_defaults
 from sheregesh.faults import CATALOG, render
@@ -152,6 +152,7 @@ class Backend(QObject):
     aboutChanged = Signal()             # свои сигналы: configChanged перечитывает форму настроек (SettingsPage),
     configBusyChanged = Signal()        # а фоновая проба и ход операции не должны сбрасывать несохранённые правки
     message = Signal(str, str)          # уровень (info/warning/error), текст
+    _timeDone = Signal(str, str)        # итог sheregesh-time-peer@ (поток) → журнал в потоке интерфейса
 
     def __init__(self, data_dir, demo=False, speed=1.0, autostart=True, peer=None, local_video=False,
                  video_command=None, link_cfg=None, link_status_file=None, video_scan=None, journal=None,
@@ -236,6 +237,7 @@ class Backend(QObject):
         self.configChanged.connect(self.aboutChanged)       # ревизия и язык — тоже в about
         self._about_static = {"build": "…", "gstreamer": "…", "videoCodec": "…"}
         self._aboutDone.connect(self._about_ready)
+        self._timeDone.connect(lambda level, text: self.log(level, "time", text))
         threading.Thread(target=lambda: self._aboutDone.emit(_about_static()), name="about", daemon=True).start()
         self._timer = QTimer(self)
         self._timer.setInterval(max(20, int(TICK_S * 1000 / max(speed, 0.01))))
@@ -381,6 +383,8 @@ class Backend(QObject):
                 self.log("warning" if snap["phase"] != "connected" else "info", "link",
                          f"phase {snap['phase']} ({snap['detail']})")
                 self._last_phase = snap["phase"]
+                if snap["phase"] == "connected" and snap.get("secure"):
+                    self._time_peer(snap.get("host"))
         else:
             cnt = {"connects": 0, "disconnects": 0, "bad_messages": 0, "ignored_messages": 0, "received": 0,
                    "seq_gaps": 0}
@@ -410,6 +414,14 @@ class Backend(QObject):
             "batteryCritical": self._rev.data["diagnostics.yaml"]["battery_critical_pct"],
             "undervoltage": bool(s.power and s.power.undervoltage),
         }
+
+    def _time_peer(self, host):
+        """ADR-0017: блок сеанса может спрашивать время у пульта (chrony). systemctl — не в потоке интерфейса."""
+        def run():
+            ok, detail = timepeer.start(host)
+            self._timeDone.emit("info" if ok else "warning",
+                                f"time peer {detail}" if ok else f"time peer not set: {detail}")
+        threading.Thread(target=run, name="time-peer", daemon=True).start()
 
     # ---------- внешний модуль удалённого блока (ADR-0012, S6) ----------
     def _module_peer(self):

@@ -221,3 +221,36 @@ def test_replaced_during_video_begin_ends_stale_video(monkeypatch):
         await settle()
     run(body())
     a.module.close()
+
+
+def test_compatible_hello_on_network_sets_time_peer(monkeypatch):
+    """ADR-0017: в сети стенда (mTLS) совместимый hello пульта → sheregesh-time-peer@<адрес пульта> (в потоке);
+    несовместимый hello и эмуляция без TLS — без вызова."""
+    a = make_agent(monkeypatch)
+    calls = []
+    monkeypatch.setattr(agent_mod.timepeer, "start", lambda addr: calls.append(addr) or (True, str(addr)))
+
+    async def body():
+        c0 = Conn(a)                                 # эмуляция без TLS: время не трогаем
+        c0.hello()
+        await settle()
+        assert calls == []
+        c0.reader.feed_eof()
+        await settle()
+        a.tls_cfg = object()                         # сетевой профиль (сама проверка TLS здесь не нужна)
+        a.peer_desc = {"addr": "192.168.1.92"}
+        c1 = Conn(a)
+        c1.hello(proto="9.0")                        # несовместимый — сеанса нет
+        await settle()
+        assert calls == []
+        c2 = Conn(a)
+        c2.hello()
+        for _ in range(50):
+            await settle()
+            if calls:
+                break
+        assert calls == ["192.168.1.92"]
+        c2.reader.feed_eof()
+        await settle()
+    run(body())
+    a.module.close()

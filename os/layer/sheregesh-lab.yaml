@@ -48,9 +48,19 @@ mmdebstrap:
       # ADR-0016 §3.3: sheregesh-ui может только «start» sheregesh-video-allow@<адрес|none>.service (правило обычного образа).
       install -D -m 0644 "$IGconf_sheregesh_assetdir/52-sheregesh-video-allow.rules" \
         $1/etc/polkit-1/rules.d/52-sheregesh-video-allow.rules
+    - |-
+      set -eu
+      # ADR-0017: время пульт → блок без интернета. chrony (зависимость пакета sheregesh) заменил systemd-timesyncd;
+      # chrony.conf без источников — их по роли задаёт sheregesh-time; sheregesh-ui может только «start»
+      # sheregesh-time-peer@<адрес|none>.service.
+      test -x $1/usr/sbin/chronyd
+      install -D -m 0644 "$IGconf_sheregesh_assetdir/chrony.conf" $1/etc/chrony/chrony.conf
+      install -D -m 0644 "$IGconf_sheregesh_assetdir/53-sheregesh-time-peer.rules" \
+        $1/etc/polkit-1/rules.d/53-sheregesh-time-peer.rules
+      chroot $1 systemctl mask systemd-timesyncd.service
     # sheregesh-ota.socket и sheregesh-ota-boot (S3.1-DEPLOY) включены всегда, но работают только при открытом
     # ключе подписи владельца (/etc/sheregesh/deploy/allowed_signers — только dev-образ).
-    - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console sheregesh-remote-net sheregesh-health.timer sheregesh-ota.socket sheregesh-ota-boot sheregesh-var-seed sheregesh-video-nft sheregesh-video-nft-remote sheregesh-video-rx sheregesh-video-tx
+    - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console sheregesh-remote-net sheregesh-health.timer sheregesh-ota.socket sheregesh-ota-boot sheregesh-var-seed sheregesh-video-nft sheregesh-video-nft-remote sheregesh-video-rx sheregesh-video-tx chrony sheregesh-time-role
     - |-
       set -eu
       # Найдено при первой загрузке на Pi 4 (S2-BOOT), корень только для чтения:

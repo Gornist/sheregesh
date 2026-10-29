@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Адрес второй платы текущего сеанса для chrony (ADR-0017). Экземпляр: none или ровно один IPv4/IPv6; всё остальное
+# помощник отвергает (код 2) до вызова chronyc. polkit разрешает sheregesh-ui только «start» этого шаблона.
+# Пульт: chronyc allow адрес; блок: адрес — источник времени (прежний сеансовый — удаляется). Сети нет: только сокет
+# команд chronyd (/run/chrony).
+[Unit]
+Description=Sheregesh: time peer %i (chrony)
+After=sheregesh-time-role.service
+Requisite=chrony.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/sheregesh-time peer %i
+TimeoutStartSec=20
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/chrony /run/sheregesh-time
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+Environment=PYTHONDONTWRITEBYTECODE=1

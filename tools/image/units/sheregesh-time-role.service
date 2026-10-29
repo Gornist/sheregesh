@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Источники времени по роли платы (ADR-0017): пульт — пул Debian и local stratum 10, allow блоку; блок — только пульт.
+# chrony.conf образа ролей не знает: всё задаётся командами chronyc после запуска chronyd. PartOf: перезапуск chrony
+# (настройки chronyc теряются) повторяет и этот юнит. Сеансовый адрес второй платы — sheregesh-time-peer@.
+[Unit]
+Description=Sheregesh: time sources by board role (chrony, console serves the remote unit)
+After=chrony.service
+Requires=chrony.service
+PartOf=chrony.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+ExecStart=/usr/bin/sheregesh-time role
+RuntimeDirectory=sheregesh-time
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/chrony
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+WantedBy=multi-user.target

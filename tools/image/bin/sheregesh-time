@@ -1,0 +1,149 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Время между платами без интернета (ADR-0017): пульт — источник времени блока, chrony на обеих. Запускается от root
+юнитами sheregesh-time-role.service (после chrony.service) и sheregesh-time-peer@<экземпляр>.service; sheregesh-ui
+может только «start» второго (polkit). Источники и права задаются командами chronyc: chrony.conf образа ролей не знает.
+
+  sheregesh-time role          — по роли платы и peer_hosts из link.json:
+                                 пульт: пул Debian (если интернет есть), local stratum 10 (если нет), allow peer_hosts;
+                                 блок: источник — только пульт (peer_hosts), без пула: часы плат согласованы между собой
+  sheregesh-time peer АДРЕС    — адрес второй платы текущего сеанса (DHCP может отличаться от peer_hosts):
+                                 пульт: allow АДРЕС; блок: источник АДРЕС, прежний сеансовый источник удаляется
+  sheregesh-time peer none     — блок: удалить сеансовый источник; пульт: ничего
+
+Адрес — строго один IPv4/IPv6 без маски и зоны, не unspecified и не multicast (как sheregesh-video-allow). Коды: 0 —
+применено (или у платы нет роли), 1 — chronyc отказал или не найден, 2 — недопустимые аргументы. chronyc — списком,
+без shell."""
+import ipaddress
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+CHRONYC = "/usr/bin/chronyc"
+CONFIG = Path("/home/sheregesh-ui/.config/sheregesh")
+STATE = Path("/run/sheregesh-time/peer")         # сеансовый источник блока (RuntimeDirectory юнита role)
+POOL = "2.debian.pool.ntp.org"
+LOCAL_STRATUM = 10                                # ниже любого реального источника: при интернете выбирается пул
+POLL = ("minpoll", "4", "maxpoll", "6")           # 16–64 с: быстрое схождение в лабораторной сети
+MAX_LEN = 45
+CHARS = re.compile(r"[0-9a-fA-F:.]+")
+EXISTS = ("already", "present")                   # «511 Source already present» — источник уже добавлен
+
+
+def parse(instance):
+    """'none' → None; адрес → ipaddress-объект; иначе ValueError."""
+    if not isinstance(instance, str) or not 0 < len(instance) <= MAX_LEN:
+        raise ValueError("недопустимая длина экземпляра")
+    if instance == "none":
+        return None
+    if not CHARS.fullmatch(instance):
+        raise ValueError("недопустимые символы в адресе")
+    addr = ipaddress.ip_address(instance)
+    if addr.is_unspecified or addr.is_multicast:
+        raise ValueError("адрес не может быть unspecified или multicast")
+    return addr
+
+
+def role(config=CONFIG):
+    """console | remote | None по файлам *.role (как confirm.role)."""
+    found = [r for r in ("console", "remote") if (config / f"{r}.role").exists()]
+    return found[0] if len(found) == 1 else None
+
+
+def peer_hosts(config=CONFIG):
+    """Допустимые адреса из link.json peer_hosts; имена и мусор пропускаются."""
+    try:
+        hosts = json.loads((config / "link.json").read_text()).get("peer_hosts") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    out = []
+    for h in hosts if isinstance(hosts, list) else []:
+        try:
+            a = parse(h)
+        except ValueError:
+            continue
+        if a is not None and a.compressed not in out:
+            out.append(a.compressed)
+    return out
+
+
+def role_commands(r, hosts):
+    if r == "console":
+        return ([["add", "pool", POOL, "iburst"], ["local", "stratum", str(LOCAL_STRATUM)]]
+                + [["allow", h] for h in hosts])
+    if r == "remote":
+        return [["add", "server", h, "iburst", *POLL] for h in hosts]
+    return []
+
+
+def peer_commands(r, addr, prev, hosts):
+    """Команды для сеансового адреса. Источники из peer_hosts (добавлены role) не удаляются."""
+    if r == "console":
+        return [] if addr is None else [["allow", addr]]
+    if r != "remote":
+        return []
+    cmds = []
+    if prev and prev != addr and prev not in hosts:
+        cmds.append(["delete", prev])
+    if addr is not None and addr != prev:
+        cmds.append(["add", "server", addr, "iburst", *POLL])
+    return cmds
+
+
+def run_chronyc(args):
+    return subprocess.run([CHRONYC, *args], capture_output=True, text=True, timeout=10, check=False)
+
+
+def apply(cmds, runner):
+    for args in cmds:
+        try:
+            r = runner(args)
+        except (OSError, subprocess.SubprocessError) as e:
+            print(f"sheregesh-time: chronyc не выполнен: {type(e).__name__}", file=sys.stderr)
+            return 1
+        out = f"{r.stdout or ''} {r.stderr or ''}".strip()
+        if r.returncode != 0 and not (args[0] == "add" and all(w in out.lower() for w in EXISTS)):
+            print(f"sheregesh-time: chronyc {' '.join(args)}: код {r.returncode}: {out[:200]}", file=sys.stderr)
+            return 1
+        print(f"sheregesh-time: chronyc {' '.join(args)}")
+    return 0
+
+
+def main(argv=None, runner=run_chronyc, config=CONFIG, state=STATE):
+    argv = sys.argv[1:] if argv is None else argv
+    if not argv or argv[0] not in ("role", "peer") or len(argv) != (1 if argv[0] == "role" else 2):
+        print("sheregesh-time: role | peer АДРЕС|none", file=sys.stderr)
+        return 2
+    addr = None
+    if argv[0] == "peer":
+        try:
+            a = parse(argv[1])
+        except ValueError as e:
+            print(f"sheregesh-time: отказ: {e}", file=sys.stderr)
+            return 2
+        addr = None if a is None else a.compressed
+    r = role(config)
+    if r is None:
+        print("sheregesh-time: роль платы не задана — chrony без источников сеанса")
+        return 0
+    hosts = peer_hosts(config)
+    if argv[0] == "role":
+        return apply(role_commands(r, hosts), runner)
+    try:
+        prev = state.read_text().strip() or None
+    except OSError:
+        prev = None
+    rc = apply(peer_commands(r, addr, prev, hosts), runner)
+    if rc == 0 and r == "remote":
+        try:
+            state.write_text(f"{addr or ''}\n")
+        except OSError as e:
+            print(f"sheregesh-time: состояние не записано: {type(e).__name__}", file=sys.stderr)
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())

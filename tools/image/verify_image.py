@@ -345,6 +345,40 @@ def video_checks(rep, root, packages_tsv):
     rep.add("video.nftables", "пакет nftables в манифесте пакетов образа", "nftables" in listed)
 
 
+TIME_POLKIT = "/etc/polkit-1/rules.d/53-sheregesh-time-peer.rules"
+
+
+def time_checks(rep, root, packages_tsv):
+    """ADR-0017: chrony вместо timesyncd, chrony.conf без источников (их по роли задаёт sheregesh-time), юниты
+    помощника и правило polkit «только start sheregesh-time-peer@<адрес|none>»."""
+    listed = {x.split("\t")[0].split(":")[0] for x in (packages_tsv or "").splitlines() if x}
+    rep.add("time.chrony", "chrony в образе, systemd-timesyncd нет или замаскирован",
+            "chrony" in listed and root.exists("/usr/sbin/chronyd")
+            and ("systemd-timesyncd" not in listed or root.exists("/etc/systemd/system/systemd-timesyncd.service")))
+    conf = root.cat("/etc/chrony/chrony.conf")
+    lines = [x.split()[0] for x in conf.splitlines() if x.strip() and not x.lstrip().startswith("#")]
+    rep.add("time.conf", "chrony.conf образа: ADR-0017, без источников и local, cmdport 0, makestep",
+            "ADR-0017" in conf and not {"server", "pool", "peer", "local", "sourcedir"} & set(lines)
+            and "cmdport" in lines and "makestep" in lines
+            and all(x.split()[1] in ("127.0.0.1", "::1") for x in conf.splitlines() if x.startswith("allow")))
+    role = root.cat("/usr/lib/systemd/system/sheregesh-time-role.service")
+    peer = root.cat("/usr/lib/systemd/system/sheregesh-time-peer@.service")
+    rep.add("time.units", "юниты sheregesh-time-role (после chrony, PartOf) и sheregesh-time-peer@ (песочница)",
+            "ExecStart=/usr/bin/sheregesh-time role" in role and "PartOf=chrony.service" in role
+            and "ExecStart=/usr/bin/sheregesh-time peer %i" in peer
+            and all("IPAddressDeny=any" in u and "ProtectSystem=strict" in u for u in (role, peer)))
+    wants = " ".join(root.ls("/etc/systemd/system/multi-user.target.wants"))
+    rep.add("time.enabled", "включены chrony и sheregesh-time-role",
+            "chrony.service" in wants and "sheregesh-time-role.service" in wants)
+    helper = root.cat("/usr/bin/sheregesh-time")
+    rep.add("time.helper", "помощник sheregesh-time и его обёртка (python3 -I) есть",
+            "python3 -I " in helper and root.exists("/usr/lib/sheregesh/tools/image/bin/sheregesh-time"))
+    rules = root.cat(TIME_POLKIT)
+    rep.add("time.polkit", "polkit: sheregesh-ui — только «start» sheregesh-time-peer@<адрес|none>",
+            'subject.user != "sheregesh-ui"' in rules and 'action.lookup("verb") != "start"' in rules
+            and "sheregesh-time-peer@" in rules and "stop" not in rules and "restart" not in rules, TIME_POLKIT)
+
+
 def verify(img, variant, out):
     rep = Report()
     dev = "-dev-" in variant
@@ -463,6 +497,7 @@ def verify(img, variant, out):
             labvideo_checks(rep, root, dev)
             packages_tsv = root.cat("/usr/share/sheregesh/image-packages.tsv")
             video_checks(rep, root, packages_tsv)
+            time_checks(rep, root, packages_tsv)
             status = data.cat("/slots/system_a/var/lib/dpkg/status")
             # Установлен — если последнее слово Status «installed» (в т. ч. «purge ok installed» после неудачного purge).
             installed = sorted(b.split("\n")[0][9:] for b in status.split("\n\n") if b.startswith("Package: ") and

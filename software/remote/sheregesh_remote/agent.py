@@ -48,7 +48,7 @@ import sys
 import time
 from pathlib import Path
 
-from sheregesh import PROTOCOL_VERSION, __version__, sdnotify, video, videoinput, videosources
+from sheregesh import PROTOCOL_VERSION, __version__, sdnotify, timepeer, video, videoinput, videosources
 from sheregesh.videoingest import Ingest
 from sheregesh.videolink import VideoServer
 from .videotx import VideoTx
@@ -112,6 +112,7 @@ class Agent:
         self.video_codec = video.choose_codec(args.video_codec) if args.video and uvc_ok else None
         self.video_port = args.video_port
         self.tls_cfg = getattr(args, "tls_cfg", None)
+        self.time_task = None                       # sheregesh-time-peer@ адреса пульта (ADR-0017)
         self.ctx = tls.make_context(self.tls_cfg, server=True) if self.tls_cfg else None
         # Сетевой профиль: видео — только по защищённому каналу (S3.1-VIDEO, ADR-0011), без UDP-отправителя.
         self.vserver = None
@@ -297,6 +298,11 @@ class Agent:
             if len(self.sent) > 256:
                 self.sent.pop(next(iter(self.sent)))
         await self.send_raw(encode(self.proto, mtype, self.seq, time.time(), body))
+
+    async def time_peer(self, peer_ip):
+        """chrony: пульт сеанса — источник времени (sheregesh-time-peer@, в потоке: systemctl до 10 с)."""
+        ok, detail = await asyncio.to_thread(timepeer.start, peer_ip)
+        log(f"time: peer {detail}" if ok else f"time: peer not set: {detail}")
 
     async def send_raw(self, data: bytes):
         writer = self.writer
@@ -533,6 +539,8 @@ class Agent:
                     self.writer = None
             else:                                   # выбор транспорта видео (SRTP при 1.5 и объявлении обеих сторон)
                 peer_ip = self.peer_desc.get("addr") if self.peer_desc else self.peer_addr
+                if self.tls_cfg is not None:        # ADR-0017: пульт — источник времени блока (сеть стенда)
+                    self.time_task = asyncio.create_task(self.time_peer(peer_ip))
                 await self.vtx.begin(body, peer_ip, n.session)
                 if self.writer is not writer and self.hello_writer is None:
                     await self.vtx.end("control session replaced")   # заменён во время выбора: видео не для него
