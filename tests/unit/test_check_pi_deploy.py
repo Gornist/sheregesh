@@ -59,20 +59,39 @@ def test_ssh_probe_records_failures(monkeypatch):
     assert r["ssh_probes_ok"] >= 1 and [f["rc"] for f in r["ssh_probes_failed"]] == [255, 0]
 
 
+SHOW = 'InvocationID=abc123\nMainPID=42\nExecMainStartTimestamp=@500'
+
+
 def test_runtime_releases_use_fresh_launcher_logs_for_every_role_service(monkeypatch):
     calls = []
     def ssh(host, cmd, timeout=120, data=None):
         calls.append(cmd)
         if cmd.startswith('systemctl'):
-            return 0, 'InvocationID=abc123\nMainPID=42', ''
-        module = 'sheregesh.videosvc.rx' if 'sheregesh-video-rx' in cmd else 'sheregesh_console'
+            return 0, SHOW, ''
+        module = 'sheregesh.videosvc.rx' if '_SYSTEMD_INVOCATION_ID' in cmd else 'sheregesh_console'
         return 0, f'sheregesh-launcher: {module}: выпуск 0.1.0+gnew', ''
     monkeypatch.setattr(cp, 'ssh', ssh)
     releases = cp.runtime_releases('host', {'sheregesh-video-rx': 'READY', 'sheregesh-console': 'READY'}, 123)
     assert set(releases) == {'sheregesh-video-rx', 'sheregesh-console'}
     assert all(r['release'] == '0.1.0+gnew' for r in releases.values())
-    assert all('--since @123' in cmd and '_SYSTEMD_INVOCATION_ID=abc123' in cmd for cmd in calls if cmd.startswith('journalctl'))
+    journals = [cmd for cmd in calls if cmd.startswith('journalctl')]
+    # Video service: exact invocation, no -u (its OR terms would swallow the invocation match).
+    assert any('--since @123' in c and '_SYSTEMD_INVOCATION_ID=abc123' in c and ' -u ' not in c for c in journals)
+    # Console lives in session-N.scope (PAMName): bound by this invocation's start time, not by the service's ID.
+    assert any('--since @500' in c and 'SYSLOG_IDENTIFIER=sheregesh-notify-relay' in c
+               and '_SYSTEMD_INVOCATION_ID' not in c for c in journals)
     assert all(r['invocation']['MainPID'] == '42' for r in releases.values())
+
+
+def test_runtime_releases_reject_malformed_start_timestamp(monkeypatch):
+    calls = []
+    def ssh(host, cmd, **kwargs):
+        calls.append(cmd)
+        return 0, 'InvocationID=abc123\nMainPID=42\nExecMainStartTimestamp=@1; reboot', ''
+    monkeypatch.setattr(cp, 'ssh', ssh)
+    result = cp.runtime_releases('host', {'sheregesh-console': 'READY'}, 123)
+    assert result['sheregesh-console']['release'] == 'unknown'
+    assert not any(cmd.startswith('journalctl') for cmd in calls)
 
 
 def test_runtime_releases_missing_log_is_unknown_not_current_symlink(monkeypatch):
@@ -96,7 +115,7 @@ def test_role_inventory_marks_missing_video_as_unverified_coverage(monkeypatch):
 
 
 def test_runtime_releases_rejects_restarted_invocation(monkeypatch):
-    shows = iter(['InvocationID=abc123\nMainPID=42', 'InvocationID=abc456\nMainPID=43'])
+    shows = iter([SHOW, 'InvocationID=abc456\nMainPID=43\nExecMainStartTimestamp=@501'])
     def ssh(host, cmd, **kwargs):
         if cmd.startswith('systemctl'):
             return 0, next(shows), ''

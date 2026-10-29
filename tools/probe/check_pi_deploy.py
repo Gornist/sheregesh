@@ -162,7 +162,7 @@ def runtime_releases(host, units, since):
                "sheregesh-remote-emu": "sheregesh_remote", "sheregesh-video-tx": "sheregesh.videosvc.tx",
                "sheregesh-video-rx": "sheregesh.videosvc.rx"}
     def invocation(unit):
-        rc, out, _ = ssh(host, f"systemctl show {unit} -p InvocationID,MainPID")
+        rc, out, _ = ssh(host, f"systemctl show {unit} -p InvocationID,MainPID,ExecMainStartTimestamp --timestamp=unix")
         return dict(line.split("=", 1) for line in out.splitlines() if "=" in line) if rc == 0 else {}
     results = {}
     for unit, detail in units.items():
@@ -170,13 +170,20 @@ def runtime_releases(host, units, since):
             continue
         module = modules[unit]
         before = invocation(unit)
-        iid = before.get("InvocationID", "")
+        iid, started = before.get("InvocationID", ""), before.get("ExecMainStartTimestamp", "")
         release, text = "unknown", ""
-        # systemd IDs contain only hex; refuse malformed values rather than interpolating them into SSH.
-        if iid and all(c in "0123456789abcdef" for c in iid) and before.get("MainPID", "0") != "0":
-            selector = "SYSLOG_IDENTIFIER=sheregesh-notify-relay" if unit == "sheregesh-console" else f"-u {unit}"
-            rc, out, _ = ssh(host, f"journalctl -b --since @{int(since)} -o cat --no-pager {selector} "
-                                  f"_SYSTEMD_INVOCATION_ID={iid} "
+        # systemd IDs contain only hex, unix timestamps only @digits; refuse malformed values rather than
+        # interpolating them into SSH.
+        if (iid and all(c in "0123456789abcdef" for c in iid) and before.get("MainPID", "0") != "0"
+                and started[:1] == "@" and started[1:].isdigit()):
+            if unit == "sheregesh-console":
+                # PAMName moves the console into session-N.scope: its records carry the scope's invocation ID, not
+                # the service's. Bind to this invocation by its start time instead (stability checked below).
+                match, start = "SYSLOG_IDENTIFIER=sheregesh-notify-relay", max(int(since), int(started[1:]))
+            else:
+                # Invocation ID alone: mixed with -u it would join only the last of -u's OR terms.
+                match, start = f"_SYSTEMD_INVOCATION_ID={iid}", int(since)
+            rc, out, _ = ssh(host, f"journalctl -b --since @{start} -o cat --no-pager {match} "
                                   f"| grep -F 'sheregesh-launcher: {module}:' | tail -1")
             text = out.rsplit(f"sheregesh-launcher: {module}:", 1)[-1].strip() if rc == 0 else ""
             if invocation(unit) == before:

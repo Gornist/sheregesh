@@ -62,7 +62,6 @@ WRAPPERS = {   # команда → модуль (-m) или скрипт из /
     "usr/bin/sheregesh-deployd": "sheregesh.deploy.installer",    # установщик выпусков, root (S3.1-DEPLOY)
     "usr/bin/sheregesh-ota-agent": "sheregesh.update.ota",        # агент обновления A/B, root (S3.1-DEPLOY)
     "usr/bin/sheregesh-ota-client": "sheregesh.update.ota_client",  # клиент агента для sheregesh-ui
-
 }
 # ADR-0016: помощник межсетевого экрана видео (root, юнит sheregesh-video-allow@) и таблицы nftables по ролям.
 # Помощник лежит в /usr/lib/sheregesh, команда в /usr/bin — обёртка python3 -I, как у прочих системных команд.
