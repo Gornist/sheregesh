@@ -31,6 +31,10 @@ RENEW_AFTER_S = 5.0              # кадров нет дольше — прос
 RENEW_EVERY_S = 10.0             # video-renew не чаще
 STATE_MAX_AGE_S = 5.0            # state.json старше — сведений нет (служба не пишет)
 SYSTEMCTL_TIMEOUT_S = 10.0
+CTL_TIMEOUT_S = 1.0              # команды службы rx (status, stop, set-clock-offset)
+# start строит конвейер синхронно; первый после загрузки пульта (холодный GStreamer) — дольше 1 с: при коротком
+# ожидании пульт объявлял start-failed и уходил на TLS (стенд 2026-10-29). Блок ждёт video-key-ack до 10 с.
+START_TIMEOUT_S = 6.0
 STREAM = "main"
 
 
@@ -104,7 +108,7 @@ class VideoRx:
         clock_offset() → смещение часов блок−пульт (с) или None."""
         self._send, self._peer_ip = send, peer_ip
         self.runtime = runtime or runtime_dir()
-        self._ctl_factory = ctl_factory or (lambda path: CtlClient(path, timeout=1.0))
+        self._ctl_factory = ctl_factory or (lambda path, timeout: CtlClient(path, timeout=timeout))
         self._systemctl = systemctl or systemctl_start
         self._clock, self._wall = clock, wall
         self._clock_offset = clock_offset
@@ -161,7 +165,7 @@ class VideoRx:
     def available(self):
         """Служба rx отвечает на status."""
         try:
-            self._ctl_factory(os.path.join(self.runtime, "ctl.sock")).request("status")
+            self._ctl_factory(os.path.join(self.runtime, "ctl.sock"), CTL_TIMEOUT_S).request("status")
             return True
         except (CtlError, OSError):
             return False
@@ -259,7 +263,8 @@ class VideoRx:
         self._send("video-key-ack", out)
 
     def _ctl(self, cmd, args=None):
-        c = self._ctl_factory(os.path.join(self.runtime, "ctl.sock"))
+        c = self._ctl_factory(os.path.join(self.runtime, "ctl.sock"),
+                              START_TIMEOUT_S if cmd == "start" else CTL_TIMEOUT_S)
         try:
             return c.request(cmd, args or {})
         finally:

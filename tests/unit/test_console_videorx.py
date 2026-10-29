@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Видеосеанс SRTP пульта (videorx.VideoRx, ADR-0016, контракт v5 §6): подменные служба rx, systemctl и часы."""
 import json
+import os
 import time
 
 import pytest
@@ -45,7 +46,7 @@ class Svc:
 def env(tmp_path):
     svc = Svc()
     rx = V.VideoRx(lambda t, b: svc.sent.append((t, b)) or True, lambda: "192.168.1.169", runtime=str(tmp_path),
-                   ctl_factory=lambda path: FakeCtl(svc), systemctl=svc.systemctl, clock=lambda: svc.t,
+                   ctl_factory=lambda path, timeout: FakeCtl(svc), systemctl=svc.systemctl, clock=lambda: svc.t,
                    log=lambda lv, tx: svc.logs.append(tx), rx_port=7444, clock_offset=lambda: 0.0123)
     return rx, svc, tmp_path
 
@@ -287,3 +288,37 @@ def test_stats_keep_unmeasured_null_and_name_latency_by_bounds(env):
     st = rx.stats()
     assert (st["packets"], st["seq_gaps"], st["jitter_ms"], st["auth_fail"]) == (50, 0, 0.0, 0)
     assert st["capture_to_decoded_ms"]["samples"] == 0 and st["capture_to_decoded_ms"]["p50"] is None
+
+
+def test_slow_service_start_after_boot_is_not_fallback():
+    """Стенд 2026-10-29: после загрузки пульта первый конвейер службы rx строится дольше 1 с, а пульт ждал ответ
+    на start 1 с — объявлял start-failed и уходил на TLS до конца сеанса. Ждать start нужно дольше (блок ждёт
+    video-key-ack до ACK_TIMEOUT_S), прочие команды — коротко. Настоящий сокет управления и клиент."""
+    import shutil
+    import tempfile
+    import threading as th
+
+    from sheregesh.videosvc.ctl import CtlServer
+
+    d = tempfile.mkdtemp(prefix="shrx", dir="/tmp")            # путь unix-сокета короче предела macOS
+    started = th.Event()
+
+    def handler(cmd, args):
+        if cmd == "start":
+            time.sleep(1.5)                                    # холодный GStreamer после загрузки
+            started.set()
+            return {"stream": "main", "state": "starting"}
+        return {}
+    srv = CtlServer(os.path.join(d, "ctl.sock"), handler)
+    srv.start()
+    sent, units = [], []
+    try:
+        rx = V.VideoRx(lambda t, b: sent.append((t, b)) or True, lambda: "192.168.1.169", runtime=d,
+                       systemctl=lambda unit: units.append(unit) or True, rx_port=7444)
+        rx.handle("video-key", key_body())
+        assert started.is_set()
+        assert [t for t, _ in sent] == ["video-key-ack"] and sent[0][1]["ok"] is True, sent
+        assert rx.phase == "starting" and units == ["sheregesh-video-allow@192.168.1.169.service"]
+    finally:
+        srv.close()
+        shutil.rmtree(d, ignore_errors=True)
