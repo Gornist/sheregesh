@@ -3,8 +3,8 @@
 """Выбор источника видео блока с пульта (S4): список на странице «Видео», подтверждение, «Переключение…», ошибки,
 старый блок без списка, клиент без select_video_source, «Переподключение» (offscreen, L3).
 
-Список источников приходит в телеметрии status.video.sources (подмена Backend._video_report, как в
-test_gui_video_source); выбор — вызов select_video_source(id) у клиента канала (подмена Backend._video_peer: метод
+Список источников приходит в телеметрии status.video.sources (подмена VideoOps.report, как в
+test_gui_video_source); выбор — вызов select_video_source(id) у клиента канала (подмена VideoOps.peer: метод
 добавляет агент B в sheregesh.link.client.PeerClient). Кадры — подменный декодер. Снимки 1920×1200 и 1280×800:
 SHEREGESH_GUI_SELECT_OUT=docs/acceptance/s4-video/gui — туда; иначе во временный каталог.
 
@@ -21,10 +21,11 @@ from PySide6.QtCore import QMetaObject, QPoint, QPointF, Qt
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtTest import QTest
 
-from sheregesh_console import backend as backend_mod
+from sheregesh_console import videoops
 from sheregesh_console import videosource as vs
 from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations
-from sheregesh_console.backend import Backend, select_error
+from sheregesh_console.backend import Backend
+from sheregesh_console.videoops import select_error
 from sheregesh_console.qtwait import pump, wait_until
 from test_e2e_gui_screens import find, header_problems, outside_window, rect, save_small, tile_overflow, video_problems
 from test_gui_tile_geometry import text_problems, wide_font  # noqa: F401 — фикстура шрифта с метриками устройства
@@ -101,15 +102,15 @@ def ui(qapp, tmp_path, wide_font):
     b = Backend(tmp_path / "data", autostart=False, video_command=FAKE_DECODER)
     report = {"mode": "remote", "telemetry_video": tel(SOURCES), "session_info": {"codec": "h264", "width": 1280,
                                                                                     "height": 720, "fps": 30}}
-    b._video_report = lambda: report
+    b.videoops.report = lambda: report
     b.report = report
     b.peer = Peer(report)
-    b._video_peer = lambda: b.peer
+    b.videoops.peer = lambda: b.peer
     u = Ui(b)
     b._status.update(CONNECTED)
     b.statusChanged.emit()
     b.video.configure("h264", 5600)
-    b._update_video_source()
+    b.videoops.update()
     u.window.setProperty("currentPage", PAGE_NAMES.index("video"))
     pump(100)
     yield u
@@ -118,7 +119,7 @@ def ui(qapp, tmp_path, wide_font):
 
 def set_report(u, **kw):
     u.backend.report.update(kw)
-    u.backend._update_video_source()
+    u.backend.videoops.update()
     pump(80)
 
 
@@ -293,7 +294,7 @@ def test_select_errors_are_shown_as_text(ui, monkeypatch, case, expect):
         b.peer.reply = {"unavailable-unit": {"ok": False, "error": "unavailable", "detail": "/dev/video0 busy"},
                         "exception": OSError("link write failed"), "timeout": None}[case]
         b.peer.confirm = case != "timeout"
-        monkeypatch.setattr(backend_mod, "SELECT_TIMEOUT_S", 0.5)
+        monkeypatch.setattr(videoops, "SELECT_TIMEOUT_S", 0.5)
         assert b.selectVideoSource(hdmi, True)
     assert wait_until(lambda: b.videoSelection["state"] == "error", 3), b.videoSelection
     pump(80)
@@ -312,7 +313,7 @@ def test_client_without_select_method(ui):
     """До слияния с агентом B у клиента канала нет select_video_source: список виден, выбор недоступен, не падает."""
     b = ui.backend
     b.peer = OldClient()
-    b._update_video_source()
+    b.videoops.update()
     pump(80)
     assert len(items(ui)) == len(SOURCES) and not any(o.property("enabled") for o in items(ui))
     assert text(ui, "videoSelectStatus") == ("Выбор источника недоступен: клиент канала связи этого пульта "
@@ -355,7 +356,7 @@ def test_fault_states_with_list_hide_last_frame(ui, state, placeholder, reason):
         pump(300)
         assert b.videoSource["live"] and lit_fraction(ui, view) > 0.6   # кадры ещё идут — они актуальны (E2E-12)
         b.video.configure(None, None)                            # кадров нет: приёмник выключен (TLS) / «нет видео»
-        b._update_video_source()
+        b.videoops.update()
     else:
         set_report(ui, telemetry_video=tel(SOURCES, "rtsp:1", state=state))
     pump(300)
@@ -424,7 +425,7 @@ SHOTS = {
     "reconnecting": lambda u: (u.backend._status.update(RECONNECTING), u.backend.statusChanged.emit(),
                                u.backend.video.configure(None, None), set_report(u, link="RECONNECTING")),
     "old-unit-no-list": lambda u: set_report(u, telemetry_video=dict(TEL)),
-    "client-without-select": lambda u: (setattr(u.backend, "peer", OldClient()), u.backend._update_video_source()),
+    "client-without-select": lambda u: (setattr(u.backend, "peer", OldClient()), u.backend.videoops.update()),
 }
 
 

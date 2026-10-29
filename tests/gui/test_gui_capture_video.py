@@ -3,7 +3,7 @@
 """tools/probe/gui_capture.py --by video: снимки по фактическим переходам видео и источника (offscreen, L3).
 
 Поток → нет сигнала → восстановлено → нет устройства → восстановлено задаются подменой сведений блока
-(Backend._video_report) по таймеру, кадры — подменный декодер. Проверяется порядок и состав снимков, метки фаз и
+(VideoOps.report) по таймеру, кадры — подменный декодер. Проверяется порядок и состав снимков, метки фаз и
 доказательство смены кадров: при потоке область кадра меняется, при «нет сигнала» / «нет устройства» — нет.
 На стенде тот же класс Capture работает с настоящей связью (main).
 """
@@ -42,7 +42,7 @@ def test_capture_by_video_follows_actual_transitions(qapp, tmp_path):
     compile_translations()
     b = Backend(tmp_path / "data", autostart=False, video_command=FAKE_DECODER)
     report = {"mode": "remote", **STATES["synthetic-stream"]}
-    b._video_report = lambda: report
+    b.videoops.report = lambda: report
     u = Ui(b)
     b._status.update(CONNECTED)
     b.statusChanged.emit()
@@ -55,7 +55,7 @@ def test_capture_by_video_follows_actual_transitions(qapp, tmp_path):
     def set_state(name):
         report.clear()
         report.update({"mode": "remote", **STATES[name]})
-        b._update_video_source()
+        b.videoops.update()
 
     # внешнее «внесение отказа» по меткам фаз, как оператор на стенде
     script = [("phase-01-02-stream", "cvbs-no-signal"), ("phase-03-04-no-signal", "synthetic-stream"),

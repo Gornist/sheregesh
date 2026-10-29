@@ -45,7 +45,7 @@ if RTSP_URL and __GL__:   # путь GL (ADR-0015): декодер → unixfdsin
     rep = {"mode": "remote", "link": "CONNECTED", "session_info": {"codec": "h264", "width": 1280, "height": 720, "fps": 30},
            "telemetry_video": {"enabled": True, "active": True, "codec": "h264", "source": {
                "input": "rtsp", "state": "streaming", "device": "shcam Pi5 IMX477", "width": 1280, "height": 720, "fps": 30}}}
-    b._video_report = lambda: rep
+    b.videoops.report = lambda: rep
 elif RTSP_URL:      # кадры камеры напрямую (rtspsrc → аппаратный декодер), строка состояния — как от блока с RTSP
     caps = f"video/x-raw,format={__FMT__},width={FW},height={FH}"
     conv = (["v4l2convert", "!", caps] if __CONV__ == "hw" else
@@ -56,7 +56,7 @@ elif RTSP_URL:      # кадры камеры напрямую (rtspsrc → ап
     rep = {"mode": "remote", "link": "CONNECTED", "session_info": {"codec": "h264", "width": 1280, "height": 720, "fps": 30},
            "telemetry_video": {"enabled": True, "active": True, "codec": "h264", "source": {
                "input": "rtsp", "state": "streaming", "device": "shcam Pi5 IMX477", "width": 1280, "height": 720, "fps": 30}}}
-    b._video_report = lambda: rep
+    b.videoops.report = lambda: rep
     b.video.configure("h264", 5600)
 else:
     b = Backend(tempfile.mkdtemp(prefix="ui-bench-"), autostart=True, local_video=True)

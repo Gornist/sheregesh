@@ -3,7 +3,7 @@
 """Переход источника видео на экране пульта (S5 GUI-01, offscreen, L3): «Воспроизведение» — только по кадрам НОВОГО
 источника, при старте сеанса — без лишнего чёрного экрана.
 
-Сведения блока задаются подменой Backend._video_report (как в test_gui_video_source / test_gui_video_select), кадры —
+Сведения блока задаются подменой VideoOps.report (как в test_gui_video_source / test_gui_video_select), кадры —
 подменный «декодер», который пишет RGBx 640×360, пока нет файла паузы: так моделируются кадры прежнего источника,
 продолжающие приходить после смены (буфер, приёмник «playing» ещё NO_VIDEO_AFTER_S после последнего кадра), пауза
 подключения RTSP и кадры нового источника. Снимки «Подключение» 1920×1200 и 1280×800:
@@ -83,15 +83,15 @@ def make(tmp_path, telemetry_video, configure=True):
                 journal=MemoryJournal())
     report = {"mode": "remote", "telemetry_video": telemetry_video,
               "session_info": {"codec": "h264", "width": 1280, "height": 720, "fps": 30}}
-    b._video_report = lambda: report
+    b.videoops.report = lambda: report
     b.report = report
     b.peer = Peer(report)
-    b._video_peer = lambda: b.peer
+    b.videoops.peer = lambda: b.peer
     b.frames_ctl = Frames(pause)
     u = Ui(b)
     b._status.update(CONNECTED)
     b.statusChanged.emit()
-    b._update_video_source()
+    b.videoops.update()
     if configure:
         b.video.configure("h264", 5600)
     u.window.setProperty("currentPage", PAGE_NAMES.index("video"))
@@ -118,7 +118,7 @@ def ui_start(qapp, tmp_path, wide_font):
 
 def set_report(u, **kw):
     u.backend.report.update(kw)
-    u.backend._update_video_source()
+    u.backend.videoops.update()
     pump(60)
 
 

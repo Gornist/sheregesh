@@ -321,14 +321,14 @@ def test_synthetic_local_video_unchanged_after_uvc_round_trip(qapp, v4l2, tmp_pa
         b = u.backend
         assert wait_until(lambda: b.video.state == "playing", 10), b.video.metrics()
         norm = lambda args: [a for a in args if not a.startswith("port=")]      # noqa: E731 — порт выбирается заново
-        before = (b.video.metrics()["mode"], b.video.codec, norm(b._local_sender.args))
+        before = (b.video.metrics()["mode"], b.video.codec, norm(b.videoops.local_sender.args))
         assert "videotestsrc" in before[2] and "v4l2src" not in before[2]
-        sender = b._local_sender
+        sender = b.videoops.local_sender
         apply(b, video_source="uvc")
-        assert b.video.state == "no-device" and b._local_sender is None and sender.poll() is not None
+        assert b.video.state == "no-device" and b.videoops.local_sender is None and sender.poll() is not None
         apply(b, video_source="synthetic")
         assert wait_until(lambda: b.video.state == "playing", 10), b.video.metrics()
-        assert (b.video.metrics()["mode"], b.video.codec, norm(b._local_sender.args)) == before
+        assert (b.video.metrics()["mode"], b.video.codec, norm(b.videoops.local_sender.args)) == before
         assert "source" not in b.video.metrics() and b.video.source == {}
         assert v4l2.aux_opened == []
     finally:

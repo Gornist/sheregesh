@@ -3,7 +3,7 @@
 """Источник видео на экранах пульта: страница «Видео» и плитка связи (offscreen, L3).
 
 Состояния источника на блоке (поток / нет сигнала / нет устройства / ошибка подключения RTSP, а также блок 1.1 без
-этих полей) задаются подменой Backend._video_report — так же, как они придут из телеметрии и INFO видеосеанса
+этих полей) задаются подменой VideoOps.report — так же, как они придут из телеметрии и INFO видеосеанса
 (sheregesh_console.videosource). Кадры даёт подменный «декодер» (процесс, пишущий RGBx 640×360), поэтому GStreamer
 не нужен. Проверяется: подписи входа/состояния/режима/причины, чёрное поле без последнего кадра при «нет сигнала» и
 возврат видео, геометрия на 1920×1200 и 1280×800 (текст не выходит за плитки и кадр). Снимки:
@@ -90,7 +90,7 @@ def ui(qapp, tmp_path, wide_font):
     compile_translations()
     b = Backend(tmp_path / "data", autostart=False, video_command=FAKE_DECODER)
     report = {"mode": "remote", **STATES["synthetic-stream"]}
-    b._video_report = lambda: report                 # сведения блока — как из телеметрии и INFO видеосеанса
+    b.videoops.report = lambda: report                 # сведения блока — как из телеметрии и INFO видеосеанса
     b.report = report
     u = Ui(b)
     b._status.update(CONNECTED)
@@ -103,7 +103,7 @@ def ui(qapp, tmp_path, wide_font):
 def set_source(u, state):
     u.backend.report.clear()
     u.backend.report.update({"mode": "remote", **STATES[state]})
-    u.backend._update_video_source()
+    u.backend.videoops.update()
     pump(80)
 
 
@@ -192,7 +192,7 @@ def test_last_frame_is_not_reused_after_no_signal(ui):
     set_source(ui, "cvbs-no-signal")
     assert not view.showing_frame()
     b.report.update(STATES["synthetic-stream"])           # блок снова сообщает «поток», но кадров ещё нет
-    b._update_video_source()
+    b.videoops.update()
     pump(100)
     assert not view.showing_frame()
     b.video.configure("h264", 5600)

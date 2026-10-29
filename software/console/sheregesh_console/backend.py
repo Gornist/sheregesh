@@ -3,11 +3,7 @@
 """Связь QML ↔ монитор и конфигурация (ADR-0003). GUI не пишет файлы и не обращается к оборудованию:
 все данные — от эмуляторов, все изменения конфигурации — через ConfigStore с подтверждением."""
 import collections
-import os
 import platform
-import re
-import signal
-import socket
 import subprocess
 import threading
 import time
@@ -19,11 +15,9 @@ from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot, qVersion
 
 from sheregesh import PROTOCOL_VERSION, __version__
 from sheregesh import video as gst
-from sheregesh import videoinput
 from sheregesh.config import BackupError, ConfigStore, Schema, console_defaults
 from sheregesh.faults import CATALOG, render
 from sheregesh.link.client import PeerClient, RemotePeer
-from sheregesh.videolink import VideoClient
 from sheregesh_emulators import Bench
 from sheregesh_emulators.demo import DEMO
 from sheregesh_emulators.scenario import TICK_S
@@ -31,11 +25,12 @@ from sheregesh_emulators.scenario import TICK_S
 from . import configops
 from . import journal as jr
 from . import logops
-from . import videosource as vsrc
+from . import videoops
 from .module import ModuleView
 from .sticks import INPUT_DIR, StickSource, SticksView
 from .video import VideoReceiver
 from . import videorx
+from .videoops import VIDEO_DEFAULTS
 
 POWER_HISTORY = 240
 
@@ -102,44 +97,6 @@ def _yaml(data: dict) -> str:
 
 
 RECONNECT_WINDOW_S = 30.0
-SELECT_TIMEOUT_S = 15.0      # выбор источника видео: блок должен отметить новый источник активным за это время
-# Ответ блока/клиента на выбор источника → код ошибки для экрана (VideoPage.selectErrorText)
-_SELECT_ERRORS = (("unknown", ("unknown", "not-found", "no-such", "invalid-id", "bad-id")),
-                  ("unavailable", ("unavailable", "not-available", "no-device", "offline")),
-                  ("unsupported", ("unsupported", "not-supported", "not-implemented")),
-                  ("no-link", ("not-connected", "no-link", "disconnected", "no-session")),
-                  ("busy", ("busy", "in-progress")),
-                  ("timeout", ("timeout", "timed-out")))
-
-
-def select_error(result):
-    """Итог вызова select_video_source → (код, подробность). Код "" — блок принял запрос. Окончательный вид ответа
-    задаёт клиент канала (агент B), поэтому принимаются: None/True/"ok" — принято; False — отказ; dict {ok, error,
-    detail|message}; строка-код; исключение (код из .code или текста)."""
-    if isinstance(result, BaseException):
-        code, detail = str(getattr(result, "code", "") or ""), str(result) or type(result).__name__
-    elif result is None or result is True:
-        return "", ""
-    elif result is False:
-        return "failed", ""
-    elif isinstance(result, dict):
-        if result.get("ok", not result.get("error")) is True:
-            return "", ""
-        code = str(result.get("error") or result.get("code") or "")
-        detail = str(result.get("detail") or result.get("message") or "")
-    elif isinstance(result, str):
-        if result.strip().lower() in ("ok", "accepted", "switching", "selected"):
-            return "", ""
-        code, detail = result, ""
-    else:
-        return "", ""
-    probe = re.sub(r"[\s_]+", "-", f"{code} {detail}".lower())
-    for norm, keys in _SELECT_ERRORS:
-        if any(k in probe for k in keys):
-            return norm, vsrc.scrub(detail)[:200]
-    return "failed", vsrc.scrub(detail or code)[:200]
-# Видеовход пульта (S3.3): необязательные поля system.yaml. Без них — прежнее поведение (синтетический поток).
-VIDEO_DEFAULTS = {"video_source": "synthetic", "video_device": "", "video_mode": "1280x720@30", "video_format": "auto"}
 
 
 def peer_link(peer_state, snap):
@@ -191,7 +148,6 @@ class Backend(QObject):
     logsChanged = Signal()
     videoSourceChanged = Signal()
     videoSourcesChanged = Signal()      # список источников блока и ход выбора (videoSources, videoSelection)
-    _selectDone = Signal(int, object)   # из потока вызова select_video_source → в поток интерфейса
     _aboutDone = Signal(object)         # сведения о сборке (git, GStreamer) — из фонового потока
     aboutChanged = Signal()             # свои сигналы: configChanged перечитывает форму настроек (SettingsPage),
     configBusyChanged = Signal()        # а фоновая проба и ход операции не должны сбрасывать несохранённые правки
@@ -218,9 +174,7 @@ class Backend(QObject):
         self._last_phase = None
         self.journal = journal if journal is not None else jr.Journal()
         self._journal_link = None                   # последнее записанное в системный журнал (только переходы)
-        self._journal_video = None
         self._auth_episodes = 0                     # переходы канала в auth-failed (если клиент не ведёт счётчик)
-        self._last_video_state = None
         self._power_history = collections.deque(maxlen=POWER_HISTORY)
         self.client = None
         self.link_cfg = link_cfg
@@ -247,14 +201,6 @@ class Backend(QObject):
         for code, _ in report.actions:
             self.bench.events.inject("CFG-RECOVERED", detail=code)
             self.log("warning", "config", f"recovery action {code}")
-        self._vsrc = {**vsrc.empty(), **vsrc.display(vsrc.empty(), "off")}
-        self._remote_video_tel = None               # video из телеметрии блока, пока сеанс управления есть
-        self._peer_link = ""                        # peer_link канала управления (для «Переподключение» на «Видео»)
-        self._vsources = []                         # status.video.sources блока (videosource.sources)
-        self._vsel = {"state": "idle", "id": "", "name": "", "error": "", "detail": ""}
-        self._sel_seq = 0
-        self._handover = vsrc.Handover()            # переход источника блока: подтверждён ли он кадрами (GUI-01)
-        self._selectDone.connect(self._on_select_done)
         # Внешний модуль удалённого блока (ADR-0012): только показ status.module и команды module-cmd через клиент
         self._module = ModuleView(self, command=lambda: getattr(self._module_peer(), "module_command", None),
                                   log=lambda level, text: self.log(level, "module", text))
@@ -265,13 +211,14 @@ class Backend(QObject):
                                   client=lambda: self._sticks_peer(),
                                   log=lambda level, text: self._sticks_log(level, text))
         self.video = VideoReceiver(self, command=video_command)
-        self.video.stateChanged.connect(self._journal_video_state)
-        self.video.stateChanged.connect(self._update_video_source)
-        self.video.frameChanged.connect(self._on_video_frame)
-        self._local_sender = None
-        self._local_video = local_video
-        self._video_scan = dict(video_scan or {})
-        self._video_source = None
+        # Координация видео (videoops.py): вход из конфигурации, маршрут приёмника, источник для экранов, выбор
+        self.videoops = videoops.VideoOps(self.video, client=lambda: self.client, link_cfg=link_cfg,
+                                          videorx=self._videorx, events=self.bench.events,
+                                          status=lambda: getattr(self, "_status", None),
+                                          log=lambda level, text: self.log(level, "video", text),
+                                          journal=self.journal, local_video=local_video, scan=video_scan, parent=self)
+        self.videoops.sourceChanged.connect(self.videoSourceChanged)
+        self.videoops.sourcesChanged.connect(self.videoSourcesChanged)
         self._apply_video_source()
         self.demo = demo
         self.runner = DEMO.runner(self.bench) if demo else None
@@ -335,59 +282,15 @@ class Backend(QObject):
         self._timer.stop()
         self._sticks.stop()                         # без прощального кадра: блок сам уйдёт в FAILSAFE (ST-06)
         self.video.shutdown()
-        self._stop_local_sender()
+        self.videoops.stop_local_sender()
         if self.client is not None:
             self.client.stop()
 
-    def _stop_local_sender(self):
-        if self._local_sender is not None:
-            try:
-                os.killpg(self._local_sender.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            self._local_sender.wait()
-            self._local_sender = None
-
     def video_config(self):
-        sysy = self._rev.data["system.yaml"]
-        return {k: sysy.get(k, v) for k, v in VIDEO_DEFAULTS.items()}
+        return videoops.video_config(self._rev.data["system.yaml"])
 
     def _apply_video_source(self):
-        """Видеоисточник из конфигурации (S3.3): synthetic — прежний режим (поток удалённого блока или локальный
-        генератор), uvc — локальное устройство V4L2/UVC, disabled — видео выключено. Устройство UVC опрашивается и
-        захватывается только при явном выборе uvc."""
-        v = self.video_config()
-        if v == getattr(self, "_video_applied", None):
-            return
-        self._video_applied = v
-        self._video_source = v["video_source"]
-        if self._video_source == "uvc":
-            self._stop_local_sender()
-            dev, mode, fmt, scan = v["video_device"], v["video_mode"], v["video_format"], self._video_scan
-            self.video.configure_local((dev, mode, fmt), lambda: videoinput.open_uvc(dev, mode, fmt, **scan))
-            self.log("info", "video", f"source uvc device={dev or 'auto'} mode={mode} format={fmt}")
-        elif self._video_source == "disabled":
-            self._stop_local_sender()
-            self.video.configure(None, None)
-            self.log("info", "video", "source disabled")
-        else:
-            self.video.configure(None, None)      # поток удалённого блока подключится в _link_status
-            if self._local_video:
-                self._start_local_video()
-
-    def _start_local_video(self):
-        self._stop_local_sender()
-        codec = gst.choose_codec()
-        if codec is None:
-            self.log("error", "video", "no working synthetic video codec")
-            return
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
-            sk.bind(("127.0.0.1", 0))
-            port = sk.getsockname()[1]
-        self.video.configure(codec, port)
-        self._local_sender = gst.spawn(gst.sender_args(codec, port), stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL)
-        self.log("info", "video", f"local synthetic generator {codec} on 127.0.0.1:{port}")
+        self.videoops.apply(self.video_config())
 
     # ---------- журнал приложения ----------
     def log(self, level, source, text):
@@ -478,43 +381,11 @@ class Backend(QObject):
                 self.log("warning" if snap["phase"] != "connected" else "info", "link",
                          f"phase {snap['phase']} ({snap['detail']})")
                 self._last_phase = snap["phase"]
-            vrx = self._videorx
-            if self._video_source != "synthetic":
-                pass                                # локальный видеовход или видео выключено (S3.3)
-            elif vrx is not None and vrx.active and s.peer_state == "connected":
-                # Видеосеанс SRTP (ADR-0016): кадры отдаёт служба rx; откат на TLS — по решению пульта (videorx)
-                self.video.configure_service(vrx.codec, vrx.frames_path, vrx.stats)
-            elif s.peer_state == "connected" and vid.get("codec") and vid.get("transport") == "tls" \
-                    and self.link_cfg is not None and self.link_cfg.video and snap.get("host"):
-                # Защищённый видеоканал (S3.1-VIDEO): тот же блок, что у сеанса управления; порт — из своей
-                # конфигурации, не из телеметрии. Незащищённого удалённого источника нет.
-                host, port, cfg = snap["host"], self.link_cfg.video_port, self.link_cfg
-                self.video.configure_remote(vid["codec"], (host, port), lambda: VideoClient(cfg, host, port))
-            elif self.link_cfg is not None and (s.peer_state != "connected" or vid.get("transport") != "tls"):
-                if self.video.state != "off":       # сеанс управления потерян — видеоканал закрывается
-                    self.video.configure(None, None)
-            elif vid.get("codec") and vid.get("port") and s.peer_state == "connected":
-                self.video.configure(vid["codec"], vid["port"])
         else:
             cnt = {"connects": 0, "disconnects": 0, "bad_messages": 0, "ignored_messages": 0, "received": 0,
                    "seq_gaps": 0}
-        self._remote_video_tel = vid if self.client is not None and s.peer_state == "connected" else None
-        self._peer_link = peer_link(s.peer_state, snap) if self.client is not None else ""
-        self._update_video_source()
-        # Пропадание видео — диагностическое событие, видно на главной панели и в диагностике
-        expected = (self.client is not None and bool(vid.get("enabled")) and s.peer_state == "connected") or \
-            self._local_sender is not None
-        expected = {"uvc": True, "disabled": False}.get(self._video_source, expected)
-        if (self.video.state in ("no-video", "restarting", "no-device", "unsupported")
-                or self._vsrc["display"] in vsrc.BLOCKING) and expected:   # на блоке нет сигнала/устройства
-            self.bench.events.inject("VIDEO-LOST", state=self._vsrc["display"])
-        elif self._vsrc["live"] or not expected:
-            self.bench.events.clear("VIDEO-LOST")
-        if self.video.state != self._last_video_state:
-            self.log("info" if self.video.state in ("playing", "waiting", "off") else "warning", "video",
-                     f"state {self.video.state} {self.video.error}".strip())
-            self._last_video_state = self.video.state
         link = peer_link(s.peer_state, snap)
+        self.videoops.on_link(s.peer_state, snap, vid, link)
         return {
             "peerMode": ("network" if snap.get("secure") else "process") if self.client is not None else "emulated",
             "peerLink": link, "linkView": link_view(s.peer_state, link),
@@ -534,7 +405,7 @@ class Backend(QObject):
             "remotePowerSource": SOURCE_NAMES[self.lang].get(rp.get("source", ""), rp.get("source", "")),
             "remoteLowBattery": bool(rp.get("low_battery")), "remoteUptime": tel.get("uptime_s", -1),
             "remoteEvents": ", ".join(tel.get("active_events") or []),
-            "remoteVideo": bool(vid.get("active")), "videoSource": self._video_source,
+            "remoteVideo": bool(vid.get("active")), "videoSource": self.videoops.source,
             "batteryWarning": self._rev.data["diagnostics.yaml"]["battery_warning_pct"],
             "batteryCritical": self._rev.data["diagnostics.yaml"]["battery_critical_pct"],
             "undervoltage": bool(s.power and s.power.undervoltage),
@@ -606,25 +477,7 @@ class Backend(QObject):
                                     f"peer={peer} host={st['linkHost'] or '-'} tls={st['linkTls'] or 'none'} "
                                     f"mode={st['peerMode']})")
             self._journal_link = view
-        self._journal_video_state()
-
-    @Slot()
-    def _journal_video_state(self):
-        """Наличие видеопотока — по сигналу приёмника, а не по такту бэкенда: обрыв короче такта (0,125–0,5 с)
-        при опросе по такту в журнал не попадал (CI ubuntu, E2E-12)."""
-        cls = jr.video_class(self.video.state)
-        if cls is None or cls == self._journal_video:
-            return
-        src = getattr(self, "_video_source", None)
-        if cls == "playing":
-            how = "restored" if self._journal_video == "no-stream" else "started"
-            self.journal.emit(jr.INFO, f"video: stream {how} (codec={self.video.codec or '-'} source={src})")
-        elif cls == "no-stream":
-            self.journal.emit(jr.WARNING, f"video: no stream (state={self.video.state} "
-                                          f"error={self.video.error or '-'} source={src})")
-        elif self._journal_video is not None:
-            self.journal.emit(jr.NOTICE, f"video: off (source={src})")
-        self._journal_video = cls
+        self.videoops.journal_state()
 
     @Property(dict, notify=statusChanged)
     def status(self):
@@ -638,157 +491,23 @@ class Backend(QObject):
     def videoSource(self):
         """Источник видео для экранов (sheregesh_console.videosource): вход, состояние, режим, причина, решение для
         кадра (display, live)."""
-        return self._vsrc
-
-    def _video_report(self):
-        """Откуда сведения об источнике: режим и сырые данные для videosource.describe."""
-        if self._video_source == "uvc":
-            return {"mode": "local-input", "local_info": self.video.source}
-        if self._video_source == "disabled":
-            return {"mode": "off"}
-        if self._local_sender is not None:
-            return {"mode": "local-synthetic"}
-        if self.client is not None:
-            return {"mode": "remote", "telemetry_video": self._remote_video_tel,
-                    "session_info": self.video.session_info(), "link": self._peer_link}
-        return {"mode": "off"}
-
-    @Slot()
-    def _update_video_source(self):
-        report = self._video_report()
-        src = vsrc.describe(rx_state=self.video.state, rx_error=self.video.error, **report)
-        self._update_video_sources(vsrc.sources(report.get("telemetry_video"))
-                                   if report["mode"] == "remote" and src["state"] != vsrc.RECONNECTING else [])
-        # кадры прежнего источника (буфер, NO_VIDEO_AFTER_S приёмника) не выдаются за кадры нового (GUI-01)
-        fresh = self._handover.update(src, self.video.frames_since) if report["mode"] == "remote" else True
-        src.update(vsrc.display(src, self.video.state, fresh))
-        if self._vsel["state"] == "switching" and src["display"] in ("playing", vsrc.CONNECTING):
-            # до подтверждения блоком (активный id в телеметрии) кадры — прежнего источника: не выдаются за новый
-            src.update(display="switching", live=False)
-        if src != self._vsrc:
-            # переходы состояния источника (у приёмника — свой журнал «state …» в _link_status)
-            source_level = vsrc.BLOCKING + ("starting", vsrc.CONNECTING)
-            if src["display"] != self._vsrc["display"] and (src["display"] in source_level or
-                                                             self._vsrc["display"] in source_level):
-                self.log("warning" if src["display"] in vsrc.BLOCKING else "info", "video",
-                         f"source {src['input'] or '-'} {src['display']} {src['error']}".strip())
-            self._vsrc = src
-            self.videoSourceChanged.emit()
-
-    @Slot()
-    def _on_video_frame(self):
-        """Переход источника ждёт кадров нового (GUI-01): решение — с первым же подходящим кадром, а не с тактом
-        бэкенда или очередным уведомлением приёмника (до 0,5 с). Вне перехода кадры экран не пересчитывают."""
-        if self._handover.pending and not self._handover.waiting:
-            self._update_video_source()
-
-    # ---------- выбор источника видео на блоке (S4) ----------
-    def _video_peer(self):
-        """Клиент канала с блоком, у которого вызывается select_video_source (для испытаний подменяется)."""
-        return self.client
-
-    def _selector(self):
-        return getattr(self._video_peer(), "select_video_source", None)
-
-    def _select_blocker(self):
-        """Почему выбор сейчас невозможен: "" | local | no-link | no-list | unsupported."""
-        if self._video_report()["mode"] != "remote":
-            return "local"
-        if self._video_report().get("link") == "RECONNECTING" or (
-                self.client is not None and self._status.get("peerState", "connected") != "connected"):
-            return "no-link"
-        if not self._vsources:
-            return "no-list"
-        if not callable(self._selector()):
-            return "unsupported"
-        return ""
-
-    def _set_selection(self, **kw):
-        new = {**self._vsel, **kw}
-        if new != self._vsel:
-            self._vsel = new
-            self.videoSourcesChanged.emit()
-
-    def _update_video_sources(self, sources):
-        changed = sources != self._vsources
-        self._vsources = sources
-        blocker = self._select_blocker() if hasattr(self, "_status") else "local"
-        changed = changed or blocker != getattr(self, "_sel_blocker", None)
-        self._sel_blocker = blocker
-        switching = self._vsel["state"] == "switching"
-        if switching and any(x["id"] == self._vsel["id"] and x["active"] for x in sources):
-            self.log("info", "video", f"source selected {self._vsel['id']}")
-            self._sel_seq += 1                      # ответ/таймаут прежнего запроса больше не нужен
-            self._handover.confirmed()
-            self._set_selection(state="idle", error="", detail="")
-        elif switching and blocker == "no-link":   # связь потеряна во время переключения: итог неизвестен
-            self._sel_seq += 1
-            self._handover.cancel()
-            self._set_selection(state="error", error="no-link", detail="")
-        elif changed:
-            self.videoSourcesChanged.emit()
+        return self.videoops.display
 
     @Property(list, notify=videoSourcesChanged)
     def videoSources(self):
         """Источники блока: [{id, input, name, available, active}] (пусто — блок списка не сообщает)."""
-        return self._vsources
+        return self.videoops.sources
 
     @Property(dict, notify=videoSourcesChanged)
     def videoSelection(self):
         """Ход выбора: state idle|switching|error, id/name выбираемого, error — код (unknown, unavailable, unsupported,
         no-link, busy, timeout, failed), detail — текст блока; blocker — почему выбор недоступен ("" — доступен)."""
-        return {**self._vsel, "blocker": self._select_blocker()}
+        return self.videoops.selection
 
     @Slot(str, bool, result=bool)
     def selectVideoSource(self, source_id, confirmed):
-        """Выбор источника на блоке — только после подтверждения на экране (без случайных переключений). True —
-        запрос отправлен (или источник уже активен); итог — в videoSelection."""
-        if not confirmed or self._vsel["state"] == "switching":
-            return False
-        src = next((x for x in self._vsources if x["id"] == source_id), None)
-        name = src["name"] if src else vsrc.scrub(source_id)[:64]
-        blocker = self._select_blocker()
-        err = {"no-link": "no-link", "unsupported": "unsupported", "local": "unsupported",
-               "no-list": "unsupported"}.get(blocker, "")
-        if not err and src is None:
-            err = "unknown"
-        elif not err and not src["available"]:
-            err = "unavailable"
-        if err:
-            self.log("warning", "video", f"source select {source_id}: {err}")
-            self._set_selection(state="error", id=source_id, name=name, error=err, detail="")
-            return False
-        if src["active"]:
-            self._set_selection(state="idle", id=source_id, name=name, error="", detail="")
-            return True
-        self._sel_seq += 1
-        seq, call = self._sel_seq, self._selector()
-        self.log("info", "video", f"source select {source_id} ({src['input'] or '-'})")
-        self._set_selection(state="switching", id=source_id, name=name, error="", detail="")
-        self._handover.select()
-        self._update_video_source()
-
-        def run():                                  # вызов идёт по сети — не в потоке интерфейса
-            try:
-                result = call(source_id)
-            except Exception as e:                  # noqa: BLE001 — любая ошибка клиента показывается текстом
-                result = e
-            self._selectDone.emit(seq, result)
-        threading.Thread(target=run, name="video-select", daemon=True).start()
-        QTimer.singleShot(int(SELECT_TIMEOUT_S * 1000), lambda: self._on_select_done(seq, {"ok": False, "error": "timeout"}))
-        return True
-
-    @Slot(int, object)
-    def _on_select_done(self, seq, result):
-        if seq != self._sel_seq or self._vsel["state"] != "switching":
-            return                                  # устаревший ответ или уже подтверждено телеметрией
-        code, detail = select_error(result)
-        if code:
-            self._sel_seq += 1
-            self.log("warning", "video", f"source select {self._vsel['id']}: {code} {detail}".strip())
-            self._handover.cancel()
-            self._set_selection(state="error", error=code, detail=detail)
-        self._update_video_source()                 # блок мог уже отметить источник активным; снять «Переключение»
+        """Выбор источника на блоке — только после подтверждения на экране; итог — в videoSelection (videoops.py)."""
+        return self.videoops.select(source_id, confirmed)
 
     @Property(list, notify=statusChanged)
     def powerHistory(self):

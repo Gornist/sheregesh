@@ -283,7 +283,7 @@ class ControlServer(QObject):
 
     def _snapshot(self):
         b = self.backend
-        tel = getattr(b, "_remote_video_tel", None) or {}
+        tel = b.videoops.remote_telemetry or {}
         return {"sources": [dict(s) for s in b.videoSources], "active": [s["id"] for s in b.videoSources if s["active"]],
                 "source": tel.get("source"), "selection": dict(b.videoSelection), "display": b.videoSource["display"]}
 

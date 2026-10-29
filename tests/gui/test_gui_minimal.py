@@ -3,7 +3,7 @@
 """Интерфейс Minimal (MainMinimal.qml): матрица GUI-01…GUI-12 (offscreen, L3, подменные данные).
 
 Кадры даёт подменный декодер (test_gui_video_source.FAKE_DECODER, 25 кадров/с), состояние источника — подмена
-Backend._video_report, аппаратура и клиент канала — FakeSource/FakeClient (test_gui_sticks), модуль — телеметрия
+VideoOps.report, аппаратура и клиент канала — FakeSource/FakeClient (test_gui_sticks), модуль — телеметрия
 status.module (test_gui_module). Проверяется геометрия 1280×800 и 1920×1200, строка состояния, нижнее меню, пять
 разделов и их закрытие, выбор источника, «нет кадров» и «нет связи с блоком» как разные состояния, восстановление,
 USB-ввод, внешний модуль (SIM), и что навигация по меню не роняет показ кадров и не меняет поле видео.
@@ -50,7 +50,7 @@ def ui(qapp, tmp_path, wide_font):
     b._sticks_peer = lambda: b.peer
     b.peer, b.src = FakeClient(), src
     report = {"mode": "remote", **STATES["synthetic-stream"]}
-    b._video_report = lambda: report
+    b.videoops.report = lambda: report
     b.report = report
     u = Ui(b, layout="minimal")
     u.window.resize(1280, 800)
@@ -70,8 +70,8 @@ def feed(u, status=CONNECTED, module=READY, rc="IDLE", source="synthetic-stream"
     if rc is not None:
         b.peer.rc_state = rc_state(rc, "start" if rc == "IDLE" else "fresh", time.monotonic())
     b.report.clear()
-    b.report.update({"mode": "remote", "link": status["peerLink"], **STATES[source]})   # как Backend._video_report
-    b._update_video_source()
+    b.report.update({"mode": "remote", "link": status["peerLink"], **STATES[source]})   # как VideoOps.report
+    b.videoops.update()
     tele = {"state": "normal", "module": module} if module is not None else {"state": "normal"}
     from types import SimpleNamespace
     b._update_module(SimpleNamespace(peer=SimpleNamespace(telemetry=tele if connected else None, session="1.4")))
@@ -210,8 +210,8 @@ def test_gui06_video_source_switch_needs_confirmation(ui):
     b = ui.backend
     b.report["telemetry_video"] = select_tel(SELECT_SOURCES)
     peer = SelectPeer(b.report)
-    b._video_peer = lambda: peer
-    b._update_video_source()
+    b.videoops.peer = lambda: peer
+    b.videoops.update()
     b.statusChanged.emit()
     pump(200)
     tap(ui, "nav_video")
@@ -220,7 +220,7 @@ def test_gui06_video_source_switch_needs_confirmation(ui):
     assert peer.calls == [] and wfind(ui, "miniSourceConfirm").property("visible"), "выбор — только с подтверждением"
     tap(ui, "miniSourceConfirm")
     assert wait_until(lambda: peer.calls == [SELECT_SOURCES[1]["id"]], 5), peer.calls
-    b._update_video_source()
+    b.videoops.update()
     assert wait_until(lambda: b.videoSource.get("input") == "hdmi", 5), b.videoSource
     pump(350)
     assert status(ui, "video").startswith("HDMI")

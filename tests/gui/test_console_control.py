@@ -4,7 +4,7 @@
 работающему пульту, пульт выполняет Backend.selectVideoSource(id, True) в своём сеансе — второго сеанса управления
 с блоком нет.
 
-Блок подменён (Backend._video_report + клиент с select_video_source, как в test_gui_video_select); канал —
+Блок подменён (VideoOps.report + клиент с select_video_source, как в test_gui_video_select); канал —
 настоящий unix-сокет во временном каталоге 0700. Это не проверка на стенде: там — команды из отчёта S5.
 """
 import io
