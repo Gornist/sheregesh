@@ -10,7 +10,8 @@
 те же machine-id/ключи/сертификат/роль, ssh active, сокет агента OTA active, нет failed-юнитов, плата работает
 не меньше MIN_UPTIME_S (вызовы watchdog успели пройти), sheregesh-health verdict PASS.
 По ролям: console — sheregesh-console active без перезапусков, канал mTLS connected, (стенд) видео remote-tls
-playing ≥ 25 к/с; remote — sheregesh-remote-net active без перезапусков, сеанс с пультом, видеосервер слушает;
+playing ≥ 25 к/с; remote — sheregesh-remote-net active без перезапусков, сеанс с пультом, видео пульту идёт: TLS-сеанс
+видеосервера с кадрами или служба sheregesh-video-tx streaming по SRTP к пульту сеанса управления (ADR-0016);
 standalone — эмулятор и пульт active. Сетевые проверки health (config.link, link.state, certs.*) — PASS, не SKIP.
 """
 import hashlib
@@ -26,6 +27,7 @@ CONFIG = HOME / ".config/sheregesh"
 ROLE_UNITS = {"console": ["sheregesh-console"], "remote": ["sheregesh-remote-net"],
               "standalone": ["sheregesh-remote-emu", "sheregesh-console"]}
 NET_CHECKS = ("config.link", "link.state", "certs.device", "certs.ca", "certs.key-mode")
+VIDEO_STATE = "/run/sheregesh-video/state.json"     # состояние службы видео (VIDEO-SERVICE-CONTRACT §4)
 
 
 def _sha(path):
@@ -171,10 +173,20 @@ def gates(layout, state, probe: Probe, lab_video=True):
             # Не только «сервер слушает»: есть видеосеанс с пультом и генератор выдал кадры (счётчик блока).
             # Приём и декодирование на пульте проверяются независимо процедурой (check_video_link с pi1).
             v = ls.get("video") or {}
-            add("video", v.get("port") == 7444 and v.get("transport") == "tls1.3-mutual" and bool(v.get("active"))
-                and (v.get("frames") or 0) > 0 and (v.get("sender_fps_5s") or 0) > 0,
+            tls = (v.get("port") == 7444 and v.get("transport") == "tls1.3-mutual" and bool(v.get("active"))
+                   and (v.get("frames") or 0) > 0 and (v.get("sender_fps_5s") or 0) > 0)
+            # ADR-0016: видео через службу tx по SRTP. Кадров служба tx не считает — признак потока: RTP-пакеты
+            # отправлены пульту того же сеанса управления (адрес peer state.json = адрес сеанса mTLS).
+            tx = probe.json_file(VIDEO_STATE)
+            m = (tx.get("streams") or {}).get("main") or {} if tx.get("role") == "tx" else {}
+            packets = (m.get("rtp") or {}).get("packets")
+            peer = (ls.get("peer") or {}).get("addr")
+            srtp = (m.get("state") == "streaming" and m.get("transport") == "srtp" and peer is not None
+                    and m.get("peer") == peer and isinstance(packets, int) and packets > 0)
+            add("video", tls or srtp,
                 f"видеосервер {v.get('transport')} порт {v.get('port')}, сеанс {'есть' if v.get('active') else 'нет'}, "
-                f"кадров {v.get('frames')}, {v.get('sender_fps_5s')} к/с")
+                f"кадров {v.get('frames')}, {v.get('sender_fps_5s')} к/с; служба tx {m.get('state') or 'нет'} "
+                f"{m.get('transport') or '-'} → {m.get('peer') or '-'}, RTP-пакетов {packets}")
     ok = all(c["status"] == "PASS" for c in checks if c["mandatory"])
     return ok, checks
 

@@ -247,6 +247,59 @@ def test_remote_role_gates(tmp_path):
     assert "unit.sheregesh-console" not in {c["id"] for c in res["checks"]}   # у блока пульт не обязателен
 
 
+TLS_IDLE = {"port": 7444, "transport": "tls1.3-mutual", "active": False, "frames": 0, "sender_fps_5s": 0.0}
+
+
+def remote_board(tmp_path, video_state):
+    """Блок на пробной загрузке: сеанс управления с пультом есть, TLS-видеосервер без сеанса (как на стенде
+    ADR-0016: видео идёт через службу sheregesh-video-tx)."""
+    b = Board(tmp_path)
+    (b.persistent / "home/sheregesh-ui/.config/sheregesh").mkdir(parents=True)
+    (b.persistent / "home/sheregesh-ui/.config/sheregesh/remote.role").write_text("urn\n")
+    b.status_files = {"/run/sheregesh-remote/link-status.json": {
+        "connected": True, "tls": True, "peer": {"addr": "192.168.1.92"}, "video": dict(TLS_IDLE)}}
+    if video_state is not None:
+        b.status_files["/run/sheregesh-video/state.json"] = video_state
+    b.enable()
+    assert b.request("install", b.payload("1.1.0"))[0]["result"] == "OK"
+    assert b.request("tryboot")[0]["result"] == "OK"
+    b.firmware_boot(tryboot_flag=True)
+    b.agent().on_boot()
+    return b
+
+
+def tx_state(**main):
+    m = {"state": "streaming", "transport": "srtp", "peer": "192.168.1.92", "gen": 2,
+         "rtp": {"packets": 90248, "lost": None, "jitter_ms": None, "reordered": None}}
+    m.update(main)
+    return {"v": 1, "role": "tx", "streams": {"main": m}}
+
+
+def test_remote_confirmed_with_srtp_video_service(tmp_path):
+    """ADR-0016: видео блока идёт через службу tx по SRTP — TLS-сеанса нет, и это не причина отказа (стенд
+    2026-10-29: confirm FAILED на здоровой pi2 с потоком 30 к/с)."""
+    b = remote_board(tmp_path, tx_state())
+    res, _ = b.request("confirm")
+    assert res["result"] == "OK", [c for c in res["checks"] if c["status"] != "PASS"]
+    assert res["state"]["state"] == "COMMITTED" and autoboot(b) == (3, 2)
+
+
+@pytest.mark.parametrize("video_state", [
+    None,                                                       # службы видео нет — и TLS-сеанса нет
+    tx_state(state="starting"),
+    tx_state(peer="192.168.1.50"),                              # поток не тому пульту, что в сеансе управления
+    tx_state(rtp={"packets": 0}),
+    tx_state(rtp={"packets": None}),
+    tx_state(transport="udp"),
+    {"v": 1, "role": "rx", "streams": {"main": tx_state()["streams"]["main"]}},
+])
+def test_remote_srtp_video_gate_requires_stream_to_session_peer(tmp_path, video_state):
+    b = remote_board(tmp_path, video_state)
+    res, _ = b.request("confirm")
+    failed = [c["id"] for c in res["checks"] if c["status"] != "PASS" and c["mandatory"]]
+    assert res["result"] == "FAILED" and failed == ["video"], failed
+
+
 def _gnu_tar():
     import subprocess
     try:
