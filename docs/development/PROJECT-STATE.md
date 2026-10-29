@@ -14,6 +14,8 @@
   [Контракт v8](../architecture/VIDEO-SERVICE-CONTRACT.md), [приёмка ADR-0016](../acceptance/adr0016/REPORT.md).
 - По приёмке ADR-0016: обе платы на образе `90f411c`, DEV `g64cfe1d`; pi2 A, pi1 B, OTA COMMITTED.
   Это последний документированный результат, а не гарантия текущей конфигурации.
+- 2026-10-29: обе платы на образе `e2303c9` (этапы устранения дефектов 1–6, 7.1), pi2 B, pi1 A, OTA COMMITTED;
+  находки и очередь L4 — [remediation-l4](../acceptance/remediation-l4/REPORT.md).
 - Три физических отключения Ethernet: восстановление ≥25 fps за 4,4 / 2,6 / 7,8 с после возврата связи.
 - GL-путь на GPU проверялся отдельно; условия и ограничения — `../acceptance/video-gl/REPORT.md`.
 
