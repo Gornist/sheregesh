@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Отметка времени для платы без RTC (ADR-0017, как fake-hwclock): mtime drift-файла chrony в /persistent — сейчас,
+# только вперёд. При загрузке chronyd -s ставит часы по нему. Запуск — таймером раз в 10 мин и перед выключением.
+[Unit]
+Description=Sheregesh: save wall-clock mark for the next boot (no RTC)
+RequiresMountsFor=/persistent
+DefaultDependencies=no
+After=local-fs.target
+Before=shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/sheregesh-time save
+ExecStop=/usr/bin/sheregesh-time save
+RemainAfterExit=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/persistent/chrony
+PrivateTmp=yes
+PrivateNetwork=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+WantedBy=multi-user.target

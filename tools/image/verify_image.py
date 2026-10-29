@@ -357,9 +357,9 @@ def time_checks(rep, root, packages_tsv):
             and ("systemd-timesyncd" not in listed or root.exists("/etc/systemd/system/systemd-timesyncd.service")))
     conf = root.cat("/etc/chrony/chrony.conf")
     lines = [x.split()[0] for x in conf.splitlines() if x.strip() and not x.lstrip().startswith("#")]
-    rep.add("time.conf", "chrony.conf образа: ADR-0017, без источников и local, cmdport 0, makestep",
+    rep.add("time.conf", "chrony.conf образа: ADR-0017, без источников и local, cmdport 0, makestep, drift в /persistent",
             "ADR-0017" in conf and not {"server", "pool", "peer", "local", "sourcedir"} & set(lines)
-            and "cmdport" in lines and "makestep" in lines
+            and "cmdport" in lines and "makestep" in lines and "driftfile /persistent/chrony/chrony.drift" in conf
             and all(x.split()[1] in ("127.0.0.1", "::1") for x in conf.splitlines() if x.startswith("allow")))
     role = root.cat("/usr/lib/systemd/system/sheregesh-time-role.service")
     peer = root.cat("/usr/lib/systemd/system/sheregesh-time-peer@.service")
@@ -367,9 +367,16 @@ def time_checks(rep, root, packages_tsv):
             "ExecStart=/usr/bin/sheregesh-time role" in role and "PartOf=chrony.service" in role
             and "ExecStart=/usr/bin/sheregesh-time peer %i" in peer
             and all("IPAddressDeny=any" in u and "ProtectSystem=strict" in u for u in (role, peer)))
+    dropin = root.cat("/etc/systemd/system/chrony.service.d/50-sheregesh.conf")
+    rep.add("time.boot_clock", "нет RTC: chronyd -s, drift-файл в /persistent (дополнение юнита, tmpfiles _chrony)",
+            '"-F 1 -s"' in root.cat("/etc/default/chrony") and "ReadWritePaths=/persistent/chrony" in dropin
+            and "RequiresMountsFor=/persistent" in dropin
+            and "d /persistent/chrony 0750 _chrony _chrony" in root.cat("/usr/lib/tmpfiles.d/sheregesh-chrony.conf"))
     wants = " ".join(root.ls("/etc/systemd/system/multi-user.target.wants"))
-    rep.add("time.enabled", "включены chrony и sheregesh-time-role",
-            "chrony.service" in wants and "sheregesh-time-role.service" in wants)
+    timers = " ".join(root.ls("/etc/systemd/system/timers.target.wants"))
+    rep.add("time.enabled", "включены chrony, sheregesh-time-role, отметка времени (save, таймер tick)",
+            "chrony.service" in wants and "sheregesh-time-role.service" in wants
+            and "sheregesh-time-save.service" in wants and "sheregesh-time-tick.timer" in timers)
     helper = root.cat("/usr/bin/sheregesh-time")
     rep.add("time.helper", "помощник sheregesh-time и его обёртка (python3 -I) есть",
             "python3 -I " in helper and root.exists("/usr/lib/sheregesh/tools/image/bin/sheregesh-time"))

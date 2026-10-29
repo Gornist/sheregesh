@@ -58,9 +58,15 @@ mmdebstrap:
       install -D -m 0644 "$IGconf_sheregesh_assetdir/53-sheregesh-time-peer.rules" \
         $1/etc/polkit-1/rules.d/53-sheregesh-time-peer.rules
       chroot $1 systemctl mask systemd-timesyncd.service
+      # Без RTC: chronyd -s ставит часы по mtime drift-файла в /persistent (общий для слотов); юниту chrony — запись туда.
+      printf '# Sheregesh (ADR-0017): -s — часы по mtime drift-файла (нет RTC)\nDAEMON_OPTS="-F 1 -s"\n' \
+        > $1/etc/default/chrony
+      mkdir -p $1/etc/systemd/system/chrony.service.d
+      printf '# Sheregesh (ADR-0017): drift-файл в /persistent\n[Unit]\nRequiresMountsFor=/persistent\n[Service]\nReadWritePaths=/persistent/chrony\n' \
+        > $1/etc/systemd/system/chrony.service.d/50-sheregesh.conf
     # sheregesh-ota.socket и sheregesh-ota-boot (S3.1-DEPLOY) включены всегда, но работают только при открытом
     # ключе подписи владельца (/etc/sheregesh/deploy/allowed_signers — только dev-образ).
-    - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console sheregesh-remote-net sheregesh-health.timer sheregesh-ota.socket sheregesh-ota-boot sheregesh-var-seed sheregesh-video-nft sheregesh-video-nft-remote sheregesh-video-rx sheregesh-video-tx chrony sheregesh-time-role
+    - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console sheregesh-remote-net sheregesh-health.timer sheregesh-ota.socket sheregesh-ota-boot sheregesh-var-seed sheregesh-video-nft sheregesh-video-nft-remote sheregesh-video-rx sheregesh-video-tx chrony sheregesh-time-role sheregesh-time-save sheregesh-time-tick.timer
     - |-
       set -eu
       # Найдено при первой загрузке на Pi 4 (S2-BOOT), корень только для чтения:

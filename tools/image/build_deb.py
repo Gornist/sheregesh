@@ -73,6 +73,7 @@ HELPER_DST = f"{PREFIX}/tools/image/bin"
 NFT_DIR = Path(__file__).resolve().parent / "nft"
 NFT_DST = "usr/share/sheregesh/nft"
 UNITS = Path(__file__).resolve().parent / "units"
+TMPFILES = Path(__file__).resolve().parent / "tmpfiles"      # /usr/lib/tmpfiles.d (ADR-0017: каталог drift chrony)
 POSTINST = """#!/bin/sh
 set -e
 # Байт-код заранее: на устройстве корневая ФС только для чтения (ADR-0006).
@@ -167,6 +168,10 @@ def build_tree(stage: Path):
     info = stage / "usr/share/sheregesh/build.json"
     info.parent.mkdir(parents=True, exist_ok=True)
     info.write_text(json.dumps(build_info(), ensure_ascii=False, indent=1) + "\n")
+    for conf in sorted(TMPFILES.glob("*.conf")):
+        dst = stage / "usr/lib/tmpfiles.d" / conf.name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(conf, dst)
     for unit in sorted([*UNITS.glob("*.service"), *UNITS.glob("*.timer"), *UNITS.glob("*.socket")]):
         dst = stage / "usr/lib/systemd/system" / unit.name
         dst.parent.mkdir(parents=True, exist_ok=True)

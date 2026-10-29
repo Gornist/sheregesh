@@ -11,15 +11,20 @@
   sheregesh-time peer АДРЕС    — адрес второй платы текущего сеанса (DHCP может отличаться от peer_hosts):
                                  пульт: allow АДРЕС; блок: источник АДРЕС, прежний сеансовый источник удаляется
   sheregesh-time peer none     — блок: удалить сеансовый источник; пульт: ничего
+  sheregesh-time save          — часы без RTC (как fake-hwclock): mtime drift-файла chrony = сейчас, только вперёд;
+                                 при загрузке chronyd -s ставит часы по этому mtime (таймер раз в 10 мин и остановка)
 
 Адрес — строго один IPv4/IPv6 без маски и зоны, не unspecified и не multicast (как sheregesh-video-allow). Коды: 0 —
 применено (или у платы нет роли), 1 — chronyc отказал или не найден, 2 — недопустимые аргументы. chronyc — списком,
 без shell."""
 import ipaddress
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 CHRONYC = "/usr/bin/chronyc"
@@ -31,6 +36,8 @@ POLL = ("minpoll", "4", "maxpoll", "6")           # 16–64 с: быстрое �
 MAX_LEN = 45
 CHARS = re.compile(r"[0-9a-fA-F:.]+")
 EXISTS = ("already", "present")                   # «511 Source already present» — источник уже добавлен
+DRIFT = Path("/persistent/chrony/chrony.drift")    # driftfile chrony.conf образа
+DRIFT_NEW = "0.000000 100000.000000\n"            # частота 0, погрешность велика: chrony оценит заново
 
 
 def parse(instance):
@@ -93,6 +100,27 @@ def peer_commands(r, addr, prev, hosts):
     return cmds
 
 
+def save(drift=DRIFT, now=None):
+    """mtime drift-файла → сейчас, если сейчас позже (часы назад не переводятся). Нет файла — создать (каталог есть):
+    иначе плата, ни разу не синхронизированная, после перезагрузки вернулась бы к времени сборки."""
+    now = time.time() if now is None else now
+    if not drift.parent.is_dir():
+        print(f"sheregesh-time: нет каталога {drift.parent}", file=sys.stderr)
+        return 1
+    try:
+        created = not drift.exists()
+        if created:
+            drift.write_text(DRIFT_NEW)
+            shutil.chown(drift, drift.parent.stat().st_uid, drift.parent.stat().st_gid)
+        if created or drift.stat().st_mtime < now:
+            os.utime(drift, (now, now))
+    except OSError as e:
+        print(f"sheregesh-time: отметка времени не записана: {type(e).__name__}", file=sys.stderr)
+        return 1
+    print(f"sheregesh-time: отметка {time.strftime('%F %T', time.gmtime(drift.stat().st_mtime))} UTC")
+    return 0
+
+
 def run_chronyc(args):
     return subprocess.run([CHRONYC, *args], capture_output=True, text=True, timeout=10, check=False)
 
@@ -112,11 +140,13 @@ def apply(cmds, runner):
     return 0
 
 
-def main(argv=None, runner=run_chronyc, config=CONFIG, state=STATE):
+def main(argv=None, runner=run_chronyc, config=CONFIG, state=STATE, drift=DRIFT):
     argv = sys.argv[1:] if argv is None else argv
-    if not argv or argv[0] not in ("role", "peer") or len(argv) != (1 if argv[0] == "role" else 2):
-        print("sheregesh-time: role | peer АДРЕС|none", file=sys.stderr)
+    if not argv or argv[0] not in ("role", "peer", "save") or len(argv) != (2 if argv[0] == "peer" else 1):
+        print("sheregesh-time: role | peer АДРЕС|none | save", file=sys.stderr)
         return 2
+    if argv[0] == "save":
+        return save(drift)
     addr = None
     if argv[0] == "peer":
         try:

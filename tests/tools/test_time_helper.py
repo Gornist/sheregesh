@@ -112,6 +112,26 @@ class TimeHelperTest(unittest.TestCase):
             raise FileNotFoundError("chronyc")
         self.assertEqual(self.run_main("role", runner=boom)[0], 1)
 
+    def test_save_moves_mark_forward_only(self):
+        import os
+        drift = Path(self.tmp.name) / "chrony" / "chrony.drift"
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(mod.save(drift, now=1793300000.0), 1)          # нет каталога /persistent/chrony
+            drift.parent.mkdir()
+            self.assertEqual(mod.save(drift, now=1793300000.0), 0)          # создан: плата ещё не синхронизирована
+            self.assertEqual(drift.read_text(), mod.DRIFT_NEW)
+            self.assertEqual(drift.stat().st_mtime, 1793300000.0)
+            drift.write_text("12.345678 0.123456\n")                        # chrony записал частоту
+            os.utime(drift, (1793400000.0, 1793400000.0))
+            self.assertEqual(mod.save(drift, now=1793300000.0), 0)          # часы позади отметки — не трогать
+            self.assertEqual(drift.stat().st_mtime, 1793400000.0)
+            self.assertEqual(mod.save(drift, now=1793500000.0), 0)
+            self.assertEqual(drift.stat().st_mtime, 1793500000.0)
+            self.assertEqual(drift.read_text(), "12.345678 0.123456\n")      # содержимое chrony не меняется
+        rc, calls = self.run_main("save", runner=Runner())
+        self.assertEqual(calls, [])                                         # chronyc не нужен
+        self.assertEqual(self.run_main("save", "x"), (2, []))
+
     def test_no_shell_and_executable(self):
         src = SCRIPT.read_text()
         self.assertNotIn("shell=True", src)

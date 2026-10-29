@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Отметка времени по таймеру (sheregesh-time-tick.timer); отметка при выключении — sheregesh-time-save.service.
+[Unit]
+Description=Sheregesh: wall-clock mark (timer)
+RequiresMountsFor=/persistent
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/sheregesh-time save
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/persistent/chrony
+PrivateTmp=yes
+PrivateNetwork=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+Environment=PYTHONDONTWRITEBYTECODE=1

@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# ADR-0017: отметка времени раз в 10 мин (потеря питания без выключения откатывает часы не больше чем на 10 мин).
+[Unit]
+Description=Sheregesh: wall-clock mark every 10 min (no RTC)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+
+[Install]
+WantedBy=timers.target
