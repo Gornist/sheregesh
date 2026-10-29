@@ -49,7 +49,7 @@
 | VID-06 восстановление | | … с (≤ 10) | модель | `faults.json`, `gui/05-06-*` |
 | VID-07 synthetic ↔ rtsp | | переключение … с (≤ 15); fd/потоки до→после; конвейеров 1 | реально (тестовый RTSP) | `summary.json` → `VID-07` |
 | VID-08 журналы | | Traceback 0, failed 0; check_video_link 3/3 | реально | `check_video_link/`, `summary.json` |
-| VID-09 OTA / slot_guard | | pi2 PASS 44/0/0; pi1 2 ожидаемых FAIL (+unit пульта при `--gui`) | реально | `pi1-compare.txt`, `pi2-compare.txt` |
+| VID-09 OTA / slot_guard | | обе платы PASS slot_guard и состояние платы по снимку (+unit пульта при `--gui` на pi1) | реально | `pi1-compare.txt`, `pi2-compare.txt` |
 
 ### 5.2. Адресные регрессии (ACCEPT §4)
 

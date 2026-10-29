@@ -12,7 +12,7 @@
   check_link.py       VID-02: --only health,identity (без перезапуска пульта)
   check_video_link.py VID-08 доп.: --only session,stream,leftovers
   gui_capture.py      VID-03/04 (+ рендеринг VID-05/06): реальный рендеринг сцены QML на pi1, --by video
-  slot_guard.py       VID-09: снимки «до/после» обеих плат, --mode unchanged с явным списком ожидаемых FAIL для pi1 (B)
+  slot_guard.py       VID-09: снимки «до/после» обеих плат, --mode unchanged: чистый PASS и состояние платы по снимку
 
 Воздействия на платы (только права sheregesh-ui, юниты и образ не меняются; всё возвращается в finally):
   · SIGSTOP/SIGCONT конвейера видеоприёма pi2 (модель «источник перестал отдавать кадры»; страховочный SIGCONT на плате);
@@ -41,9 +41,11 @@ GUI_DIR = "/tmp/s4-gui"
 STEPS = ("VID-01", "VID-02", "VID-03", "VID-04", "VID-05", "VID-06", "VID-07", "VID-08", "VID-09")
 DARK_MIN = 0.8                 # доля почти чёрных пикселей поля кадра при отказе источника (gui_capture frame_dark)
 LIMITS = {"video_off_s": 3.0, "video_back_s": 10.0, "switch_s": 15.0}
-# Ожидаемые FAIL slot_guard --mode unchanged для pi1 на B COMMITTED (проверено на pi1-final.json цикла 2):
-# режим unchanged писался для платы на A с autoboot [all]=2/[tryboot]=3. Детали сверяются точно.
-PI1_B_EXPECTED = {"slot.active_unchanged": "B → B", "bootconfig.autoboot": "разбор файла: {'all': '3', 'tryboot': '2'}"}
+# VID-09: slot_guard --mode unchanged считает направление от слота снимка «до» (cf200e2), поэтому на любом слоте
+# (pi1 на B COMMITTED, pi2 на A) ожидается чистый PASS. Эти проверки обязаны присутствовать и пройти:
+REQUIRED_PASS = ("slot.active_unchanged", "bootconfig.autoboot", "health", "failed")
+OTA_REST = ("IDLE", "COMMITTED", "ROLLED_BACK")       # покой OTA, как предпроверка e2e_run
+BOOT_SLOT = {2: "A", 3: "B"}                          # boot_partition → слот
 # Шум, не относящийся к службам «Шерегеша» (RESULT.md цикла 2): GPU без дисплея под cage.
 JOURNAL_NOISE = ("vc4-drm", "swiotlb")
 SAFE_CONT_S = 15        # страховочный SIGCONT на pi2, даже если Mac или SSH пропадут
@@ -61,24 +63,57 @@ def verdict_of(results):
     return "FAIL" if "FAIL" in vs else "ERROR" if "ERROR" in vs else "PASS" if "PASS" in vs else "SKIP"
 
 
-def judge_slot_guard(board, verdict, checks, console_restarted=False):
-    """slot_guard --mode unchanged → вердикт VID-09. pi2 (A): требуется PASS без исключений. pi1 (B COMMITTED): ровно
-    ожидаемые FAIL с точными деталями; same.unit.sheregesh-console допустим, только если шаг сам перезапускал пульт
-    (--gui). Любой иной FAIL — FAIL; любой ERROR — ERROR."""
+def board_state(before, after):
+    """Инварианты ожидаемого состояния платы по снимкам slot_guard (не по тексту деталей): оба снимка верны, слот по
+    пяти признакам ядра не сменился и совпадает с агентом OTA, OTA в покое, пробной загрузки нет, основной раздел
+    autoboot — активный слот. → список нарушений."""
+    import slot_guard as G
+    out = []
+    infos = []
+    for tag, snap in (("до", before), ("после", after)):
+        errs, info = G.validate(snap)
+        if errs:
+            out.append(f"снимок «{tag}» неполон: {'; '.join(errs)[:200]}")
+        infos.append(info)
+    if out:
+        return out
+    active = infos[1]["active"]
+    if infos[0]["active"] != active:
+        out.append(f"слот сменился: {infos[0]['active']} → {active}")
+    ota = json.loads(after["fields"]["ota.status"])
+    st, slots = ota.get("state") or {}, ota.get("slots") or {}
+    if st.get("state") not in OTA_REST:
+        out.append(f"OTA {st.get('state')!r} не в покое ({'/'.join(OTA_REST)})")
+    if ota.get("consistent") is not True:
+        out.append("агент OTA сообщает несогласованное состояние слотов")
+    if slots.get("active") != active or st.get("active") != active:
+        out.append(f"слот агента OTA {slots.get('active')}/{st.get('active')} ≠ слоту по ядру {active}")
+    if slots.get("tryboot_now") is not False:
+        out.append("идёт пробная загрузка (tryboot_now)")
+    default = BOOT_SLOT.get((ota.get("autoboot") or {}).get("default_part"))
+    if default != active:
+        out.append(f"основной раздел autoboot — слот {default}, активен {active}")
+    return out
+
+
+def judge_slot_guard(board, verdict, checks, console_restarted=False, before=None, after=None):
+    """slot_guard --mode unchanged → вердикт VID-09. Любой ERROR — ERROR; нет снимков — ERROR (нечем проверить плату).
+    Обязательные проверки REQUIRED_PASS есть и прошли; любой FAIL — FAIL, кроме same.unit.sheregesh-console на pi1,
+    если шаг сам перезапускал пульт (--gui); состояние платы — board_state по снимкам."""
     if verdict == "ERROR" or any(c["status"] == "ERROR" for c in checks):
         return "ERROR", [c["id"] for c in checks if c["status"] == "ERROR"]
-    allowed = dict(PI1_B_EXPECTED) if board == "pi1" else {}
-    fails = [c for c in checks if c["status"] == "FAIL"]
+    if before is None or after is None:
+        return "ERROR", ["нет снимков slot_guard «до/после»: состояние платы не проверено"]
     unexpected = []
-    for c in fails:
-        if c["id"] in allowed and c["detail"] == allowed[c["id"]]:
+    for c in checks:
+        if c["status"] == "PASS":
             continue
-        if console_restarted and c["id"] == "same.unit.sheregesh-console":
+        if console_restarted and board == "pi1" and c["id"] == "same.unit.sheregesh-console":
             continue
         unexpected.append(f"{c['id']}: {c['detail']}")
-    if board == "pi1":           # ожидаемые FAIL обязаны быть: иначе плата не в том состоянии, для которого писан шаг
-        seen = {c["id"] for c in fails}
-        unexpected += [f"нет ожидаемого FAIL {k} (плата не B COMMITTED?)" for k in allowed if k not in seen]
+    status = {c["id"]: c["status"] for c in checks}
+    unexpected += [f"нет проверки {k}" for k in REQUIRED_PASS if k not in status]
+    unexpected += board_state(before, after)
     return ("FAIL" if unexpected else "PASS"), unexpected
 
 
@@ -472,7 +507,8 @@ def step_ota(a, ctx, before, after):
         v, checks = G.compare(before[board], after[board], "unchanged", ver)
         (a.out / f"{board}-compare.txt").write_text("\n".join(f"{c['status']} {c['id']} — {c['detail']}" for c in checks)
                                                    + f"\n== {v}\n")
-        jv, unexpected = judge_slot_guard(board, v, checks, ctx.get("console_restarted", False) and board == "pi1")
+        jv, unexpected = judge_slot_guard(board, v, checks, ctx.get("console_restarted", False) and board == "pi1",
+                                          before=before[board], after=after[board])
         res[board] = {"slot_guard": v, "verdict": jv, "unexpected": unexpected}
     vs = [r["verdict"] for r in res.values()]
     return {"verdict": "FAIL" if "FAIL" in vs else "ERROR" if "ERROR" in vs else "PASS", "boards": res}
@@ -492,7 +528,7 @@ def plan(a):
         f"  4  VID-05/06 потеря/возврат: synthetic SIGSTOP конвейера {a.outage} с × {a.cycles}; RTSP: {rtsp}  ~2–3 мин",
         f"  5  VID-07 переключения synthetic↔rtsp × {a.switches}, ресурсы до/после                       ~2 мин",
         "  6  VID-08 журналы с начала прогона, failed, NRestarts; check_video_link session,stream,leftovers ~1,5 мин",
-        "  7  VID-09 slot_guard snap «после», compare --mode unchanged (pi1: 2 ожидаемых FAIL B COMMITTED) ~1 мин",
+        "  7  VID-09 slot_guard snap «после», compare --mode unchanged: PASS и плата в покое на своём слоте  ~1 мин",
         "Модели (не реальные отказы): SIGSTOP конвейера = «источник перестал отдавать кадры»; остановка RTSP-сервера = "
         "«камера/кодер недоступны». Реальные захваты — USB-DIAG.md после доставки.",
     ])

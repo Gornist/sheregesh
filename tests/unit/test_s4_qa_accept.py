@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Приёмка S4 (tools/probe/s4_accept.py): суждение без плат — slot_guard для pi1 на B, потеря/возврат, ресурсы,
 рендеринг, журнал, план."""
+import copy
 import json
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "probe"))
@@ -21,44 +24,81 @@ def chk(cid, status="PASS", detail=""):
 # ---------------------------------------------------------------- VID-09
 
 
-def test_pi1_b_committed_real_snapshot_two_expected_fails():
-    """Настоящий снимок pi1 после COMMITTED B: unchanged даёт ровно ожидаемые FAIL → шаг PASS."""
+def _real(board):
     import slot_guard as g
-    snap = json.loads((RETRY / "pi1-final.json").read_text())
-    v, checks = g.compare(snap, snap, "unchanged", "x")
-    assert v == "FAIL"
-    assert s.judge_slot_guard("pi1", v, checks) == ("PASS", [])
+    snap = json.loads((RETRY / f"{board}-final.json").read_text())
+    return g, snap
 
 
-def test_pi2_real_snapshot_requires_clean_pass():
+def _judge(board, before, after, console_restarted=False, drop=()):
     import slot_guard as g
-    snap = json.loads((RETRY / "pi2-final.json").read_text())
-    v, checks = g.compare(snap, snap, "unchanged", "x")
-    assert s.judge_slot_guard("pi2", v, checks) == ("PASS", [])
+    v, checks = g.compare(before, after, "unchanged", "x")
+    checks = [c for c in checks if c["id"] not in drop]
+    return s.judge_slot_guard(board, v, checks, console_restarted, before=before, after=after)
 
 
-def test_pi1_expected_fail_with_other_detail_is_fail():
-    checks = [chk("slot.active_unchanged", "FAIL", "A → B"),
-              chk("bootconfig.autoboot", "FAIL", s.PI1_B_EXPECTED["bootconfig.autoboot"])]
-    v, why = s.judge_slot_guard("pi1", "FAIL", checks)
-    assert v == "FAIL" and "A → B" in why[0]
+def _with_ota(snap, **state):
+    snap = copy.deepcopy(snap)
+    ota = json.loads(snap["fields"]["ota.status"])
+    for k, v in state.items():
+        if k in ("active", "tryboot_now"):
+            ota["slots"][k] = v
+        else:
+            ota["state"][k] = v
+    snap["fields"]["ota.status"] = json.dumps(ota, ensure_ascii=False)
+    return snap
 
 
-def test_pi1_missing_expected_fail_means_wrong_state():
-    v, why = s.judge_slot_guard("pi1", "PASS", [chk("health")])
-    assert v == "FAIL" and len(why) == 2
+@pytest.mark.parametrize("board", ["pi1", "pi2"])
+def test_real_snapshot_unchanged_passes_on_its_actual_slot(board):
+    """Сохранённые снимки цикла 2: pi1 на B (COMMITTED), pi2 на A (ROLLED_BACK). slot_guard считает направление от
+    слота снимка «до» (cf200e2) и даёт чистый PASS; судья S4 проверяет по данным снимка, что плата в покое OTA и слот
+    согласован, не требуя исторических FAIL."""
+    _g, snap = _real(board)
+    assert _judge(board, snap, snap) == ("PASS", [])
 
 
-def test_console_unit_change_allowed_only_after_gui_step():
-    checks = [chk(k, "FAIL", d) for k, d in s.PI1_B_EXPECTED.items()]
-    checks.append(chk("same.unit.sheregesh-console", "FAIL", "InvocationID…"))
-    assert s.judge_slot_guard("pi1", "FAIL", checks, console_restarted=False)[0] == "FAIL"
-    assert s.judge_slot_guard("pi1", "FAIL", checks, console_restarted=True)[0] == "PASS"
+def test_slot_change_wrong_autoboot_and_ota_not_idle_fail():
+    g, snap = _real("pi1")
+    moved = _with_ota(snap, active="A")                   # плата на другом слоте, чем в снимке «до»
+    v, why = _judge("pi1", snap, moved)
+    assert v == "FAIL" and any("слот" in w for w in why), why
+    bad_ab = copy.deepcopy(snap)
+    bad_ab["fields"]["autoboot"] = "[all];tryboot_a_b=1;boot_partition=2;[tryboot];boot_partition=3;"
+    v, why = _judge("pi1", snap, bad_ab)
+    assert v == "FAIL" and any("bootconfig.autoboot" in w for w in why), why
+    busy = _with_ota(snap, state="TRYBOOT")
+    v, why = _judge("pi1", snap, busy)
+    assert v == "FAIL" and any("TRYBOOT" in w for w in why), why
+    trial = _with_ota(snap, tryboot_now=True)
+    v, why = _judge("pi1", snap, trial)
+    assert v == "FAIL" and any("пробн" in w for w in why), why
 
 
-def test_pi2_any_fail_and_error():
-    assert s.judge_slot_guard("pi2", "FAIL", [chk("bootconfig.autoboot", "FAIL", "x")])[0] == "FAIL"
-    assert s.judge_slot_guard("pi2", "ERROR", [chk("evidence.до", "ERROR", "x")])[0] == "ERROR"
+def test_missing_required_check_or_snapshot_is_not_pass():
+    _g, snap = _real("pi2")
+    v, why = _judge("pi2", snap, snap, drop=("slot.active_unchanged",))
+    assert v == "FAIL" and any("slot.active_unchanged" in w for w in why), why
+    v, why = s.judge_slot_guard("pi2", "PASS", [chk(c) for c in s.REQUIRED_PASS])
+    assert v == "ERROR" and why                           # без снимков нечем проверить конфигурацию платы
+
+
+def test_unknown_fail_and_any_error():
+    _g, snap = _real("pi1")
+    checks = [chk(c) for c in s.REQUIRED_PASS] + [chk("same.package", "FAIL", "a → b")]
+    v, why = s.judge_slot_guard("pi1", "FAIL", checks, before=snap, after=snap)
+    assert v == "FAIL" and why == ["same.package: a → b"]
+    checks = [chk(c) for c in s.REQUIRED_PASS] + [chk("evidence.до", "ERROR", "x")]
+    assert s.judge_slot_guard("pi1", "ERROR", checks, before=snap, after=snap)[0] == "ERROR"
+
+
+def test_console_unit_change_allowed_only_on_pi1_after_gui_step():
+    _g, snap = _real("pi1")
+    checks = [chk(c) for c in s.REQUIRED_PASS] + [chk("same.unit.sheregesh-console", "FAIL", "InvocationID…")]
+    assert s.judge_slot_guard("pi1", "FAIL", checks, console_restarted=False, before=snap, after=snap)[0] == "FAIL"
+    assert s.judge_slot_guard("pi1", "FAIL", checks, console_restarted=True, before=snap, after=snap)[0] == "PASS"
+    _g, snap2 = _real("pi2")
+    assert s.judge_slot_guard("pi2", "FAIL", checks, console_restarted=True, before=snap2, after=snap2)[0] == "FAIL"
 
 
 # ---------------------------------------------------------------- VID-05/06
