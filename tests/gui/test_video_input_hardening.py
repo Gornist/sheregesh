@@ -168,14 +168,16 @@ def test_capture_hung_from_start_is_restarted(receivers, v4l2, tmp_path, monkeyp
     rx = receivers(capture_cmd(pidfile, frames=0, after="hang"))
     rx.configure_local(KEY, opener(v4l2.pi4()))
     assert rx.state == "waiting"
-    seen = set()
+    # журнал переходов по сигналу, а не опрос: «no-video» длится один такт приёмника (33 мс) — сторож срабатывает
+    # на следующем, и опрос раз в 50 мс его пропускал
+    states = [rx.state]
+    rx.stateChanged.connect(lambda: rx.state != states[-1] and states.append(rx.state))
     lat = Latency()
     end = time.monotonic() + 15
     while rx.restarts < 2 and time.monotonic() < end:
-        seen.add(rx.state)
         assert sum(alive(p) for p in pids(pidfile)) <= 2, pids(pidfile)    # убитый может миг побыть зомби
         pump(50)
-    assert rx.restarts >= 2 and {"waiting", "no-video"} <= seen, (seen, rx.metrics())
+    assert rx.restarts >= 2 and states[:6] == ["waiting", "no-video", "restarting"] * 2, (states, rx.metrics())
     assert lat.stop() < 500
     assert wait_until(lambda: not any(alive(p) for p in pids(pidfile)[:-1]), 3)   # жив только текущий захват
     rx.shutdown()
