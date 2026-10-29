@@ -44,23 +44,42 @@ def test_gl_decoder_pipelines_end_in_unixfdsink():
 
 
 RECEIVERS = []
+PROCS = []
 
 
 @pytest.fixture(autouse=True)
 def shutdown_receivers():
-    """Таймер и потоки приёмника — до конца теста: иначе после теста он перезапускает конвейер уже без подмен."""
+    """Таймер и потоки приёмника — до конца теста: иначе после теста он перезапускает конвейер уже без подмен.
+    Подставные декодеры после shutdown() обязаны завершиться — оставшийся процесс считается ошибкой."""
     yield
     while RECEIVERS:
         RECEIVERS.pop().shutdown()
+    left = []
+    while PROCS:
+        p = PROCS.pop()
+        try:
+            p.wait(timeout=5)
+        except Exception:                             # noqa: BLE001
+            p.kill()
+            left.append(p.pid)
+        for f in (p.stdin, p.stdout, p.stderr):
+            if f is not None:
+                f.close()
+    assert not left, f"процессы декодера не завершились после shutdown: {left}"
 
 
 def _receiver(monkeypatch, tmp_path, gl):
     spawned = []
     monkeypatch.setattr(gst, "available", lambda: True)
     monkeypatch.setattr(gst, "gl_capable", lambda codec: codec == "h264")
-    monkeypatch.setattr(gst, "spawn", lambda args, **kw: spawned.append((args, kw)) or
-                        __import__("subprocess").Popen([sys.executable, "-c", "import time; time.sleep(60)"],
-                                                       start_new_session=True))
+    def spawn(args, **kw):                    # подставной процесс с теми же PIPE, что просил приёмник
+        spawned.append((args, kw))
+        pipes = {k: kw[k] for k in ("stdin", "stdout", "stderr") if k in kw}
+        proc = __import__("subprocess").Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                              start_new_session=True, **pipes)
+        PROCS.append(proc)
+        return proc
+    monkeypatch.setattr(gst, "spawn", spawn)
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     rx = V.VideoReceiver()
     rx.gl = gl
