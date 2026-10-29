@@ -511,7 +511,7 @@ def test_module_fault_event_and_journals(ui):
     assert [t.split(" (")[0] for _, t in lines] == ["module: READY", "module: FAULT", "module: RECOVERING",
                                                      "module: FAULT", "module: no-link"], lines
     assert lines[1][0] == 3 and "code=MOD-IFACE-ERROR" in lines[1][1] and "profile=radiomaster-nomad" in lines[1][1]
-    assert any(r["source"] == "module" and r["level"] == "error" for r in b._logs)
+    assert any(r["source"] == "module" and r["level"] == "error" for r in b.logRows(0))
 
 
 def test_ui_state_without_module_page_shown(ui):

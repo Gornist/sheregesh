@@ -2,15 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Блокирующие операции конфигурации и файлов пульта вне потока интерфейса (как sysinfo.py).
 
-Применение, резервная копия и восстановление (ConfigStore: fsync, health-check), выгрузка журнала на «USB» идут по
-одной в фоновом потоке. Пока операция идёт, новая не принимается (busy): изменения конфигурации не пересекаются, а
+Применение, резервная копия и восстановление (ConfigStore: fsync, health-check), выгрузка журнала на «USB»
+(logops.write_export) идут по одной в фоновом потоке. Пока операция идёт, новая не принимается (busy): изменения конфигурации не пересекаются, а
 подтверждение пользователя остаётся за вызывающим. Итог доставляется сигналом finished в поток интерфейса: только там
 владелец (Backend) меняет QObject, модели и монитор. Функция операции не обращается к QObject.
 
 close() ждёт текущую операцию не дольше заданного времени: fsync не прерывается на середине, а зависшая операция
 не держит закрытие приложения."""
-import hashlib
-import os
 import threading
 
 from PySide6.QtCore import Property, QObject, Signal
@@ -67,11 +65,3 @@ class ConfigOps(QObject):
             t.join(timeout_s)
         return t is None or not t.is_alive()
 
-
-def write_log_export(usb_dir, name: str, data: bytes) -> None:
-    """Журнал на «USB»: временный файл → rename, рядом контрольная сумма (REQ-SW-001/005)."""
-    usb_dir.mkdir(parents=True, exist_ok=True)
-    tmp = usb_dir / f".tmp-{name}"
-    tmp.write_bytes(data)
-    os.replace(tmp, usb_dir / name)
-    (usb_dir / f"{name}.sha256").write_text(f"{hashlib.sha256(data).hexdigest()}  {name}\n")

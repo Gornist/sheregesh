@@ -30,16 +30,14 @@ from sheregesh_emulators.scenario import TICK_S
 
 from . import configops
 from . import journal as jr
+from . import logops
 from . import videosource as vsrc
 from .module import ModuleView
 from .sticks import INPUT_DIR, StickSource, SticksView
 from .video import VideoReceiver
 from . import videorx
 
-LOG_LIMIT = 2000
 POWER_HISTORY = 240
-# Фильтр секретов для экспорта журналов (REQ-SW-005): шаблоны из docs/security/secrets.md
-REDACT = re.compile(r"SHRG-CANARY-[A-Z]+-[A-Za-z0-9]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?i:(password|passwd|token|secret)\s*[=:]\s*\S+)")
 
 PALETTES = {
     "dark": {"bg": "#15181c", "panel": "#22272e", "text": "#e8eaed", "muted": "#9aa0a6", "accent": "#4f9cf9",
@@ -216,9 +214,7 @@ class Backend(QObject):
         report = self.store.recover()
         self._rev = self.store.active()
         data = self._rev.data
-        self._logs = collections.deque(maxlen=LOG_LIMIT)
-        self._log_seq = 0
-        self._last_event_id = 0
+        self._log = logops.AppLog()                 # журнал приложения (logops.py): записи, ревизия, выгрузка
         self._last_phase = None
         self.journal = journal if journal is not None else jr.Journal()
         self._journal_link = None                   # последнее записанное в системный журнал (только переходы)
@@ -395,10 +391,7 @@ class Backend(QObject):
 
     # ---------- журнал приложения ----------
     def log(self, level, source, text):
-        self._log_seq += 1
-        self._logs.append({"id": self._log_seq, "time": time.strftime("%H:%M:%S"), "level": level,
-                           "source": source, "text": text})
-        self._logs_dirty = True
+        self._log.add(level, source, text)
 
     # ---------- представление ----------
     @property
@@ -457,7 +450,7 @@ class Backend(QObject):
         self._journal_transitions()
         if p is not None:
             self._power_history.append(round(p.percent, 1))
-        self._mirror_to_log(s)
+        self._log.mirror_events(self.bench.monitor.log.events)
         events = self.bench.monitor.log.events
         sig = (events[-1].id if events else 0, tuple(e.id for e in s.active), self.lang,
                sum(1 for e in events if e.resolved_t is not None))
@@ -467,8 +460,7 @@ class Backend(QObject):
             self._events = [self._render_event(e) for e in reversed(events)]
             self._events_rev += 1
             self.eventsChanged.emit()
-        if getattr(self, "_logs_dirty", False):     # журнал — в QML только при новых записях
-            self._logs_dirty = False
+        if self._log.take_dirty():                  # журнал — в QML только при новых записях
             self.logsChanged.emit()
         self.statusChanged.emit()
 
@@ -633,14 +625,6 @@ class Backend(QObject):
         elif self._journal_video is not None:
             self.journal.emit(jr.NOTICE, f"video: off (source={src})")
         self._journal_video = cls
-
-    def _mirror_to_log(self, s):
-        for e in self.bench.monitor.log.events:
-            if e.id > self._last_event_id:
-                self._last_event_id = e.id
-                level = {"error": "error", "warning": "warning"}.get(e.severity, "info")
-                params = " ".join(f"{k}={v}" for k, v in e.params.items())
-                self.log(level, "monitor", f"{e.code} {params}".strip())
 
     @Property(dict, notify=statusChanged)
     def status(self):
@@ -812,25 +796,23 @@ class Backend(QObject):
 
     @Property(list, notify=logsChanged)
     def logs(self):
-        return list(reversed(self._logs))
+        return self._log.rows()
 
     # QML получает списки событий и журнала только через вызов слота: результат вызова — готовый
     # JS-массив. Свойство-список в QML 6 — ссылка, каждое обращение к элементу перечитывает весь
     # список из Python, и фильтрация в QML становится O(n²) (5 с паузы GUI на 60-минутном прогоне).
     @Property(int, notify=logsChanged)
     def logsRevision(self):
-        return self._log_seq
+        return self._log.revision
 
     @Property(int, notify=logsChanged)
     def logCount(self):
-        return len(self._logs)
+        return len(self._log)
 
     @Slot(int, result=list)
     def logRows(self, level_filter):
         """Записи журнала от новых к старым; 0 — все, 1 — предупреждения и ошибки, 2 — ошибки."""
-        ok = {0: lambda r: True, 1: lambda r: r["level"] != "info", 2: lambda r: r["level"] == "error"}
-        keep = ok.get(level_filter, ok[0])
-        return [r for r in reversed(self._logs) if keep(r)]
+        return self._log.rows(level_filter)
 
     @Property(dict, notify=aboutChanged)
     def about(self):
@@ -855,15 +837,12 @@ class Backend(QObject):
         запись файлов — в фоне; имя файла — в lastExport по завершении. False — идёт другая операция."""
         if self._refuse_busy():
             return False
-        name = time.strftime("sheregesh-log-%Y%m%d-%H%M%S.txt")
-        lines = [f"{r['time']} {r['level'].upper():7} {r['source']:8} {REDACT.sub('[REDACTED]', r['text'])}"
-                 for r in self._logs]
-        data = ("\n".join(lines) + "\n").encode("utf-8")
+        name, data, count = self._log.export_payload()
         usb = self.usb_dir
 
         def run():
-            configops.write_log_export(usb, name, data)
-            return name, len(lines)
+            logops.write_export(usb, name, data)
+            return name, count
         return self._ops.submit("logs", run)
 
     @Property(str, notify=configChanged)

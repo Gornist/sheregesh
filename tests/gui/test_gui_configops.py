@@ -10,7 +10,7 @@ import time
 import pytest
 from PySide6.QtCore import QTimer
 
-from sheregesh_console import configops
+from sheregesh_console import logops
 from sheregesh_console.app import Ui, compile_translations
 from sheregesh_console.backend import Backend
 from sheregesh_console.qtwait import pump, wait_until
@@ -95,15 +95,15 @@ def test_slow_backup_restore_and_export_logs(ui):
     assert "Восстановлено" in b.lastResult or "Restored" in b.lastResult
 
     gate.clear()
-    real = configops.write_log_export
-    configops.write_log_export = slow(gate, real)
+    real = logops.write_export
+    logops.write_export = slow(gate, real)
     try:
         assert b.exportLogs() is True and b.configBusy and b.lastExport == ""
         pump(50)
         gate.set()
         assert wait_until(lambda: not b.configBusy, 5)
     finally:
-        configops.write_log_export = real
+        logops.write_export = real
     assert b.lastExport.startswith("sheregesh-log-") and (b.usb_dir / b.lastExport).is_file()
     assert (b.usb_dir / f"{b.lastExport}.sha256").is_file()
 
