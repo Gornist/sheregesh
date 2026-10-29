@@ -119,6 +119,12 @@ def test_latency_judged_by_metric_with_same_bounds():
     assert r["verdict"] == "PASS" and r["capture_to_decoded_ms"]["p50"] == 80.0
     assert "measured_part_p50_ms" not in r and "transport_pi2_to_pi1_ms" not in r     # не складывается с TLS
     assert cv.judge_latency({**srtp, "capture_to_decoded_ms": {"p50": None, "samples": 0}})["verdict"] == "FAIL"
+    # стенд 2026-10-29: p50 −49 мс получил PASS — задержка «захват → декодирован» не бывает ≤ 0 (кодер, сеть и
+    # декодер); такое значение — ошибка смещения часов, а не измерение
+    for bad in ({"p50": -49.2, "p95": -44.6, "max": -42.0, "samples": 109},
+                {"p50": 0.0, "p95": 2.0, "max": 3.0, "samples": 600}):
+        r = cv.judge_latency({**srtp, "capture_to_decoded_ms": bad})
+        assert r["verdict"] == "FAIL" and "смещени" in r["reason"], (bad, r)
     tls = {"transport": "tls", "transport_latency_ms": {"p50": 4.0, "samples": 600},
            "decode_latency_ms": {"p50": 30.0, "samples": 600, "desync_resets": 0}}
     r = cv.judge_latency(tls)

@@ -447,6 +447,13 @@ def ntp_ns_to_unix(ts: int) -> float:
     return ts / 1e9 - NTP_UNIX_OFFSET_S
 
 
+def frame_latency_ms(now_unix: float, capture_unix: float, offset_s: float) -> float:
+    """Задержка кадра, мс: время на пульте минус метка захвата на блоке, приведённая к часам пульта.
+    offset_s — «часы блока минус часы пульта» (set-clock-offset, контракт §4/§6): метка блока в часах пульта —
+    capture − offset_s."""
+    return (now_unix - (capture_unix - offset_s)) * 1000.0
+
+
 def latency_summary(samples) -> dict:
     """p50/p95/max по окну отсчётов (мс), ближайший ранг; пустое окно — все None."""
     xs = sorted(samples)
@@ -696,12 +703,12 @@ class SrtpRx(_Base):
         return Gst.PadProbeReturn.OK
 
     def _sample_latency(self, buf, off: float) -> None:
-        """Задержка кадра, мс: сейчас (Unix) - метка NTP отправки из расширения RTP - смещение часов."""
+        """Задержка кадра, мс (frame_latency_ms): сейчас (Unix) − метка NTP из расширения RTP в часах пульта."""
         try:
             meta = buf.get_reference_timestamp_meta(self._ntp_caps)
             if meta is None:
                 return
-            ms = (time.time() - ntp_ns_to_unix(meta.timestamp) - off) * 1000.0
+            ms = frame_latency_ms(time.time(), ntp_ns_to_unix(meta.timestamp), off)
         except Exception:
             return
         with self._lat_lock:

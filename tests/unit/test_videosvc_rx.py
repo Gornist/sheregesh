@@ -347,3 +347,13 @@ def test_unmeasured_counters_null_from_generation_start(env):
     assert isinstance(s["rtp"]["packets"], int) and s["rtp"]["reordered"] is None
     assert s["srtp"]["auth_fail"] is None and s["srtp"]["replay_fail"] is None
     assert validate_state(svc.state.snapshot()) == []
+
+
+@pytest.mark.parametrize("offset_s", [1.0, -0.3, 0.0])
+def test_frame_latency_uses_offset_block_minus_console(offset_s):
+    """Контракт v7, §6: set-clock-offset.offset_s — «часы блока минус часы пульта». Кадр захвачен в момент T по
+    часам пульта (на блоке это T + offset), декодирован через 50 мс — задержка 50 мс при любом смещении.
+    Стенд 2026-10-29: формула вычитала смещение и давала −57…+132 мс."""
+    from sheregesh.videosvc.pipelines import frame_latency_ms
+    t = 1793300000.0
+    assert frame_latency_ms(t + 0.050, t + offset_s, offset_s) == pytest.approx(50.0, abs=1e-3)

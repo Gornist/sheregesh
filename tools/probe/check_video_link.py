@@ -235,7 +235,12 @@ def judge_latency(link):
                "method": "метка захвата кадра на pi2 (rtphdrextntp64, PTS источника) → выход декодера на pi1, "
                          "смещение часов set-clock-offset; включает кодер, сеть, джиттер-буфер и декодер"}
         ok = (c2d.get("samples") or 0) > 50 and c2d.get("p50") is not None
-        return {**res, "verdict": "PASS" if ok else "FAIL"}
+        # «захват → декодирован» включает кодер, сеть и декодер — не бывает ≤ 0. Такое значение — ошибка смещения
+        # часов (стенд 2026-10-29: p50 −49 мс получал PASS), а не измерение.
+        low = [k for k in ("p50", "p95", "max") if isinstance(c2d.get(k), (int, float)) and c2d[k] <= 0]
+        if low:
+            res["reason"] = f"задержка ≤ 0 мс ({', '.join(low)}): смещение часов неверно, метрика не доказательна"
+        return {**res, "verdict": "PASS" if ok and not low else "FAIL"}
     part = round(tr["p50"] + dec["p50"], 1) if tr.get("p50") is not None and dec.get("p50") is not None else None
     res = {"transport": link.get("transport") or "tls", "transport_pi2_to_pi1_ms": tr, "receiver_pi1_ms": dec,
            "ping_rtt_ms": link.get("ping_rtt_ms"), "measured_part_p50_ms": part,
