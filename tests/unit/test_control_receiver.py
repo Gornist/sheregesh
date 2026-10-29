@@ -235,3 +235,37 @@ def test_output_none_always_and_timeout_bounds():
     for bad in (0, 49, 10001):
         with pytest.raises(ValueError):
             ControlReceiver(SimClock(), timeout_ms=bad)
+
+
+def test_deadline_from_last_accepted_frame_only():
+    """deadline() — срок команд ACTIVE: последний принятый кадр + timeout_ms. tick(), устаревший и неверный кадр его
+    не продлевают; вне ACTIVE (start, disabled, device-lost, link-lost, timeout) — None."""
+    g = Rig(timeout_ms=500)
+    r = g.r
+    assert r.deadline() is None
+    g.n += 1
+    r.on_rc(frame(g.n))
+    t_rx = g.clock()
+    assert r.deadline() == pytest.approx(t_rx + 0.5)
+    g.clock.advance(0.2)
+    r.tick()
+    assert r.on_rc(frame(g.n)) is False             # повтор номера — stale
+    r.on_bad("junk")
+    assert r.deadline() == pytest.approx(t_rx + 0.5)
+    g.n += 1
+    r.on_rc(frame(g.n))
+    assert r.deadline() == pytest.approx(g.clock() + 0.5)
+    g.clock.advance(0.51)
+    r.tick()
+    assert r.state() == "FAILSAFE" and r.deadline() is None
+    for kw in ({"en": False}, {"ok": False}):
+        g.n += 1
+        r.on_rc(frame(g.n))
+        assert r.deadline() is not None
+        g.n += 1
+        r.on_rc(frame(g.n, **kw))
+        assert r.deadline() is None
+    g.n += 1
+    r.on_rc(frame(g.n))
+    r.on_link_lost()
+    assert r.deadline() is None

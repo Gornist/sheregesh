@@ -66,7 +66,8 @@ def test_b_lab_emulator_output_none_with_live_commands():
         svc.tick()
         body = svc.status()
         assert body["output"] == "none" and "crsf" not in body
-        assert svc.output_source() == ("none", (0,) * 8, 0)
+        cmd = svc.output_source()
+        assert cmd[:3] == ("none", (0,) * 8, 0) and cmd.deadline is None
     assert svc.manager.state == State.READY
 
 

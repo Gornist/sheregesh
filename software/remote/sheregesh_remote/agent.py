@@ -565,7 +565,7 @@ class Agent:
         1 Гц). Отправка — в отдельной задаче: пульт, не забирающий данные, не задерживает сторож."""
         self.control.tick(mono)
         if self.module is not None:
-            self.module.set_control(self.control.state(), *self.control.outputs())
+            self.module.set_control(self.control.state(), *self.control.outputs(), deadline=self.control.deadline())
         if self.writer is None or self.hello_writer is not self.writer \
                 or "rc-state" not in TYPES.get(self.session or "", ()) or self.now() < self.silent_until:
             return                                  # нет сеанса, его hello ещё не принят, сессия < 1.4 или silence

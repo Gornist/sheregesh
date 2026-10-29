@@ -49,6 +49,7 @@ class Rig:
         self.svc.start()
         self._due = self.clock()
         self._tick = self._ctl = self.clock()
+        self.stalled = False                       # агент завис: ни сторожа, ни такта ModuleService; CRSF работает
 
     def factory(self, s):
         kw = dict(profile=self.svc.manager.profile if self.svc.manager else _nomad(), settings=s, clock=self.clock,
@@ -81,9 +82,12 @@ class Rig:
             elif out is None:
                 self._due = now
             self.emu.step()
+            if self.stalled:
+                continue
             if now - self._ctl >= 0.025 - 1e-9:
                 self._ctl = now
-                self.svc.set_control(*self.ctl)
+                st, ch, btn = self.ctl            # как агент: свежий RC каждый такт, срок = RC + 500 мс
+                self.svc.set_control(st, ch, btn, deadline=now + 0.5 if st == "ACTIVE" else None)
             if now - self._tick >= 0.1 - 1e-9:
                 self._tick = now
                 self.svc.tick()
@@ -134,6 +138,63 @@ def test_ready_neutral_live_failsafe():
     assert [t.split(" (")[0] for t in trans] == ["crsf: none -> neutral", "crsf: neutral -> live",
                                                  "crsf: live -> neutral"], trans
     assert r.clock() - t0 < 8
+
+
+def test_stalled_agent_live_snapshot_expires():
+    """Агент перестал тактовать (сторож и set_control молчат), поток CRSF и модуль работают: live, полученный от
+    последнего свежего RC, действует не дольше таймаута сторожа (500 мс) плюс один период отправителя, затем на
+    модуль идут failsafe_ch без взведения. Новых команд нет — live не возвращается."""
+    fs = (0, 0, -1000, 0, 0, 0, 0, 0)
+    r = Rig(failsafe=fs)
+    assert r.run(5.0, lambda: r.state() == S.READY), r.logs
+    r.ctl = ("ACTIVE", tuple(STICKS), 5)
+    r.run(0.5)
+    assert r.mod()["output"] == "live" and r.emu.state()["armed"] is True
+    t_rc = r.clock()                               # последний такт сторожа ≈ последний свежий RC
+    r.stalled = True
+    r.run(0.45)
+    assert r.emu.state()["armed"] is True          # срок ещё не истёк
+    sent = r.out.frames_sent
+    r.run(1.0)                                     # ≈ 1 с без такта агента (наблюдение 1004 мс из плана)
+    st = r.emu.state()
+    assert r.out.frames_sent - sent >= 40          # отправитель не остановился: ≈ 50 кадров/с
+    assert st["armed"] is False and st["axes"] == list(fs), st
+    snap = r.out.snapshot()
+    assert snap["mode"] == "neutral" and snap["armed"] is False and snap["ch"] == list(fs)
+    expired = [s for s in r.logs if "expired" in s]
+    assert expired, r.logs
+    assert r.clock() - t_rc > 0.5
+
+
+def test_live_needs_deadline_and_new_session_drops_it():
+    """ModuleService: ACTIVE без срока live не даёт; повторный set_control с тем же сроком его не продлевает (поток
+    выхода переходит на нейтраль); новый сеанс сразу снимает live до первого свежего RC нового сеанса."""
+    fs = (0, 0, -1000, 0, 0, 0, 0, 0)
+    r = Rig(failsafe=fs)
+    assert r.run(5.0, lambda: r.state() == S.READY), r.logs
+    r.stalled = True                               # set_control — вручную
+    r.svc.set_control("ACTIVE", STICKS, 5)
+    cmd = r.svc.output_source()
+    assert cmd.mode == "neutral" and cmd.ch == fs and cmd.deadline is None
+    deadline = r.clock() + 0.3
+    r.svc.set_control("ACTIVE", STICKS, 5, deadline=deadline)
+    cmd = r.svc.output_source()
+    assert cmd.mode == "live" and cmd.deadline == deadline and cmd.neutral == fs
+    r.run(0.25)
+    assert r.emu.state()["armed"] is True
+    r.svc.set_control("ACTIVE", STICKS, 5, deadline=deadline)   # такт агента без нового RC
+    r.run(0.1)
+    st = r.emu.state()
+    assert st["armed"] is False and st["axes"] == list(fs)
+    r.svc.set_control("ACTIVE", STICKS, 5, deadline=r.clock() + 0.5)
+    r.run(0.1)
+    assert r.emu.state()["armed"] is True
+    session = r.svc.output_source().session
+    r.svc.new_session()
+    cmd = r.svc.output_source()
+    assert cmd.mode == "neutral" and cmd.session == session + 1
+    r.run(0.1)
+    assert r.emu.state()["armed"] is False
 
 
 def test_silent_fault_none_then_heal_ready():

@@ -108,6 +108,13 @@ class ControlReceiver:
         """(ch, btn), действующие на блоке: в IDLE и FAILSAFE — нули."""
         return self._ch, self._btn
 
+    def deadline(self):
+        """Срок действия команд ACTIVE (шкала clock): время последнего принятого кадра + timeout_ms; вне ACTIVE —
+        None. Растёт только с принятым кадром: tick(), устаревший или неверный кадр срок не продлевают."""
+        if self._state != "ACTIVE" or self._last_rx is None:
+            return None
+        return self._last_rx + self.timeout_ms / 1000
+
     def snapshot(self, now=None) -> dict:
         """Тело rc-state (раздел 3.2)."""
         now = self.clock() if now is None else now

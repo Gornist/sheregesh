@@ -150,7 +150,8 @@ def test_crsf_output_with_emulator_in_process():
     c = SimClock(100.0)
     e = E.ElrsTxEmulator(c, period_us=20000)
     mode = ["neutral"]
-    out = CrsfOutput(E.LoopbackPort(e), lambda: (mode[0], CH if mode[0] == "live" else [0] * 8, 0), clock=c,
+    out = CrsfOutput(E.LoopbackPort(e),        # live — свежий срок на каждое чтение, как от сторожа с потоком RC
+                     lambda: (mode[0], CH if mode[0] == "live" else [0] * 8, 0, c() + 0.5), clock=c,
                      wait=lambda d: c.advance(max(0.0, d - c())))
     out.run(30)
     s = out.snapshot()

@@ -6,12 +6,17 @@
 ответы модуля. Перед отправкой разбирается всё принятое: 0x3A.0x10 (синхронизация: период и смещение), 0x29 (device
 info от 0xEE), 0x14 (link statistics); любой верный кадр обновляет last_rx.
 
-Выбор кадра периода по source() → (mode, ch[8], btn):
+Выбор кадра периода по source() → (mode, ch[8], btn[, deadline[, neutral, …]]):
   служебная очередь (queue) → ping 0x28 (раз в ping_interval_s, пока нет device info, или по request_ping) → каналы;
   mode "none": каналов нет, только ping раз в ping_interval_s (признак присутствия модуля держится ответами);
   mode "neutral": каналы из source (нейтраль/failsafe_ch выбирает владелец), взведение false;
   mode "live": каналы пульта, взведение true. Каналы 9–16 — центр; кнопки в каналы не идут (S8).
 Ошибка source() — как "neutral" с нулями (source_errors): линк не рвётся, ровер получает центр.
+Срок live (ADR-0014, 2.1): снимок live действует до deadline (шкала clock), который ставит владелец снимка по
+последнему принятому RC. Каждый цикл перед отправкой: now > deadline или live без срока — кадр neutral с каналами
+neutral из снимка (нет — центр), без взведения (expired, переход — в журнал). Повторное чтение того же снимка срок не
+продлевает: live возвращается только с новым снимком, у которого срок впереди. Граница в модели — deadline плюс
+один период отправителя. Если умер весь процесс, кадров нет, и модуль уходит в свой failsafe.
 
 Период: до синхронизации — 4000 мкс (EdgeTX на 400K); после — период модуля из 0x3A.0x10 (короче 1 мс — кратное,
 ограничение 1…50 мс) плюс поправка фазы по смещению (положительное — кадры приходят рано: следующий период
@@ -44,6 +49,11 @@ def _p99(samples):
         return 0
     s = sorted(samples)
     return int(s[min(len(s) - 1, int(len(s) * 0.99))])
+
+
+def _axes(ch):
+    out = [max(-1000, min(1000, int(v))) for v in list(ch)[:AXES]]
+    return out + [0] * (AXES - len(out))
 
 
 def module_period_us(interval_us: float) -> float:
@@ -85,8 +95,10 @@ class CrsfOutput:
         self._device = None              # DeviceInfo
         self._last_rx = None
         self._last_log = {}
+        self._expired_now = False
         self.frames_sent = self.pings_sent = self.service_sent = 0
         self.overruns = self.write_errors = self.source_errors = self.rx_frames = 0
+        self.expired = 0                 # циклов, где live заменён нейтралью по сроку
 
     # ---------- поток ----------
     def start(self) -> None:
@@ -145,7 +157,7 @@ class CrsfOutput:
         """Принять ответы, выбрать и отправить кадр периода; вернуть срок следующего цикла (шкала clock)."""
         now = self.clock()
         self._poll_rx(now)
-        mode, ch = self._read_source()
+        mode, ch = self._read_source(now)
         with self._lock:
             if self._deadline is None:
                 self._deadline = now
@@ -170,18 +182,31 @@ class CrsfOutput:
                 self._rate_log("write", f"crsf write failed: {e}")
         return deadline
 
-    def _read_source(self):
+    def _read_source(self, now):
         try:
-            mode, ch, _btn = self.source()
+            cmd = tuple(self.source())
+            mode, ch = cmd[0], cmd[1]
             if mode not in MODES:
                 raise ValueError(f"bad mode {mode!r}")
-            ch = [max(-1000, min(1000, int(v))) for v in list(ch)[:AXES]]
-            ch += [0] * (AXES - len(ch))
-            return mode, ch
+            if mode == "live":
+                deadline = cmd[3] if len(cmd) > 3 else None
+                if deadline is None or now > deadline:
+                    neutral = cmd[4] if len(cmd) > 4 and cmd[4] is not None else ()
+                    self._expire_live(now, deadline)
+                    return "neutral", _axes(neutral)
+            self._expired_now = False
+            return mode, _axes(ch)
         except Exception as e:
             self.source_errors += 1
             self._rate_log("source", f"crsf source failed: {e!r}; neutral")
             return "neutral", [0] * AXES
+
+    def _expire_live(self, now, deadline):
+        self.expired += 1
+        if not self._expired_now:
+            self._expired_now = True
+            late = "no deadline" if deadline is None else f"{(now - deadline) * 1e3:.1f} ms past deadline"
+            self.log(f"crsf: live command snapshot expired ({late}), neutral")
 
     def _choose(self, now, mode, ch):
         self._mode = mode
@@ -298,6 +323,7 @@ class CrsfOutput:
                 "collisions": int(getattr(self.port, "collisions", 0)),
                 "write_errors": self.write_errors + int(getattr(self.port, "write_errors", 0)),
                 "source_errors": self.source_errors,
+                "expired": self.expired,
                 "armed": self._armed,
                 "ch": None if self._ch is None else list(self._ch),
                 "link": link,

@@ -11,12 +11,15 @@ SHRG-LAB (module-cmd), тело status.module и сводка для link-status
   none     бэкенд не CRSF или модуль не READY — кадров каналов нет;
   neutral  модуль READY, ControlReceiver IDLE или FAILSAFE — каналы failsafe_ch из настроек, без взведения;
   live     модуль READY, ControlReceiver ACTIVE — каналы пульта, взведение.
-Поток CrsfOutput читает итог через output_source() — одна ссылка на кортеж, без блокировок. Переходы — в журнал
-(«crsf: neutral -> live»).
+Поток CrsfOutput читает итог через output_source() — одна ссылка на неизменяемый снимок OutputCommand, без
+блокировок. Снимок live несёт срок действия (deadline сторожа: последний принятый RC + timeout_ms) и нейтраль
+failsafe_ch: поток выхода сам переходит на нейтраль, если такт агента, обновляющий снимок, не пришёл вовремя
+(ADR-0014, раздел 2.1). ACTIVE без срока live не даёт. Переходы — в журнал («crsf: neutral -> live»).
 """
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import NamedTuple
 
 from . import wire
 from .backend import check_backend, make_backend
@@ -24,6 +27,17 @@ from .manager import ModuleManager
 from .profiles import DEFAULT_PROFILE, REGISTRY, get_profile
 from .settings import NEUTRAL, ModuleSettings, SettingsStore
 from .states import State, Timings
+
+
+class OutputCommand(NamedTuple):
+    """Снимок для потока CrsfOutput (ADR-0014, 2.1): source() → (mode, ch[8], btn, deadline, neutral, session).
+    deadline — срок live на шкале clock (None вне live); neutral — failsafe_ch на случай истечения срока."""
+    mode: str
+    ch: tuple
+    btn: int
+    deadline: float | None = None
+    neutral: tuple = NEUTRAL
+    session: int = 0
 
 
 class ModuleService:
@@ -44,8 +58,8 @@ class ModuleService:
         self._session = 0
         self._last_internal = None
         self.output = wire.OUTPUT          # режим выхода: none | neutral | live
-        self._control = ("IDLE", NEUTRAL, 0)            # состояние ControlReceiver, каналы, кнопки
-        self._out = (wire.OUTPUT, NEUTRAL, 0)           # для потока CrsfOutput: (режим, ch[8], btn)
+        self._control = ("IDLE", NEUTRAL, 0, None)      # состояние ControlReceiver, каналы, кнопки, срок
+        self._out = OutputCommand(wire.OUTPUT, NEUTRAL, 0)   # для потока CrsfOutput
 
     def _make_backend(self, s):
         return make_backend(s, get_profile(s.profile), clock=self.clock, log=self.log, timings=self.timings,
@@ -54,13 +68,14 @@ class ModuleService:
 
     # ---------- выход CRSF ----------
     def output_source(self):
-        """source() для CrsfOutput (ADR-0014, 3.1): (mode, ch[8], btn). Вызывается из потока выхода."""
+        """source() для CrsfOutput (ADR-0014, 2.1): OutputCommand. Вызывается из потока выхода."""
         return self._out
 
-    def set_control(self, state, ch, btn) -> None:
-        """Состояние сторожа команд (такт агента, 25 мс): режим выхода пересчитывается сразу."""
+    def set_control(self, state, ch, btn, deadline=None) -> None:
+        """Состояние сторожа команд (такт агента, 25 мс): режим выхода пересчитывается сразу. deadline — срок
+        ControlReceiver.deadline(); повторный вызов с тем же сроком его не продлевает."""
         try:
-            self._control = (state, tuple(ch), int(btn))
+            self._control = (state, tuple(ch), int(btn), None if deadline is None else float(deadline))
             self._update_output()
         except Exception as e:  # noqa: BLE001
             self._internal(e)
@@ -68,13 +83,14 @@ class ModuleService:
     def _update_output(self):
         m = self.manager
         crsf = m is not None and hasattr(m.backend, "crsf_snapshot")
-        st, ch, btn = self._control
+        st, ch, btn, deadline = self._control
+        neutral = tuple(self.settings.failsafe_ch)
         if not crsf or m.state != State.READY:
-            out = (wire.OUTPUT, NEUTRAL, 0)
-        elif st == "ACTIVE":
-            out = ("live", ch, btn)
+            out = OutputCommand(wire.OUTPUT, NEUTRAL, 0, session=self._session)
+        elif st == "ACTIVE" and deadline is not None:
+            out = OutputCommand("live", ch, btn, deadline, neutral, self._session)
         else:
-            out = ("neutral", tuple(self.settings.failsafe_ch), 0)
+            out = OutputCommand("neutral", neutral, 0, None, neutral, self._session)
         self._out = out
         if out[0] != self.output:
             why = f"module {m.state}" if m is not None and m.state is not None else "no module"
@@ -135,6 +151,11 @@ class ModuleService:
         """Новый сеанс управления: итог прежней команды не показывается (как video-select)."""
         self.cmd = None
         self._session += 1
+        try:                                # команды прежнего сеанса не переживают его: нейтраль до нового RC
+            self._control = ("FAILSAFE", NEUTRAL, 0, None)
+            self._update_output()
+        except Exception as e:  # noqa: BLE001
+            self._internal(e)
 
     def command(self, body: dict) -> None:
         """Тело module-cmd; итог — в status()["cmd"]."""

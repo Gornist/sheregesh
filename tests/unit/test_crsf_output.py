@@ -39,12 +39,17 @@ class Rig:
         self.clock = SimClock(50.0)
         self.port = FakePort(self.clock)
         self.mode, self.ch = mode, list(ch)
+        self.deadline = None                # None — владелец обновляет срок live при каждом чтении (свежий RC)
+        self.neutral = None
         self.logs = []
         self.extra = wait_extra
         self.out = CrsfOutput(self.port, self.source, clock=self.clock, log=self.logs.append, wait=self.wait)
 
     def source(self):
-        return self.mode, self.ch, 0
+        if self.mode != "live":
+            return self.mode, self.ch, 0
+        deadline = self.clock() + 0.5 if self.deadline is None else self.deadline
+        return self.mode, self.ch, 0, deadline, self.neutral
 
     def wait(self, deadline):
         self.clock.advance(max(0.0, deadline - self.clock()) + self.extra)
@@ -128,6 +133,50 @@ def test_modes_and_frames():
     n = len(r.port.sent)
     r.out.run(50)
     assert r.port.types()[n:] == [F.T_PING] * 2   # снова только ping раз в 100 мс
+
+
+def _last_channels(r):
+    raw, armed = F.unpack_channels(F.decode(r.port.sent[-1][1]).payload)
+    return [F.crsf_to_axis(v) for v in raw[:8]], armed
+
+
+def test_live_snapshot_expires_at_deadline():
+    """Срок live проверяется в каждом цикле: до deadline включительно — каналы со взведением, позже — нейтраль
+    снимка без взведения; повторное чтение того же снимка срок не продлевает, live возвращает только новый срок."""
+    r = Rig(mode="live")
+    r.identify()
+    fs = [0, 0, -1000, 0, 0, 0, 0, 0]
+    r.neutral = fs
+    r.out.run(1)
+    r.deadline = r.clock() + 0.098                  # последний RC: срок между 25-м и 26-м периодом по 4 мс
+    r.out.run(25)
+    assert r.port.sent[-1][0] < r.deadline < r.clock()
+    ch, armed = _last_channels(r)
+    assert armed is True and all(abs(a - b) <= 2 for a, b in zip(ch, CH))
+    r.out.run(1)                                    # первый цикл после срока
+    ch, armed = _last_channels(r)
+    assert armed is False and ch == fs
+    assert r.port.sent[-1][0] - r.deadline <= 0.004 + 1e-9  # граница: deadline плюс один период отправителя
+    r.out.run(100)                                  # тот же снимок 0,4 с: нейтраль, live не возвращается
+    assert all(F.unpack_channels(F.decode(b).payload)[1] is False for _, b in r.port.sent[-100:])
+    s = r.out.snapshot()
+    assert s["mode"] == "neutral" and s["armed"] is False and s["ch"] == fs and s["expired"] == 101
+    assert [x for x in r.logs if "expired" in x] == [r.logs[-1]] and "past deadline" in r.logs[-1]
+    r.deadline = r.clock() + 0.1                    # новый RC — новый срок
+    r.out.run(1)
+    assert _last_channels(r)[1] is True
+    assert r.out.snapshot()["mode"] == "live"
+
+
+def test_live_without_deadline_or_neutral_is_center():
+    """live без срока (старый трёхэлементный source) не взводит модуль; нейтраль без failsafe — центр."""
+    r = Rig(mode="live")
+    r.identify()
+    r.out.source = lambda: ("live", CH, 0)
+    r.out.run(3)
+    ch, armed = _last_channels(r)
+    assert armed is False and ch == [0] * 8
+    assert r.out.snapshot()["expired"] == 3 and any("no deadline" in x for x in r.logs)
 
 
 def test_ping_until_device_info_then_channels():
