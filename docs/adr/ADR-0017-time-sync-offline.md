@@ -23,16 +23,20 @@ pi2 журнал ядра начинался 13 апреля).
    образа не содержит источников: роль платы известна только при работе. `makestep 1 -1` — шаг в любой момент
    (часы без RTC после простоя), `cmdport 0` — команды только через локальный сокет, `allow` только localhost
    (чтобы chronyd открыл порт сервера).
-2. **Роль — командами chronyc** (`sheregesh-time role`, юнит `sheregesh-time-role.service` после `chrony.service`,
-   `PartOf=chrony.service`):
-   - пульт: `add pool 2.debian.pool.ntp.org iburst` (если интернет есть), `local stratum 10` (если нет — пульт сам
+2. **Роль** (`sheregesh-time role`, юнит `sheregesh-time-role.service` после `chrony.service`,
+   `PartOf=chrony.service`). Источники — файлы в `sourcedir /run/sheregesh-time/sources` (`role.sources`,
+   `session.sources`) и `chronyc reload sources`: имена резолвит chronyd сам, с повторами. Через chronyc — только
+   `local`, `allow`, `reload` (стенд 2026-10-29: `chronyc add pool` резолвит имя сам — в песочнице юнита и без
+   интернета отказ, и роль не применялась целиком). AppArmor на платах выключен; профиль chronyd Debian/Ubuntu этот
+   каталог не разрешает — при включении AppArmor нужен локальный профиль (так проявилось в контейнере на devbox).
+   - пульт: `pool 2.debian.pool.ntp.org iburst` (если интернет есть), `local stratum 10` (если нет — пульт сам
      себе источник), `allow` адресам `peer_hosts` из `link.json`;
-   - блок: `add server <peer_hosts> iburst minpoll 4 maxpoll 6`, **без пула** — часы блока следуют пульту, а не
+   - блок: `server <peer_hosts> iburst minpoll 4 maxpoll 6`, **без пула** — часы блока следуют пульту, а не
      интернету: важна согласованность плат между собой.
 3. **Адрес сеанса** (DHCP может отличаться от `peer_hosts`): `sheregesh-time-peer@<адрес>.service` (root, oneshot),
    sheregesh-ui может только «start» (polkit, как `sheregesh-video-allow@`). Запускают пульт — при переходе канала
    mTLS в `connected` (адрес блока), агент блока — после совместимого `hello` в сетевом профиле (адрес пульта).
-   Пульт: `chronyc allow`; блок: адрес — источник, прежний сеансовый источник удаляется. Вызов — в потоке, ошибка
+   Пульт: `chronyc allow`; блок: адрес — источник (`session.sources` заменяется целиком). Вызов — в потоке, ошибка
    сеансу не мешает (итог в журнал).
 
 4. **Часы при загрузке без RTC** (стенд 2026-10-29: pi2 на новом образе при старом пульте загрузилась с часами

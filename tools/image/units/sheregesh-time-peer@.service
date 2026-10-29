@@ -19,6 +19,8 @@ ProtectHome=read-only
 ReadWritePaths=/run/chrony /run/sheregesh-time
 PrivateTmp=yes
 NoNewPrivileges=yes
-RestrictAddressFamilies=AF_UNIX
+# chronyc открывает UDP-сокеты при старте даже для локального сокета команд (-h): AF_INET/AF_INET6 разрешены, а
+# IPAddressDeny=any не пропускает ни одного пакета; DNS не нужен (имена резолвит chronyd).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressDeny=any
 Environment=PYTHONDONTWRITEBYTECODE=1

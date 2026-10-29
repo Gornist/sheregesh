@@ -3,14 +3,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Время между платами без интернета (ADR-0017): пульт — источник времени блока, chrony на обеих. Запускается от root
 юнитами sheregesh-time-role.service (после chrony.service) и sheregesh-time-peer@<экземпляр>.service; sheregesh-ui
-может только «start» второго (polkit). Источники и права задаются командами chronyc: chrony.conf образа ролей не знает.
+может только «start» второго (polkit). chrony.conf образа ролей не знает: источники — файлы в sourcedir
+/run/sheregesh-time/sources (имена резолвит сам chronyd — с повторами, без интернета не ломается), применяются
+`chronyc reload sources`; через chronyc — только local, allow и reload (без DNS: песочница юнита — только AF_UNIX).
 
   sheregesh-time role          — по роли платы и peer_hosts из link.json:
                                  пульт: пул Debian (если интернет есть), local stratum 10 (если нет), allow peer_hosts;
                                  блок: источник — только пульт (peer_hosts), без пула: часы плат согласованы между собой
   sheregesh-time peer АДРЕС    — адрес второй платы текущего сеанса (DHCP может отличаться от peer_hosts):
-                                 пульт: allow АДРЕС; блок: источник АДРЕС, прежний сеансовый источник удаляется
-  sheregesh-time peer none     — блок: удалить сеансовый источник; пульт: ничего
+                                 пульт: allow АДРЕС; блок: источник АДРЕС (файл session.sources заменяется)
+  sheregesh-time peer none     — блок: сеансового источника нет; пульт: ничего
   sheregesh-time save          — часы без RTC (как fake-hwclock): mtime drift-файла chrony = сейчас, только вперёд;
                                  при загрузке chronyd -s ставит часы по этому mtime (таймер раз в 10 мин и остановка)
 
@@ -28,14 +30,14 @@ import time
 from pathlib import Path
 
 CHRONYC = "/usr/bin/chronyc"
+SOCKET = "/run/chrony/chronyd.sock"               # только локальный сокет: без него chronyc пробует UDP 127.0.0.1/::1
 CONFIG = Path("/home/sheregesh-ui/.config/sheregesh")
-STATE = Path("/run/sheregesh-time/peer")         # сеансовый источник блока (RuntimeDirectory юнита role)
+SOURCES = Path("/run/sheregesh-time/sources")    # sourcedir chrony.conf (RuntimeDirectory юнита role, 0755)
 POOL = "2.debian.pool.ntp.org"
 LOCAL_STRATUM = 10                                # ниже любого реального источника: при интернете выбирается пул
 POLL = ("minpoll", "4", "maxpoll", "6")           # 16–64 с: быстрое схождение в лабораторной сети
 MAX_LEN = 45
 CHARS = re.compile(r"[0-9a-fA-F:.]+")
-EXISTS = ("already", "present")                   # «511 Source already present» — источник уже добавлен
 DRIFT = Path("/persistent/chrony/chrony.drift")    # driftfile chrony.conf образа
 DRIFT_NEW = "0.000000 100000.000000\n"            # частота 0, погрешность велика: chrony оценит заново
 
@@ -77,27 +79,33 @@ def peer_hosts(config=CONFIG):
     return out
 
 
-def role_commands(r, hosts):
+def role_plan(r, hosts):
+    """(строки role.sources, команды chronyc) для роли платы."""
     if r == "console":
-        return ([["add", "pool", POOL, "iburst"], ["local", "stratum", str(LOCAL_STRATUM)]]
-                + [["allow", h] for h in hosts])
+        return [f"pool {POOL} iburst"], ([["local", "stratum", str(LOCAL_STRATUM)]] + [["allow", h] for h in hosts]
+                                         + [["reload", "sources"]])
     if r == "remote":
-        return [["add", "server", h, "iburst", *POLL] for h in hosts]
-    return []
+        return [" ".join(["server", h, "iburst", *POLL]) for h in hosts], [["reload", "sources"]]
+    return None, []
 
 
-def peer_commands(r, addr, prev, hosts):
-    """Команды для сеансового адреса. Источники из peer_hosts (добавлены role) не удаляются."""
+def peer_plan(r, addr, hosts):
+    """(строки session.sources или None — файл не трогать, команды chronyc) для сеансового адреса."""
     if r == "console":
-        return [] if addr is None else [["allow", addr]]
-    if r != "remote":
-        return []
-    cmds = []
-    if prev and prev != addr and prev not in hosts:
-        cmds.append(["delete", prev])
-    if addr is not None and addr != prev:
-        cmds.append(["add", "server", addr, "iburst", *POLL])
-    return cmds
+        return None, ([] if addr is None else [["allow", addr]])
+    if r == "remote":
+        lines = [] if addr is None or addr in hosts else [" ".join(["server", addr, "iburst", *POLL])]
+        return lines, [["reload", "sources"]]
+    return None, []
+
+
+def write_sources(sources, name, lines):
+    """Файл источников chrony атомарно (временный + rename), 0644: chronyd читает его от _chrony."""
+    sources.mkdir(mode=0o755, parents=True, exist_ok=True)
+    tmp = sources / f".{name}.tmp"
+    tmp.write_text("".join(f"{x}\n" for x in lines))
+    tmp.chmod(0o644)
+    os.replace(tmp, sources / name)
 
 
 def save(drift=DRIFT, now=None):
@@ -122,7 +130,7 @@ def save(drift=DRIFT, now=None):
 
 
 def run_chronyc(args):
-    return subprocess.run([CHRONYC, *args], capture_output=True, text=True, timeout=10, check=False)
+    return subprocess.run([CHRONYC, "-h", SOCKET, *args], capture_output=True, text=True, timeout=10, check=False)
 
 
 def apply(cmds, runner):
@@ -133,14 +141,14 @@ def apply(cmds, runner):
             print(f"sheregesh-time: chronyc не выполнен: {type(e).__name__}", file=sys.stderr)
             return 1
         out = f"{r.stdout or ''} {r.stderr or ''}".strip()
-        if r.returncode != 0 and not (args[0] == "add" and all(w in out.lower() for w in EXISTS)):
+        if r.returncode != 0:
             print(f"sheregesh-time: chronyc {' '.join(args)}: код {r.returncode}: {out[:200]}", file=sys.stderr)
             return 1
         print(f"sheregesh-time: chronyc {' '.join(args)}")
     return 0
 
 
-def main(argv=None, runner=run_chronyc, config=CONFIG, state=STATE, drift=DRIFT):
+def main(argv=None, runner=run_chronyc, config=CONFIG, sources=SOURCES, drift=DRIFT):
     argv = sys.argv[1:] if argv is None else argv
     if not argv or argv[0] not in ("role", "peer", "save") or len(argv) != (2 if argv[0] == "peer" else 1):
         print("sheregesh-time: role | peer АДРЕС|none | save", file=sys.stderr)
@@ -160,19 +168,15 @@ def main(argv=None, runner=run_chronyc, config=CONFIG, state=STATE, drift=DRIFT)
         print("sheregesh-time: роль платы не задана — chrony без источников сеанса")
         return 0
     hosts = peer_hosts(config)
-    if argv[0] == "role":
-        return apply(role_commands(r, hosts), runner)
-    try:
-        prev = state.read_text().strip() or None
-    except OSError:
-        prev = None
-    rc = apply(peer_commands(r, addr, prev, hosts), runner)
-    if rc == 0 and r == "remote":
+    name, (lines, cmds) = ("role.sources", role_plan(r, hosts)) if argv[0] == "role" else \
+        ("session.sources", peer_plan(r, addr, hosts))
+    if lines is not None:
         try:
-            state.write_text(f"{addr or ''}\n")
+            write_sources(sources, name, lines)
         except OSError as e:
-            print(f"sheregesh-time: состояние не записано: {type(e).__name__}", file=sys.stderr)
-    return rc
+            print(f"sheregesh-time: {name} не записан: {type(e).__name__}", file=sys.stderr)
+            return 1
+    return apply(cmds, runner)
 
 
 if __name__ == "__main__":

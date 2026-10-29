@@ -35,7 +35,7 @@ class TimeUnitsTest(unittest.TestCase):
         self.assertEqual(cp["Unit"]["PartOf"], "chrony.service")
         self.assertIn("chrony.service", cp["Unit"]["After"])
         self.assertEqual(cp["Service"]["IPAddressDeny"], "any")
-        self.assertEqual(cp["Service"]["RestrictAddressFamilies"], "AF_UNIX")
+        self.assertEqual(cp["Service"]["RestrictAddressFamilies"], "AF_UNIX AF_INET AF_INET6")
         self.assertEqual(cp["Service"]["RuntimeDirectory"], "sheregesh-time")
         self.assertEqual(cp["Install"]["WantedBy"], "multi-user.target")
 

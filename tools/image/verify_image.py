@@ -358,7 +358,8 @@ def time_checks(rep, root, packages_tsv):
     conf = root.cat("/etc/chrony/chrony.conf")
     lines = [x.split()[0] for x in conf.splitlines() if x.strip() and not x.lstrip().startswith("#")]
     rep.add("time.conf", "chrony.conf образа: ADR-0017, без источников и local, cmdport 0, makestep, drift в /persistent",
-            "ADR-0017" in conf and not {"server", "pool", "peer", "local", "sourcedir"} & set(lines)
+            "ADR-0017" in conf and not {"server", "pool", "peer", "local"} & set(lines)
+            and "sourcedir /run/sheregesh-time/sources" in conf
             and "cmdport" in lines and "makestep" in lines and "driftfile /persistent/chrony/chrony.drift" in conf
             and all(x.split()[1] in ("127.0.0.1", "::1") for x in conf.splitlines() if x.startswith("allow")))
     role = root.cat("/usr/lib/systemd/system/sheregesh-time-role.service")

@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Источники времени по роли платы (ADR-0017): пульт — пул Debian и local stratum 10, allow блоку; блок — только пульт.
-# chrony.conf образа ролей не знает: всё задаётся командами chronyc после запуска chronyd. PartOf: перезапуск chrony
+# chrony.conf образа ролей не знает: источники — файлы в /run/sheregesh-time/sources (sourcedir, chronyd читает их от
+# _chrony — каталог 0755), local и allow — командами chronyc после запуска chronyd. PartOf: перезапуск chrony
 # (настройки chronyc теряются) повторяет и этот юнит. Сеансовый адрес второй платы — sheregesh-time-peer@.
 [Unit]
 Description=Sheregesh: time sources by board role (chrony, console serves the remote unit)
@@ -15,14 +16,16 @@ RemainAfterExit=yes
 User=root
 ExecStart=/usr/bin/sheregesh-time role
 RuntimeDirectory=sheregesh-time
-RuntimeDirectoryMode=0700
+RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/run/chrony
 PrivateTmp=yes
 NoNewPrivileges=yes
-RestrictAddressFamilies=AF_UNIX
+# chronyc открывает UDP-сокеты при старте даже для локального сокета команд (-h): AF_INET/AF_INET6 разрешены, а
+# IPAddressDeny=any не пропускает ни одного пакета; DNS не нужен (имена резолвит chronyd).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressDeny=any
 Environment=PYTHONDONTWRITEBYTECODE=1
 

@@ -3,8 +3,8 @@
 """Помощник tools/image/bin/sheregesh-time (ADR-0017): команды chronyc по роли платы и адресу сеанса.
 
 chronyc подменяется заглушкой (runner); каталог конфигурации и файл состояния — временные. Проверяется: пульт —
-пул, local stratum 10 и allow блоку; блок — только пульт, без пула; сеансовый адрес на блоке заменяет прежний (источники
-из peer_hosts не удаляются); недопустимые аргументы — код 2 до chronyc; «источник уже есть» — не ошибка; без роли —
+пул (файлом sourcedir — имя резолвит chronyd), local stratum 10 и allow блоку; блок — только пульт, без пула;
+сеансовый адрес блока — файл session.sources (заменяется целиком); недопустимые аргументы — код 2 до chronyc; без роли —
 ничего не делается; в исходнике нет shell."""
 import contextlib
 import importlib.machinery
@@ -38,7 +38,7 @@ class TimeHelperTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.cfg = Path(self.tmp.name) / "cfg"
         self.cfg.mkdir()
-        self.state = Path(self.tmp.name) / "peer"
+        self.src = Path(self.tmp.name) / "sources"
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -50,47 +50,51 @@ class TimeHelperTest(unittest.TestCase):
     def run_main(self, *argv, runner=None):
         runner = runner or Runner()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            rc = mod.main(list(argv), runner=runner, config=self.cfg, state=self.state)
+            rc = mod.main(list(argv), runner=runner, config=self.cfg, sources=self.src)
         return rc, getattr(runner, "calls", None)
+
+    def file(self, name):
+        p = self.src / name
+        return p.read_text().splitlines() if p.exists() else None
 
     def test_console_role_serves_remote_and_runs_without_internet(self):
         self.board("console", ["192.168.1.171", "remote.local", "2001:db8::1"])
         rc, calls = self.run_main("role")
         self.assertEqual(rc, 0)
-        self.assertEqual(calls, [["add", "pool", "2.debian.pool.ntp.org", "iburst"], ["local", "stratum", "10"],
-                                 ["allow", "192.168.1.171"], ["allow", "2001:db8::1"]])     # имя пропущено
+        # пул — файлом: имя резолвит chronyd (с повторами); chronyc только local, allow и reload — без DNS
+        self.assertEqual(self.file("role.sources"), ["pool 2.debian.pool.ntp.org iburst"])
+        self.assertEqual(calls, [["local", "stratum", "10"], ["allow", "192.168.1.171"], ["allow", "2001:db8::1"],
+                                 ["reload", "sources"]])
+        self.assertEqual(oct((self.src / "role.sources").stat().st_mode & 0o777), "0o644")   # читает _chrony
 
     def test_remote_role_uses_only_console(self):
         self.board("remote", ["192.168.1.92"])
         rc, calls = self.run_main("role")
         self.assertEqual(rc, 0)
-        self.assertEqual(calls, [["add", "server", "192.168.1.92", "iburst", "minpoll", "4", "maxpoll", "6"]])
-        self.assertFalse(any("pool" in c for c in calls))               # часы блока — по пульту, не по интернету
+        self.assertEqual(self.file("role.sources"), ["server 192.168.1.92 iburst minpoll 4 maxpoll 6"])
+        self.assertEqual(calls, [["reload", "sources"]])                   # пула нет: часы блока — по пульту
 
     def test_peer_on_console_allows_session_address(self):
         self.board("console")
         self.assertEqual(self.run_main("peer", "192.168.1.172"), (0, [["allow", "192.168.1.172"]]))
         self.assertEqual(self.run_main("peer", "none"), (0, []))
+        self.assertIsNone(self.file("session.sources"))
 
-    def test_peer_on_remote_replaces_previous_session_source(self):
+    def test_peer_on_remote_replaces_session_source(self):
         self.board("remote", ["192.168.1.92"])
-        rc, calls = self.run_main("peer", "192.168.1.95")
-        self.assertEqual((rc, calls), (0, [["add", "server", "192.168.1.95", "iburst", "minpoll", "4", "maxpoll", "6"]]))
-        self.assertEqual(self.state.read_text(), "192.168.1.95\n")
-        rc, calls = self.run_main("peer", "192.168.1.96")
-        self.assertEqual(calls, [["delete", "192.168.1.95"],
-                                 ["add", "server", "192.168.1.96", "iburst", "minpoll", "4", "maxpoll", "6"]])
-        self.assertEqual(self.run_main("peer", "192.168.1.96"), (0, []))            # тот же сеансовый адрес
-        rc, calls = self.run_main("peer", "192.168.1.92")                           # адрес из peer_hosts
-        self.assertEqual(calls[0], ["delete", "192.168.1.96"])
-        self.assertEqual(self.run_main("peer", "none"), (0, []))                    # 92 добавлен role — не удаляется
+        self.assertEqual(self.run_main("peer", "192.168.1.95"), (0, [["reload", "sources"]]))
+        self.assertEqual(self.file("session.sources"), ["server 192.168.1.95 iburst minpoll 4 maxpoll 6"])
+        self.run_main("peer", "192.168.1.96")
+        self.assertEqual(self.file("session.sources"), ["server 192.168.1.96 iburst minpoll 4 maxpoll 6"])
+        self.run_main("peer", "192.168.1.92")                              # уже в role.sources — не дублировать
+        self.assertEqual(self.file("session.sources"), [])
+        self.run_main("peer", "none")
+        self.assertEqual(self.file("session.sources"), [])
+        self.assertFalse(list(self.src.glob(".*.tmp")))
 
-    def test_existing_source_is_not_an_error(self):
+    def test_chronyc_refusal_is_code_1(self):
         self.board("remote", ["192.168.1.92"])
-        rc, _ = self.run_main("role", runner=Runner(1, "511 Source already present"))
-        self.assertEqual(rc, 0)
-        rc, _ = self.run_main("role", runner=Runner(1, "501 Not authorised"))
-        self.assertEqual(rc, 1)
+        self.assertEqual(self.run_main("role", runner=Runner(1, "501 Not authorised"))[0], 1)
 
     def test_invalid_arguments_rejected_before_chronyc(self):
         self.board("console")
