@@ -136,15 +136,16 @@ Item {
                     objectName: "applyButton"
                     text: qsTr("Apply…")
                     highlighted: true
-                    enabled: page.dirty()
+                    enabled: page.dirty() && !backend.configBusy
                     onClicked: if (page.validate()) confirm.open()
                 }
                 Button { objectName: "revertButton"; text: qsTr("Discard changes"); enabled: page.dirty(); onClicked: page.load() }
                 Item { Layout.fillWidth: true }
-                Button { objectName: "backupButton"; text: qsTr("Back up to USB"); onClicked: backend.backup() }
+                Button { objectName: "backupButton"; text: qsTr("Back up to USB"); enabled: !backend.configBusy; onClicked: backend.backup() }
                 Button {
                     objectName: "restoreButton"
                     text: qsTr("Restore from USB…")
+                    enabled: !backend.configBusy
                     onClicked: { restoreDialog.files = backend.backups(); restoreDialog.open() }
                 }
             }

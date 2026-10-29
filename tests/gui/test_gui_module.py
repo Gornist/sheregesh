@@ -28,7 +28,7 @@ from sheregesh_console import module as module_mod
 from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations, module_ui_state
 from sheregesh_console.backend import Backend
 from sheregesh_console.journal import MemoryJournal
-from sheregesh_console.qtwait import pump, wait_until
+from sheregesh_console.qtwait import finish, pump, wait_until
 from test_e2e_gui_screens import header_problems, outside_window, rect, save_small
 from test_gui_tile_geometry import wide_font  # noqa: F401 — фикстура шрифта с метриками устройства
 
@@ -540,7 +540,7 @@ def test_snapshot_format_for_control_channel(ui):
 def test_english_texts(ui):
     form = dict(ui.backend.config)
     form.update(language="en")
-    assert ui.backend.applyForm(form, True)
+    assert finish(ui.backend, ui.backend.applyForm(form, True))
     pump(60)
     feed(ui, STATES["fault-iface"][0])
     assert text(ui, "moduleStateText") == "Fault" and text(ui, "moduleStateDetail") == "Interface error"

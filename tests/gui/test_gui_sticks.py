@@ -25,7 +25,7 @@ from sheregesh_console import sticks as sticks_mod
 from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations, sticks_ui_state
 from sheregesh_console.backend import Backend
 from sheregesh_console.journal import MemoryJournal
-from sheregesh_console.qtwait import pump
+from sheregesh_console.qtwait import finish, pump
 from test_e2e_gui_screens import header_problems, outside_window, rect, save_small
 from test_gui_tile_geometry import wide_font  # noqa: F401 — фикстура шрифта с метриками устройства
 
@@ -452,7 +452,7 @@ def test_snapshot_display_matches_screen(ui):
 def test_english_texts(ui):
     form = dict(ui.backend.config)
     form.update(language="en")
-    assert ui.backend.applyForm(form, True)
+    assert finish(ui.backend, ui.backend.applyForm(form, True))
     pump(60)
     ui.backend.src.plug()
     feed(ui, rc=rc_state("FAILSAFE", "timeout", 1.0))

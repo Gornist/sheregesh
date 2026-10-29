@@ -57,7 +57,7 @@ def main():
     from PySide6.QtQuickControls2 import QQuickStyle
     from PySide6.QtTest import QTest
 
-    from sheregesh_console.qtwait import pump, wait_until
+    from sheregesh_console.qtwait import finish, pump, wait_until
     from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations
     from sheregesh_console.backend import Backend
 
@@ -85,7 +85,7 @@ def main():
         form = dict(ui.backend.config)
         form.update(language=lang, theme=theme, ui_scale=scale)
         if (form["language"], form["theme"], form["ui_scale"]) != (ui.backend.language, ui.backend.theme, ui.backend.uiScale):
-            assert ui.backend.applyForm(form, True), ui.backend.lastResult
+            assert finish(ui.backend, ui.backend.applyForm(form, True)), ui.backend.lastResult
         pump(250)
 
     def shot(ui, state, lang, theme, scale, page):

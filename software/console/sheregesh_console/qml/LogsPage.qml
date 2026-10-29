@@ -31,6 +31,7 @@ Item {
                 objectName: "exportLogsButton"
                 text: qsTr("Export to USB")
                 KeyNavigation.left: levelBox
+                enabled: !backend.configBusy
                 onClicked: backend.exportLogs()
             }
         }

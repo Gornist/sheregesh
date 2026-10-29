@@ -14,7 +14,7 @@ from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtTest import QTest
 
-from sheregesh_console.qtwait import pump
+from sheregesh_console.qtwait import finish, pump, wait_until
 from sheregesh_console.app import I18N, PAGE_NAMES, QML, Ui, compile_translations, qt_tool
 from sheregesh_console.backend import Backend
 from sheregesh_emulators.demo import DEMO
@@ -46,7 +46,7 @@ def page(u):
 def set_appearance(u, **kw):
     form = dict(u.backend.config)
     form.update(kw)
-    assert u.backend.applyForm(form, True), u.backend.lastResult
+    assert finish(u.backend, u.backend.applyForm(form, True)), u.backend.lastResult
     pump(50)
 
 
@@ -177,9 +177,8 @@ def test_settings_apply_with_keyboard_only(ui):
     pump(50)
     assert dialog.property("opened") or dialog.property("visible")
     before = ui.backend.revision
-    QTest.keyClick(ui.window, Qt.Key_Return)      # кнопка по умолчанию — «ОК»
-    pump(50)
-    assert ui.backend.revision != before
+    QTest.keyClick(ui.window, Qt.Key_Return)      # кнопка по умолчанию — «ОК»; применение идёт в фоне
+    assert wait_until(lambda: ui.backend.revision != before, 5)
     assert ui.backend.config["screen_timeout_s"] == 330
 
 
@@ -246,7 +245,7 @@ def test_invalid_settings_are_reported_and_not_applied(ui):
     issues = ui.backend.validateForm(form)
     assert any("temp_warning_c" in i for i in issues) and any("peer_address" in i for i in issues)
     before = ui.backend.revision
-    assert ui.backend.applyForm(form, True) is False
+    assert finish(ui.backend, ui.backend.applyForm(form, True)) is False
     assert ui.backend.revision == before
     assert "Не применено" in ui.backend.lastResult
 
@@ -259,7 +258,7 @@ def test_busy_store_reported_without_rollback_event(ui):
     ui.backend.store.apply = lambda *a, **kw: ApplyResult(False, "busy", active=before, message="busy")
     form = dict(ui.backend.config)
     form["language"] = "en"
-    assert ui.backend.applyForm(form, True) is False
+    assert finish(ui.backend, ui.backend.applyForm(form, True)) is False
     assert ui.backend.revision == before
     assert "проверка служб ещё идёт" in ui.backend.lastResult and before in ui.backend.lastResult
     assert not [e for e in ui.backend.bench.events.log.events if e.code == "CFG-ROLLBACK"]
@@ -274,8 +273,10 @@ def test_settings_persist_across_reload(ui):
 
 
 def test_backup_and_restore_through_ui(ui):
-    name = ui.backend.backup()
+    assert finish(ui.backend, ui.backend.backup())
+    name = ui.backend.backups()[0]
+    assert name in ui.backend.lastResult
     set_appearance(ui, theme="light")
     assert ui.backend.backups() == [name]
     assert ui.backend.restore(name, False) is False and ui.backend.theme == "light"
-    assert ui.backend.restore(name, True) and ui.backend.theme == "dark"
+    assert finish(ui.backend, ui.backend.restore(name, True)) and ui.backend.theme == "dark"

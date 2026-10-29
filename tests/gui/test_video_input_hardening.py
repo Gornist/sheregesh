@@ -22,7 +22,7 @@ from sheregesh import videoinput as vi
 from sheregesh_console import video as vmod
 from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations
 from sheregesh_console.backend import Backend
-from sheregesh_console.qtwait import pump, wait_until
+from sheregesh_console.qtwait import finish, pump, wait_until
 from sheregesh_console.video import VideoReceiver
 
 QQuickStyle.setStyle("Fusion")
@@ -258,7 +258,7 @@ def show(u, name):
 def apply(b, **kw):
     form = dict(b.config)
     form.update(kw)
-    assert b.applyForm(form, True), b.lastResult
+    assert finish(b, b.applyForm(form, True)), b.lastResult
     pump(50)
 
 

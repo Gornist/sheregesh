@@ -21,7 +21,7 @@ from PySide6.QtQuickControls2 import QQuickStyle
 
 from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations
 from sheregesh_console.backend import Backend
-from sheregesh_console.qtwait import pump
+from sheregesh_console.qtwait import finish, pump
 from test_e2e_gui_screens import TILES, find, outside_window, rect, tile_overflow
 
 QQuickStyle.setStyle("Fusion")
@@ -113,7 +113,7 @@ def test_link_tile_text_stays_inside_tile(ui, state, lang):
     if ui.backend.language != lang:
         form = dict(ui.backend.config)
         form.update(language=lang)
-        ui.backend.applyForm(form, True)
+        finish(ui.backend, ui.backend.applyForm(form, True))
         pump(60)
     force_status(ui, **STATES[state])
     ui.window.setProperty("currentPage", PAGE_NAMES.index("dashboard"))

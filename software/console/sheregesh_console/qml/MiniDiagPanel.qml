@@ -11,6 +11,16 @@ ColumnLayout {
     readonly property var st: backend.status
     readonly property var rx: backend.videoReceiver
     property string exportResult: ""
+    property bool exportWaiting: false     // выгрузка идёт в фоне: имя файла — по её завершении (lastExport)
+    Connections {
+        target: backend
+        function onConfigBusyChanged() {
+            if (panel.exportWaiting && !backend.configBusy) {
+                panel.exportWaiting = false
+                panel.exportResult = backend.lastExport
+            }
+        }
+    }
 
     MiniRow {
         objectName: "miniDiagOverall"
@@ -43,7 +53,8 @@ ColumnLayout {
         font.pixelSize: 14 * win.k
         Layout.fillWidth: true
         Layout.preferredHeight: 44 * win.k
-        onClicked: panel.exportResult = backend.exportLogs()
+        enabled: !backend.configBusy
+        onClicked: if (backend.exportLogs()) { panel.exportResult = ""; panel.exportWaiting = true }
     }
     Label {
         visible: panel.exportResult !== ""

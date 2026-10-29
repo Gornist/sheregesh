@@ -3,7 +3,6 @@
 """Связь QML ↔ монитор и конфигурация (ADR-0003). GUI не пишет файлы и не обращается к оборудованию:
 все данные — от эмуляторов, все изменения конфигурации — через ConfigStore с подтверждением."""
 import collections
-import hashlib
 import os
 import platform
 import re
@@ -29,6 +28,7 @@ from sheregesh_emulators import Bench
 from sheregesh_emulators.demo import DEMO
 from sheregesh_emulators.scenario import TICK_S
 
+from . import configops
 from . import journal as jr
 from . import videosource as vsrc
 from .module import ModuleView
@@ -74,7 +74,29 @@ RESULTS = {
     "backup": {"ru": "Резервная копия записана: {name}", "en": "Backup written: {name}"},
     "backup-bad": {"ru": "Резервная копия отклонена: {reason}", "en": "Backup rejected: {reason}"},
     "logs": {"ru": "Журнал выгружен: {name} ({count} записей)", "en": "Log exported: {name} ({count} records)"},
+    "config-busy": {"ru": "Не выполнено: ещё идёт предыдущая операция с конфигурацией или файлами",
+                    "en": "Not done: a previous configuration or file operation is still running"},
+    "op-failed": {"ru": "Операция не выполнена: {reason}", "en": "Operation failed: {reason}"},
 }
+
+
+def _about_static():
+    """Неизменные за время работы сведения о сборке; внешние команды — только здесь, в фоновом потоке."""
+    def run(argv, **kw):
+        try:
+            return subprocess.run(argv, capture_output=True, text=True, timeout=2, **kw).stdout
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    build = run(["git", "rev-parse", "--short", "HEAD"], cwd=Path(__file__).parent).strip() or "—"
+    try:
+        gst_version = run(["gst-launch-1.0", "--version"]).splitlines()[0].split()[-1]
+    except IndexError:
+        gst_version = "—"
+    try:
+        codec = gst.describe(gst.choose_codec())   # с фактическими элементами (проба S2-4)
+    except Exception:                              # noqa: BLE001 — сведения, не работа видео
+        codec = "—"
+    return {"build": build, "gstreamer": gst_version, "videoCodec": codec}
 
 
 def _yaml(data: dict) -> str:
@@ -172,6 +194,9 @@ class Backend(QObject):
     videoSourceChanged = Signal()
     videoSourcesChanged = Signal()      # список источников блока и ход выбора (videoSources, videoSelection)
     _selectDone = Signal(int, object)   # из потока вызова select_video_source → в поток интерфейса
+    _aboutDone = Signal(object)         # сведения о сборке (git, GStreamer) — из фонового потока
+    aboutChanged = Signal()             # свои сигналы: configChanged перечитывает форму настроек (SettingsPage),
+    configBusyChanged = Signal()        # а фоновая проба и ход операции не должны сбрасывать несохранённые правки
     message = Signal(str, str)          # уровень (info/warning/error), текст
 
     def __init__(self, data_dir, demo=False, speed=1.0, autostart=True, peer=None, local_video=False,
@@ -258,6 +283,17 @@ class Backend(QObject):
         self._status, self._events, self._active = {}, [], []
         self._events_rev = 0
         self._last_result = ""
+        self._last_export = ""
+        self._last_ok = False                       # итог последней операции с конфигурацией или файлами
+        # Применение, резервная копия, восстановление и выгрузка журнала — вне потока интерфейса (configops.py):
+        # итог приходит сигналом, состояние (ревизия, монитор, события) меняется только здесь.
+        self._ops = configops.ConfigOps(self)
+        self._ops.finished.connect(self._op_done)
+        self._ops.busyChanged.connect(self.configBusyChanged)
+        self.configChanged.connect(self.aboutChanged)       # ревизия и язык — тоже в about
+        self._about_static = {"build": "…", "gstreamer": "…", "videoCodec": "…"}
+        self._aboutDone.connect(self._about_ready)
+        threading.Thread(target=lambda: self._aboutDone.emit(_about_static()), name="about", daemon=True).start()
         self._timer = QTimer(self)
         self._timer.setInterval(max(20, int(TICK_S * 1000 / max(speed, 0.01))))
         self._timer.timeout.connect(self.tick)
@@ -297,6 +333,7 @@ class Backend(QObject):
         return vrx.start()
 
     def stop(self):
+        self._ops.close(5.0)                        # начатая запись конфигурации завершается, новые не начинаются
         if self._videorx is not None:
             self._videorx.stop()
         self._timer.stop()
@@ -795,47 +832,43 @@ class Backend(QObject):
         keep = ok.get(level_filter, ok[0])
         return [r for r in reversed(self._logs) if keep(r)]
 
-    @Property(dict, notify=configChanged)
+    @Property(dict, notify=aboutChanged)
     def about(self):
-        def git_rev():
-            try:
-                return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=Path(__file__).parent,
-                                      capture_output=True, text=True, timeout=2).stdout.strip() or "—"
-            except (OSError, subprocess.SubprocessError):
-                return "—"
-        if not hasattr(self, "_build"):            # не меняется за время работы: вычислить один раз,
-            self._build = git_rev()                # QML читает свойство на каждое поле страницы
-            try:
-                self._gst_version = subprocess.run(["gst-launch-1.0", "--version"], capture_output=True, text=True,
-                                                   timeout=2).stdout.splitlines()[0].split()[-1]
-            except (OSError, subprocess.SubprocessError, IndexError):
-                self._gst_version = "—"
-            self._video_codec = gst.describe(gst.choose_codec())       # с фактическими элементами (проба S2-4)
-        gst_version = self._gst_version
-        return {"software": __version__, "protocol": PROTOCOL_VERSION, "build": self._build,
+        """Сведения для страницы «О системе». Команды (git, gst-launch, проба кодека) выполнены заранее в фоне:
+        чтение свойства их не запускает (QML читает его на каждое поле)."""
+        st = self._about_static
+        return {"software": __version__, "protocol": PROTOCOL_VERSION, "build": st["build"],
                 "schema": self.schema.version, "revision": self._rev.id,
                 "device": self._rev.data["system.yaml"]["device_name"],
                 "hardware": "HW-1.0 Rev A (эмулятор, x86)" if self.lang == "ru" else "HW-1.0 Rev A (emulator, x86)",
                 "platform": f"{platform.system()} {platform.machine()}, Python {platform.python_version()}",
-                "qt": f"Qt {qVersion()}, PySide6 {PYSIDE_VERSION}", "gstreamer": gst_version,
-                "videoCodec": self._video_codec, "catalog": len(CATALOG)}
+                "qt": f"Qt {qVersion()}, PySide6 {PYSIDE_VERSION}", "gstreamer": st["gstreamer"],
+                "videoCodec": st["videoCodec"], "catalog": len(CATALOG)}
 
-    @Slot(result=str)
+    def _about_ready(self, st):
+        self._about_static = st
+        self.aboutChanged.emit()
+
+    @Slot(result=bool)
     def exportLogs(self):
-        """Выгрузка журнала на «USB» с фильтром секретов и контрольной суммой (REQ-SW-001/005)."""
-        self.usb_dir.mkdir(parents=True, exist_ok=True)
+        """Выгрузка журнала на «USB» с фильтром секретов и контрольной суммой (REQ-SW-001/005). Записи берутся сейчас,
+        запись файлов — в фоне; имя файла — в lastExport по завершении. False — идёт другая операция."""
+        if self._refuse_busy():
+            return False
         name = time.strftime("sheregesh-log-%Y%m%d-%H%M%S.txt")
         lines = [f"{r['time']} {r['level'].upper():7} {r['source']:8} {REDACT.sub('[REDACTED]', r['text'])}"
                  for r in self._logs]
         data = ("\n".join(lines) + "\n").encode("utf-8")
-        tmp = self.usb_dir / f".tmp-{name}"
-        tmp.write_bytes(data)
-        os.replace(tmp, self.usb_dir / name)
-        (self.usb_dir / f"{name}.sha256").write_text(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
-        self._last_result = self._result("logs", name=name, count=len(lines))
-        self.log("info", "logs", f"exported {name}")
-        self.configChanged.emit()
-        return name
+        usb = self.usb_dir
+
+        def run():
+            configops.write_log_export(usb, name, data)
+            return name, len(lines)
+        return self._ops.submit("logs", run)
+
+    @Property(str, notify=configChanged)
+    def lastExport(self):
+        return self._last_export
 
     @Property(list, notify=eventsChanged)
     def events(self):
@@ -897,6 +930,45 @@ class Backend(QObject):
     def lastResult(self):
         return self._last_result
 
+    @Property(bool, notify=configChanged)
+    def lastOk(self):
+        return self._last_ok
+
+    @Property(bool, notify=configBusyChanged)
+    def configBusy(self):
+        """Идёт применение, резервная копия, восстановление или выгрузка журнала."""
+        return self._ops.busy
+
+    def _refuse_busy(self):
+        if not self._ops.busy:
+            return False
+        self._last_result = self._result("config-busy")
+        self.configChanged.emit()
+        self.message.emit("warning", self._last_result)
+        return True
+
+    def _op_done(self, op, result):
+        """Итог фоновой операции — в потоке интерфейса."""
+        self._last_ok = not isinstance(result, Exception) and getattr(result, "ok", True)
+        if isinstance(result, Exception):
+            self.log("warning", "config", f"{op} failed: {result}")
+            key = "backup-bad" if op == "restore" and isinstance(result, BackupError) else "op-failed"
+            self._last_result = self._result(key, reason=result)
+            self.configChanged.emit()
+            self.message.emit("error", self._last_result)
+        elif op in ("apply", "restore"):
+            self._after_change(result, "applied" if op == "apply" else "restored")
+        elif op == "backup":
+            self._last_result = self._result("backup", name=result.name)
+            self.log("info", "config", f"backup {result.name}")
+            self.configChanged.emit()
+        elif op == "logs":
+            name, count = result
+            self._last_export = name
+            self._last_result = self._result("logs", name=name, count=count)
+            self.log("info", "logs", f"exported {name}")
+            self.configChanged.emit()
+
     def _files_from_form(self, form: dict):
         fields = {name: list(spec["schema"]["properties"]) for name, spec in self.schema.files.items()}
         current = self._rev.data
@@ -915,12 +987,10 @@ class Backend(QObject):
         return [self.issue_text(i) for i in self.store.validate(self._files_from_form(form))]
 
     def _health_check(self, rev, services):
-        """Проверка затронутых служб S1: монитор принимает пороги, интерфейс — язык и тему."""
+        """Проверка затронутых служб S1: интерфейс знает язык и тему. Вызывается в потоке проверки хранилища, поэтому
+        только читает ревизию: пороги монитора и прочие службы перенастраивает владелец (_after_change) в потоке
+        интерфейса по фактически активной ревизии — поздно завершившаяся проверка их не трогает."""
         data = rev.data
-        if "monitor" in services:
-            self.bench.monitor.set_thresholds(data["diagnostics.yaml"], data["link.yaml"])
-        if "link" in services:
-            self.bench.monitor.set_thresholds(data["diagnostics.yaml"], data["link.yaml"])
         return data["system.yaml"]["language"] in SOURCE_NAMES and data["system.yaml"]["theme"] in PALETTES
 
     def _after_change(self, res, ok_key):
@@ -950,21 +1020,28 @@ class Backend(QObject):
 
     @Slot(dict, bool, result=bool)
     def applyForm(self, form, confirmed):
-        """Изменение состояния: только с явным подтверждением в диалоге (REQ-SYS-009)."""
+        """Изменение состояния: только с явным подтверждением в диалоге (REQ-SYS-009). True — применение начато
+        (итог — lastResult и message по завершении); False — без подтверждения или идёт другая операция."""
         if not confirmed:
             self._last_result = "confirmation required"
             self.configChanged.emit()
             return False
-        res = self.store.apply(self._files_from_form(form), self._health_check, reason="GUI settings")
-        return self._after_change(res, "applied")
+        if self._refuse_busy():
+            return False
+        files, store = self._files_from_form(form), self.store
+        return self._ops.submit("apply", lambda: store.apply(files, self._health_check, reason="GUI settings"))
 
-    @Slot(result=str)
+    @Slot(result=bool)
     def backup(self):
-        self.usb_dir.mkdir(parents=True, exist_ok=True)
-        path = self.store.backup(self.usb_dir)
-        self._last_result = self._result("backup", name=path.name)
-        self.configChanged.emit()
-        return path.name
+        """Резервная копия на «USB» в фоне; имя — в lastResult по завершении."""
+        if self._refuse_busy():
+            return False
+        store, usb = self.store, self.usb_dir
+
+        def run():
+            usb.mkdir(parents=True, exist_ok=True)
+            return store.backup(usb)
+        return self._ops.submit("backup", run)
 
     @Slot(result=list)
     def backups(self):
@@ -974,20 +1051,17 @@ class Backend(QObject):
 
     @Slot(str, bool, result=bool)
     def restore(self, name, confirmed):
-        if not confirmed:
+        """Восстановление из резервной копии после подтверждения, в фоне; итог — по завершении."""
+        if not confirmed or self._refuse_busy():
             return False
-        try:
-            res = self.store.restore(self.usb_dir / name, self._health_check, confirmed=True)
-        except BackupError as e:
-            self._last_result = self._result("backup-bad", reason=e)
-            self.configChanged.emit()
-            self.message.emit("error", self._last_result)
-            return False
-        return self._after_change(res, "restored")
+        store, path = self.store, self.usb_dir / name
+        return self._ops.submit("restore", lambda: store.restore(path, self._health_check, confirmed=True))
 
     @Slot()
     def reload(self):
-        """Перечитать конфигурацию с диска (новое хранилище, как при перезапуске)."""
+        """Перечитать конфигурацию с диска (новое хранилище, как при перезапуске). Не во время записи."""
+        if self._refuse_busy():
+            return
         self.store = ConfigStore(self.store.root, self.schema)
         self.store.recover()
         self._rev = self.store.active()

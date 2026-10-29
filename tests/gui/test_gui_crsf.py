@@ -29,7 +29,7 @@ from sheregesh_console import module as module_mod
 from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations, module_ui_state, sticks_ui_state
 from sheregesh_console.backend import Backend
 from sheregesh_console.journal import MemoryJournal
-from sheregesh_console.qtwait import pump, wait_until
+from sheregesh_console.qtwait import finish, pump, wait_until
 from test_e2e_gui_screens import header_problems, outside_window, save_small
 from test_gui_module import READY as S6_READY
 from test_gui_module import center, find, text, visible
@@ -426,7 +426,7 @@ def test_unknown_output_is_warning(ui):
 def test_english_texts(ui):
     form = dict(ui.backend.config)
     form.update(language="en")
-    assert ui.backend.applyForm(form, True)
+    assert finish(ui.backend, ui.backend.applyForm(form, True))
     pump(60)
     settle(ui, crsf_tel("neutral"))
     assert text(ui, "moduleOutputText") == "Output: neutral"

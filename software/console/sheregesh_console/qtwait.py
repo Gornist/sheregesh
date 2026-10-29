@@ -23,3 +23,9 @@ def wait_until(pred, timeout_s, step_ms=50):
             return True
         pump(step_ms)
     return bool(pred())
+
+
+def finish(backend, started, timeout_s=10.0):
+    """Фоновая операция пульта (applyForm, backup, restore, exportLogs): started — что вернул вызов; дождаться её
+    конца с работающим циклом событий → успешен ли итог (backend.lastOk)."""
+    return bool(started) and wait_until(lambda: not backend.configBusy, timeout_s) and backend.lastOk

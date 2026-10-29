@@ -16,7 +16,7 @@ from PySide6.QtQuickControls2 import QQuickStyle
 
 from procs import Agent, free_port
 from sheregesh import video as gst
-from sheregesh_console.qtwait import pump, wait_until
+from sheregesh_console.qtwait import finish, pump, wait_until
 from sheregesh_console.app import PAGE_NAMES, Ui, compile_translations
 from sheregesh_console.backend import Backend
 
@@ -202,7 +202,8 @@ def test_logs_page_and_export_without_secrets(make_ui):
     show(u, "logs")
     pump(600)
     assert "записей" in obj(u, "logCount").property("text")
-    name = u.backend.exportLogs()
+    assert finish(u.backend, u.backend.exportLogs())
+    name = u.backend.lastExport
     data = (u.backend.usb_dir / name).read_bytes()
     assert canary.encode() not in data and b"PRIVATE KEY" not in data and b"[REDACTED]" in data
     digest = (u.backend.usb_dir / f"{name}.sha256").read_text().split()[0]
