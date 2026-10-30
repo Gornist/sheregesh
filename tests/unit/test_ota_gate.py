@@ -29,7 +29,7 @@ from sheregesh.update import ota, slots
 
 pytestmark = needs_ssh_keygen
 ROOT = Path(__file__).resolve().parents[2]
-OLD_A, OLD_B = "57e8fe4", "a7f1b74"          # агенты образов pi2: слот A (основной) и слот B (пробный)
+OLD_A, OLD_B = "a886e05", "15e4549"   # до чистки истории 2026-10-30 — 57e8fe4 (коммит только с сырыми данными удалён; код = предок, идентичен); a7f1b74 → агенты образов pi2: слот A (основной) и слот B (пробный)
 
 
 def autoboot(b):

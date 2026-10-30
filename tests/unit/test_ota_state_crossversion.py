@@ -25,7 +25,7 @@ from sheregesh.update import model, slots
 from sheregesh.update import ota as ota_v2
 
 ROOT = Path(__file__).resolve().parents[2]
-OLD, PI2_B = "57e8fe4", "a7f1b74"            # образ слота A pi1/pi2; образ пробного B pi2 (2026-10-25)
+OLD, PI2_B = "a886e05", "15e4549"   # до чистки истории 2026-10-30 — 57e8fe4 (коммит только с сырыми данными удалён; код = предок, идентичен); a7f1b74 → образ слота A pi1/pi2; образ пробного B pi2 (2026-10-25)
 ROLLBACK_STATES = ("TRYBOOT", "HEALTH_PENDING", "ROLLED_BACK", "COMMITTED", "FAILED")
 
 

@@ -16,7 +16,7 @@ import pytest
 from sheregesh.update import model
 
 ROOT = Path(__file__).resolve().parents[2]
-OLD = "57e8fe4"                              # образ, установленный на pi1/pi2
+OLD = "a886e05"   # до чистки истории 2026-10-30 — 57e8fe4 (коммит только с сырыми данными удалён; код = предок, идентичен) образ, установленный на pi1/pi2
 
 
 def _updater(tmp_path, **state):

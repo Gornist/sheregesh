@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "tools" / "probe"))
 sys.path.insert(0, str(ROOT / "tools" / "deploy" / "ota-check"))
 import s6_jr_accept as s  # noqa: E402
 
-RETRY = ROOT / "docs/acceptance/e2e/ota-pi1/cycle2/retry"
+RETRY = ROOT / "tests/fixtures/ota-pi1-cycle2-retry"   # снимки pi1, OTA E2E-13 цикл 2 (docs/acceptance/ARCHIVE.md)
 TRIAL = json.loads((RETRY / "ota-status-trial.json").read_text())
 COMMITTED = json.loads(json.loads((RETRY / "pi1-final.json").read_text())["fields"]["ota.status"])
 

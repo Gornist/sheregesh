@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "tools" / "probe"))
 sys.path.insert(0, str(ROOT / "tools" / "deploy" / "ota-check"))
 import s4_accept as s  # noqa: E402
 
-RETRY = ROOT / "docs/acceptance/e2e/ota-pi1/cycle2/retry"
+RETRY = ROOT / "tests/fixtures/ota-pi1-cycle2-retry"   # снимки pi1, OTA E2E-13 цикл 2 (docs/acceptance/ARCHIVE.md)
 
 
 def chk(cid, status="PASS", detail=""):

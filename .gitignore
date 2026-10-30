@@ -21,3 +21,8 @@ software/console/sheregesh_console/i18n/*.qm
 
 # macOS
 .DS_Store
+
+# Сырые доказательства приёмок — в архиве на devbox, в git только отчёты *.md (docs/acceptance/ARCHIVE.md)
+/docs/acceptance/**/*
+!/docs/acceptance/**/
+!/docs/acceptance/**/*.md

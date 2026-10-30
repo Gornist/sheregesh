@@ -213,7 +213,8 @@ def test_ota04_old_probe_passes_as_stand_user_why_dry_run_was_green(stand):
 
 def test_ota04_old_confirm_from_git_reproduces(stand):
     """Исходный файл confirm.py из 6353c70^ (если история доступна) — тот же ложный FAILED."""
-    r = subprocess.run(["git", "show", "6353c70^:software/sheregesh/update/confirm.py"], capture_output=True,
+    # ff576f4 = 6353c70 до чистки истории 2026-10-30 (docs/development/history-rewrite-2026-10-30.map)
+    r = subprocess.run(["git", "show", "ff576f4^:software/sheregesh/update/confirm.py"], capture_output=True,
                        text=True, cwd=Path(__file__).parent)
     if r.returncode:
         (pytest.fail if os.environ.get("CI") else pytest.skip)("история git с 6353c70 недоступна")
