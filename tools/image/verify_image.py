@@ -402,7 +402,7 @@ def hostname_checks(rep, root):
             and "sheregesh-hostname.service" in " ".join(root.ls("/etc/systemd/system/sysinit.target.wants")))
     target, default = root.readlink("/etc/hostname"), root.cat("/usr/share/sheregesh/hostname.default").strip()
     rep.add("hostname.static", "/etc/hostname — ссылка на имя, записанное юнитом (иначе systemd-hostnamed возвращает "
-            "имя образа после DHCP); имя образа сохранено", target == "/run/sheregesh-hostname/hostname" and bool(default),
+            "имя образа после DHCP); имя образа сохранено", target == "../run/sheregesh-hostname/hostname" and bool(default),
             f"{target} ; default {default!r}")
 
 

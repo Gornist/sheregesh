@@ -101,7 +101,7 @@ class HostnameTest(unittest.TestCase):
         self.assertIn("sheregesh-hostname", layer)
         # rpi-image-gen пишет /etc/hostname последним хуком — через ссылку: каталог цели в корне сборки обязателен
         # (сборка 47361c4 на devbox: «cannot create …/etc/hostname: Directory nonexistent»)
-        self.assertIn("ln -sfn /run/sheregesh-hostname/hostname $1/etc/hostname", layer)
+        self.assertIn("ln -sfn ../run/sheregesh-hostname/hostname $1/etc/hostname", layer)
         self.assertIn("mkdir -p $1/usr/share/sheregesh $1/run/sheregesh-hostname", layer)
         self.assertIn("$IGconf_device_hostname", layer)
         files = {"/usr/lib/systemd/system/sheregesh-hostname.service": text,
@@ -109,7 +109,7 @@ class HostnameTest(unittest.TestCase):
                  "/usr/lib/sheregesh/tools/image/bin/sheregesh-hostname": "x",
                  "/etc/systemd/system/sysinit.target.wants/sheregesh-hostname.service": "x",
                  "/usr/share/sheregesh/hostname.default": "sheregesh-dev\n"}
-        links = {"/etc/hostname": "/run/sheregesh-hostname/hostname"}
+        links = {"/etc/hostname": "../run/sheregesh-hostname/hostname"}
 
         class Root:
             cat = staticmethod(lambda p: files.get(p, ""))
@@ -125,7 +125,7 @@ class HostnameTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             vi.hostname_checks(rep, Root)
         self.assertEqual([c["status"] for c in rep.checks], ["PASS", "FAIL"])
-        links["/etc/hostname"] = "/run/sheregesh-hostname/hostname"
+        links["/etc/hostname"] = "../run/sheregesh-hostname/hostname"
         del files["/etc/systemd/system/sysinit.target.wants/sheregesh-hostname.service"]
         rep = vi.Report()
         with contextlib.redirect_stdout(io.StringIO()):

@@ -70,12 +70,13 @@ mmdebstrap:
       set -eu
       # Имя системы по роли (sheregesh-hostname): корень только для чтения, systemd-hostnamed берёт статическое имя из
       # /etc/hostname — ссылка на файл, который юнит пишет до сети; имя образа — запасное (pi1/pi2 2026-10-30).
-      # Последний хук rpi-image-gen (device.hostname) пишет «echo имя > /etc/hostname» уже после слоёв — через ссылку;
-      # каталог цели в корне сборки есть, запись ложится в него (при загрузке /run — tmpfs поверх).
+      # Последний хук rpi-image-gen (device.hostname) пишет «echo имя > $1/etc/hostname» уже после слоёв, снаружи
+      # chroot — через ссылку. Ссылка относительная: абсолютная разрешилась бы на хосте сборки (сборки 47361c4, 5c39b35
+      # упали); каталог цели в корне сборки есть, запись ложится в него (при загрузке /run — tmpfs поверх).
       test -n "${IGconf_device_hostname:-}"
       mkdir -p $1/usr/share/sheregesh $1/run/sheregesh-hostname
       printf '%s\n' "$IGconf_device_hostname" > $1/usr/share/sheregesh/hostname.default
-      ln -sfn /run/sheregesh-hostname/hostname $1/etc/hostname
+      ln -sfn ../run/sheregesh-hostname/hostname $1/etc/hostname
       grep -qw pi1 $1/etc/hosts || printf '127.0.1.1\tpi1 pi2\n' >> $1/etc/hosts
     - $BDEBSTRAP_HOOKS/enable-units "$1" seatd sheregesh-remote-emu sheregesh-console sheregesh-remote-net sheregesh-health.timer sheregesh-ota.socket sheregesh-ota-boot sheregesh-var-seed sheregesh-video-nft sheregesh-video-nft-remote sheregesh-video-rx sheregesh-video-tx chrony sheregesh-time-role sheregesh-time-save sheregesh-time-tick.timer sheregesh-hostname
     - |-
