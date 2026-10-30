@@ -75,7 +75,8 @@ class Canvas(Gtk.Widget):
         self.text(snap, now.astimezone().strftime("%H:%M:%S.") + f"{now.microsecond // 1000:03d}",
                   w * 0.05, h * 0.64, h * 0.11)
         self.text(snap, f"кадр {self.frames}   devbox → HDMI → pi2 → пульт", w * 0.05, h * 0.82, h * 0.05)
-        cell = int(min(w, h) * 0.035)                                  # штрихкод: рамка + 8×4 клеток
+        cell = min(w, h) * 0.035              # штрихкод: рамка + 8×4 клеток; без округления — раскладка строго
+        #                                       масштабируется при захвате (g2g_latency.geometry читает её так же)
         x0, y0 = w - cell * (BITS_W + 2), h - cell * (BITS_H + 2)
         self.rect(snap, WHITE, x0 - cell * 0.5, y0 - cell * 0.5, cell * (BITS_W + 1), cell * (BITS_H + 1))
         self.rect(snap, BLACK, x0 - cell * 0.25, y0 - cell * 0.25, cell * (BITS_W + 0.5), cell * (BITS_H + 0.5))
