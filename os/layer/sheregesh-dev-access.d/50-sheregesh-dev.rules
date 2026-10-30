@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Sheregesh contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Dev-образ: пользователь sheregesh-ui без root и sudo может только
+// Dev-образ: пользователь sheregesh-ui (без sudo; root — отдельно, по ключу SSH) может только
 // останавливать/запускать/перезапускать лабораторные службы «Шерегеша» и слать им сигнал (S2-4б, S3.1, S5 LS-6;
 // set-property и прочие глаголы — нет) и перезагружать плату,
 // в том числе в tryboot (S2-5), и штатно выключать её (S2-BOOT).
