@@ -11,10 +11,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools" / "probe"))
 import e2e_run as e  # noqa: E402
 
 
-def ui(t, link="CONNECTED", video="playing", sessions=1, fps=30.0, written=None):
+def ui(t, link="CONNECTED", video="playing", session="s1", fps=30.0, written=None):
     return (t, 1000.0 + t, {"time": 1000.0 + (t if written is None else written), "peerLink": link,
-                            "video": {"mode": "remote-tls" if video == "playing" else "off", "state": video,
-                                      "decoded_fps_5s": fps if video == "playing" else 0.0, "sessions": sessions}})
+                            "video": {"mode": "remote-srtp" if video == "playing" else "off", "state": video,
+                                      "decoded_fps_5s": fps if video == "playing" else 0.0,
+                                      "link": {"session": session if video == "playing" else ""}}})
 
 
 def rows_outage():
@@ -22,21 +23,21 @@ def rows_outage():
     r = [ui(0.0), ui(1.0)]
     r += [ui(3.0, video="off"), ui(3.5, link="RECONNECTING", video="off")]
     r += [ui(t, link="RECONNECTING", video="off") for t in (5.0, 8.0, 10.0)]
-    r += [ui(11.5, video="off"), ui(13.0, sessions=2)]
+    r += [ui(11.5, video="off"), ui(13.0, session="s2")]
     return r
 
 
-def snap(nrestarts=0, failed=0, gst=1, orphans=0):
+def snap(nrestarts=0, failed=0, gst=0, orphans=0):
     return {"nrestarts": nrestarts, "failed": failed, "gst_count": gst, "gst_orphans": ["x"] * orphans,
             "procs": [{"pid": "1", "rss_kb": 1000, "threads": 5, "fds": 20}]}
 
 
 def test_measure_counts_from_restore_and_requires_new_video_session():
-    m = e.measure(rows_outage(), 0.0, 10.0, 1)
+    m = e.measure(rows_outage(), 0.0, 10.0, "s1")
     assert m["detect_s"] == 3.5 and m["video_off_s"] == 3.0
     assert m["link_back_s"] == 1.5 and m["video_back_s"] == 3.0
-    # Без нового видеосеанса «играет» до отказа не засчитывается как восстановление.
-    assert e.measure([ui(0.0), ui(1.0)], 0.0, 0.0, 1)["video_back_s"] is None
+    # Без нового сеанса SRTP «играет» до отказа не засчитывается как восстановление.
+    assert e.measure([ui(0.0), ui(1.0)], 0.0, 0.0, "s1")["video_back_s"] is None
 
 
 def test_gui_staleness_measured_from_board_clock():
@@ -63,56 +64,11 @@ def test_not_observed_and_tool_errors_are_never_pass():
     assert r["verdict"] == "FAIL"
 
 
-def test_restart_and_sender_kill_judge_only_applicable_limits():
+def test_restart_judges_only_applicable_limits_and_sender_kill_is_gone():
     assert set(e.APPLICABLE["restart"]) == {"link_back_s", "video_back_s"}
-    assert set(e.APPLICABLE["sender-kill"]) == {"video_back_s"}       # «нет видео» — только наблюдение (Ingest)
-    r = e.judge("sender-kill", {"detect_s": None, "video_off_s": 1.2, "video_back_s": 2.4}, {})
+    assert "sender-kill" not in e.FAULTS and "sender-kill" not in e.APPLICABLE    # генератор TLS-видео снят
+    r = e.judge("restart", {"detect_s": None, "link_back_s": 1.0, "video_back_s": 2.4}, {})
     assert r["verdict"] == "PASS" and "detect_s" not in r["criteria"]
-    r = e.judge("sender-kill", {"video_off_s": None, "video_back_s": 1.1}, {})
-    assert r["verdict"] == "PASS"                    # перезапуск быстрее NO_VIDEO_AFTER_S: «нет видео» не наступило
-    assert e.judge("sender-kill", {"video_off_s": 0.8, "video_back_s": 10.5}, {})["verdict"] == "FAIL"
-    assert e.judge("sender-kill", {"video_off_s": 0.8, "video_back_s": None}, {})["verdict"] == "ERROR"
-
-
-def vrow(t, frames, sessions=1, playing=True):
-    return (t, 1000.0 + t, {"peerLink": "CONNECTED",
-                            "video": {"mode": "remote-tls", "state": "playing" if playing else "no-video",
-                                      "decoded_fps_5s": 30.0 if playing else 0.0, "sessions": sessions,
-                                      "frames_decoded": frames}})
-
-
-def test_sender_kill_recovery_in_same_session_counts_from_new_frames():
-    """SIGKILL в t=0; Ingest перезапустил генератор в t=1,2; сеанс прежний. Строка t=0,5 «ещё играет» со старым
-    счётчиком — не возврат; возврат — первая строка после перезапуска с выросшим счётчиком кадров."""
-    rows = [vrow(-0.5, 900), vrow(0.5, 915), vrow(1.0, 915), vrow(1.5, 915), vrow(2.0, 930), vrow(3.0, 960)]
-    m = e.measure(rows, 0.0, 0.0, 1, restart_at=1.2)
-    assert m["video_back_s"] == 2.0
-    assert m["video_off_s"] is None                  # приёмник не успел уйти в «нет видео»: наблюдение, не ошибка
-    rows = [vrow(0.5, 915), vrow(1.0, 915, playing=False), vrow(2.5, 0, playing=False), vrow(4.0, 10, sessions=2)]
-    m = e.measure(rows, 0.0, 0.0, 1, restart_at=None)
-    assert m["video_back_s"] == 4.0 and m["video_off_s"] == 1.0     # новый сеанс тоже засчитывается
-    assert e.resumed_at([vrow(0.5, 915), vrow(2.0, 915)], 0.0, 1, 1.0) is None   # кадры не пошли — не возврат
-
-
-def test_sender_kill_invariant_generator_restart_or_new_session():
-    b = {"console": snap(), "remote": snap()}
-    inv = e.invariants("sender-kill", b, b, [], {"generator_restart_s": 1.3})
-    assert inv["remote.generator_restarted"][0]                      # тот же сеанс, новый процесс — норма
-    inv = e.invariants("sender-kill", b, b, ["[remote] video: session from 192.168.1.92: urn"], {})
-    assert inv["remote.generator_restarted"][0]
-    inv = e.invariants("sender-kill", b, b, [], {"generator_restart_s": None})
-    assert inv["remote.generator_restarted"] == (False, inv["remote.generator_restarted"][1], "FAIL")
-    assert "remote.journal_session" not in inv
-
-
-def test_sender_kill_new_generator_excludes_killed(monkeypatch):
-    f = FakeSSH({"pgrep": (0, "12 13")})
-    monkeypatch.setattr(e, "ssh", f)
-    fault = e.Fault("sender-kill", "pi2", 5)
-    assert fault.inject()[0] and fault.killed == ["12", "13"]
-    assert fault.new_generator() == []
-    f.replies["pgrep"] = (0, "13 57")
-    assert fault.new_generator() == ["57"]
 
 
 def test_invariants_watchdog_in_pause_is_error_restart_of_console_is_fail():
@@ -124,8 +80,10 @@ def test_invariants_watchdog_in_pause_is_error_restart_of_console_is_fail():
     inv = e.invariants("pause", b, {"console": snap(gst=2), "remote": snap(orphans=1)}, [])
     assert not inv["console.gst_pipelines"][0] and not inv["remote.gst_pipelines"][0]
     assert not inv["remote.journal_session"][0]
-    inv = e.invariants("sender-kill", b, b, ["[remote] video: session from 192.168.1.92: urn"])
-    assert inv["remote.generator_restarted"][0]
+    # SRTP: на пульте не больше одного декодера GUI (путь GL — ни одного), на блоке gst-launch вне службы tx нет
+    ok = e.invariants("pause", b, {"console": snap(gst=1), "remote": snap()}, ["session from x"])
+    assert ok["console.gst_pipelines"][0] and ok["remote.gst_pipelines"][0]
+    assert not e.invariants("pause", b, {"console": snap(), "remote": snap(gst=1)}, [])["remote.gst_pipelines"][0]
 
 
 def test_summary_order_fail_error_pass_and_resource_growth_is_measured_only():
@@ -223,7 +181,7 @@ def test_preflight_wrong_serial_or_ota_in_progress_is_error_without_faults(monke
 
 
 def test_board_snapshot_parsing(monkeypatch):
-    text = ("P\n812 215000 23 41\nG\n 900 812 gst-launch-1.0 fdsrc ! rtpstreamdepay ! x\n 901 1 gst-launch-1.0 rtpstreamdepay\n"
+    text = ("P\n812 215000 23 41\nG\n 900 812 gst-launch-1.0 unixfdsrc ! x\n 901 1 gst-launch-1.0 unixfdsrc\n"
             "S\nNRestarts=2 ActiveState=active MainPID=700 \nF\n0\nM\n3100000\n")
     monkeypatch.setattr(e, "ssh", lambda h, c, timeout=60: (0, text))
     r = e.resources("pi1", "console")

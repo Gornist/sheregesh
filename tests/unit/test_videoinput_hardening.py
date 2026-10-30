@@ -9,8 +9,6 @@ sysfs, /dev и ioctl — поддельные (tests/system/fake_v4l2.py), ст�
 import errno
 import functools
 import os
-import subprocess
-import time
 
 import pytest
 
@@ -286,36 +284,3 @@ def test_synthetic_source_never_passes_through(monkeypatch):
     text = " ".join(gst.stream_sender_args("jpeg"))
     assert text.count("videotestsrc") == 1 and "jpegenc quality=70 ! rtpjpegpay" in text and "v4l2src" not in text
     assert gst.stream_sender_args("jpeg", src=gst.synthetic()) == gst.stream_sender_args("jpeg")
-
-
-needs_stream = pytest.mark.skipif(
-    not (gst.available() and all(gst.has_element(e) for e in ("jpegenc", "jpegdec", "rtpjpegpay", "rtpjpegdepay",
-                                                               "rtpstreampay", "rtpstreamdepay"))),
-    reason="нет GStreamer с элементами MJPEG/RTP")
-
-
-@needs_stream
-def test_synthetic_stream_end_to_end_in_gstreamer():
-    """Настоящий GStreamer: синтетический отправитель → RFC 4571 → приёмник пульта даёт кадры RGBx, как до S3.3."""
-    w, h = 160, 90
-    snd = gst.spawn(gst.stream_sender_args("jpeg"), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    rcv = gst.spawn(gst.stream_receiver_args("jpeg", w, h), stdin=snd.stdout, stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL)
-    snd.stdout.close()
-    try:
-        need, got, end = 3 * w * h * 4, b"", time.monotonic() + 20
-        os.set_blocking(rcv.stdout.fileno(), False)
-        while len(got) < need and time.monotonic() < end:
-            try:
-                got += rcv.stdout.read(need - len(got)) or b""
-            except BlockingIOError:
-                pass
-            time.sleep(0.05)
-        assert len(got) >= need, (len(got), snd.poll(), rcv.poll())
-    finally:
-        for p in (rcv, snd):
-            try:
-                os.killpg(p.pid, 9)
-            except ProcessLookupError:
-                pass
-            p.wait()

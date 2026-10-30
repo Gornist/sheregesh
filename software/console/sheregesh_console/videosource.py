@@ -3,17 +3,17 @@
 """Источник видео для интерфейса пульта: что за вход, в каком он состоянии и что показывать в кадре.
 
 Данные приходят из трёх мест, интерфейс видит одно описание (describe) и одно решение для кадра (display):
-  * удалённый блок — телеметрия (status_body["video"]) и INFO видеосеанса (sheregesh.videolink, VideoClient.info);
+  * удалённый блок — телеметрия (status_body["video"]);
   * видеовход самого пульта (S3.3, sheregesh.videoinput.VideoSource.info());
   * локальный синтетический генератор (--local-video).
 
-ТОЧКА ПОДКЛЮЧЕНИЯ КОНТРАКТА БЛОКА — remote_fields(). Ожидаемые поля (в телеметрии video.source и/или в INFO
-видеосеанса под ключом "source"; объект или строка-тип входа):
+ТОЧКА ПОДКЛЮЧЕНИЯ КОНТРАКТА БЛОКА — remote_fields(). Ожидаемые поля (в телеметрии video.source; объект или
+строка-тип входа):
   input   synthetic | hdmi | cvbs | usb | v4l2 | rtsp        тип входа (иной — показывается как есть)
   state   no-device | no-signal | starting | streaming | connect-error | error    состояние источника НА БЛОКЕ
   device  имя устройства / адрес потока (учётные данные из URL не показываются)
   error   текст причины (для no-device / no-signal / connect-error / error)
-  width, height, fps   режим источника (номинальный), как в INFO 1.1
+  width, height, fps   режим источника (номинальный)
 Принимаются и близкие имена (kind/type, status, name/url, reason/detail, resolution "WxH", framerate "30/1"),
 чтобы окончательные имена у блока не требовали правки здесь. Блок 1.1 этих полей не передаёт: тогда вход —
 синтетический (иного у 1.1 нет), legacy=True, состояние — по приёмнику пульта.
@@ -114,18 +114,10 @@ def _fields(d):
             "restarts": max(0, int(_num(d.get("restarts"))))}
 
 
-def remote_fields(telemetry_video, session_info):
-    """Блок → поля источника. Режим (width/height/fps) — сначала из INFO видеосеанса (как в 1.1), состояние и
-    причина — из телеметрии (она периодическая, поэтому свежее), недостающее — из другого источника."""
+def remote_fields(telemetry_video):
+    """Блок → поля источника из телеметрии status.video.source."""
     tel = _fields(_source_part(telemetry_video))
-    inf = _fields(_source_part(session_info))
-    out = {}
-    for k in ("input", "state", "device", "error"):
-        out[k] = tel[k] or inf[k]
-    for k in ("width", "height", "fps"):
-        out[k] = inf[k] or tel[k]
-    out["restarts"] = tel["restarts"]
-    return out
+    return {k: tel[k] for k in ("input", "state", "device", "error", "width", "height", "fps", "restarts")}
 
 
 def sources(telemetry_video):
@@ -158,16 +150,16 @@ def empty(origin="none"):
             "error": "", "width": 0, "height": 0, "fps": 0.0, "restarts": 0}
 
 
-def describe(mode, telemetry_video=None, session_info=None, local_info=None, rx_state="off", rx_error="", link=""):
+def describe(mode, telemetry_video=None, *, local_info=None, rx_state="off", rx_error="", link=""):
     """mode: remote | local-input | local-synthetic | off. link — peer_link канала управления (для remote).
     Возвращает словарь для QML (все ключи всегда есть)."""
     if mode == "remote":
         if link == "RECONNECTING":            # связь восстанавливается: прежние сведения блока не выдаются за текущие
             return {**empty("remote"), "state": RECONNECTING}
-        f = remote_fields(telemetry_video or {}, session_info or {})
+        f = remote_fields(telemetry_video or {})
         out = {**empty("remote"), **f}
         out["reported"] = bool(f["input"])
-        if not f["input"] and (telemetry_video or session_info):
+        if not f["input"] and telemetry_video:
             out["input"], out["legacy"] = "synthetic", True          # блок 1.1: только синтетический генератор
         return out
     if mode == "local-input":
@@ -195,7 +187,7 @@ def display(source, rx_state, fresh=True):
     (приёмник «нет видео» / перезапуск декодера), показывается состояние приёмника (REQ-SW-002: «нет видео»).
 
     «Переподключение» канала управления — только когда кадров нет и по приёмнику (его «нет видео» — через
-    NO_VIDEO_AFTER_S после последнего кадра): пока кадры идут (видео без TLS не зависит от канала управления),
+    NO_VIDEO_AFTER_S после последнего кадра): пока кадры идут (видео SRTP не зависит от канала управления),
     они актуальны. Иначе экран говорил «нет видео» раньше приёмника, и короткий разрыв (перезапуск блока быстрее
     NO_VIDEO_AFTER_S) не попадал в журнал (E2E-12; CI ubuntu, test_e2e_gui_link)."""
     st = source.get("state", "")

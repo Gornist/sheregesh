@@ -17,12 +17,11 @@ docs/acceptance/e2e/MATRIX.md — сопоставление E2E-01…15 с тр
   stop-start   systemctl stop / start sheregesh-remote-net (polkit sheregesh-ui). «Блок недоступен»: соединение
                закрыто, новые — отказ (RST). Страховка: отложенный start на pi2.
   restart      systemctl restart sheregesh-remote-net (polkit). Короткий разрыв с FIN.
-  sender-kill  SIGKILL генератора видео на pi2: пропадает только видео, управление должно остаться CONNECTED.
-               С видеоприёмом Ingest (3e147dd) генератор перезапускается в том же видеосеансе: судится возврат
-               кадров ≤ 10 с и перезапуск генератора; «нет видео» может не наступить (перезапуск быстрее
-               NO_VIDEO_AFTER_S 1,5 с) — video_off_s только измеряется.
   manual       человек отключает/подключает кабель pi2 по подсказке (Enter в момент действия, погрешность ±1 с).
                Единственная модель, эквивалентная кабелю; SSH к pi2 во время обрыва недоступен — это ожидаемо.
+
+Видео — SRTP через службы sheregesh-video-tx/rx (ADR-0016); восстановление видео засчитывается только по новому сеансу
+SRTP (video.link.session в ui-state пульта). Прежняя модель sender-kill (генератор TLS-видео блока) снята с TLS-видео.
 
 Вердикты: PASS | FAIL | ERROR. ERROR — испытание не состоялось или не доказательно (стенд не готов, отказ не внесён,
 восстановление не подтверждено, событие не наблюдалось) — никогда не PASS. Итог: FAIL, если есть FAIL; иначе ERROR,
@@ -45,8 +44,7 @@ UI = "/run/sheregesh-ui/ui-state.json"
 REMOTE_UNIT, CONSOLE_UNIT = "sheregesh-remote-net", "sheregesh-console"
 SERIALS = {"console": "10000000568152de", "remote": "100000009d497e91"}     # pi1, pi2 (tools/deploy/shdeploy.py)
 OTA_OK = ("IDLE", "COMMITTED", "ROLLED_BACK")   # не идёт ни запись, ни пробная загрузка
-FAULTS = ("pause", "stop-start", "restart", "sender-kill", "manual")
-GEN_PAT = "gst-launch-1.0.*rtpstreampay"       # генератор видео блока (videoingest → rtpstreampay → fdsink)
+FAULTS = ("pause", "stop-start", "restart", "manual")
 PAUSE_MAX_S = 10.0          # WatchdogSec=15 у sheregesh-remote-net: пауза дольше — уже сценарий watchdog
 VERDICTS = ("PASS", "FAIL", "ERROR")
 
@@ -58,20 +56,18 @@ LIMITS = {
     "video_back_s": (10.0, "REQ-SW-002: отображение восстанавливается не позднее 10 с после возобновления"),
 }
 # Какие пороги применимы к модели отказа. restart: разрыв короче периода ui-state — обнаружение может не попасть
-# в выборку, поэтому судится только восстановление. sender-kill: управление не рвётся.
+# в выборку, поэтому судится только восстановление.
 APPLICABLE = {
     "pause": ("detect_s", "link_back_s", "video_off_s", "video_back_s"),
     "stop-start": ("detect_s", "link_back_s", "video_off_s", "video_back_s"),
     "manual": ("detect_s", "link_back_s", "video_off_s", "video_back_s"),
     "restart": ("link_back_s", "video_back_s"),
-    "sender-kill": ("video_back_s",),       # video_off_s — наблюдение: при быстром перезапуске его может не быть
 }
 EQUIVALENCE = {
     "manual": "физическое отключение кабеля — эквивалент условия REQ-SYS-002",
     "pause": "НЕ кабель: молчащий процесс, TCP жив на уровне ядра, несущая и адреса не пропадают",
     "stop-start": "НЕ кабель: служба остановлена, соединения закрыты и отвергаются (RST)",
     "restart": "НЕ кабель: штатный перезапуск службы (FIN)",
-    "sender-kill": "НЕ кабель: обрыв только видеопотока при живом управлении",
 }
 
 
@@ -146,7 +142,7 @@ def link_up(ui):
 
 def video_up(ui):
     v = ui.get("video") or {}
-    return v.get("mode") in ("remote-tls", "remote-srtp") and v.get("state") == "playing" and (v.get("decoded_fps_5s") or 0) > 0
+    return v.get("mode") == "remote-srtp" and v.get("state") == "playing" and (v.get("decoded_fps_5s") or 0) > 0
 
 
 def first(rows, t0, pred):
@@ -196,10 +192,11 @@ CONSOLE_PIDS = ("$(for p in $(pgrep -u sheregesh-ui -x python3); do tr '\\0' ' '
 
 
 def resources(host, role):
-    """RSS (кБ), потоки, дескрипторы приложения роли; число конвейеров GStreamer и сирот; NRestarts; failed."""
+    """RSS (кБ), потоки, дескрипторы приложения роли; gst-launch видео вне служб rx/tx (пульт — декодер GUI unixfdsrc,
+    путь RGBx без дисплея; блок — прежний генератор rtpstreampay, его быть не должно) и сироты; NRestarts; failed."""
     unit = CONSOLE_UNIT if role == "console" else REMOTE_UNIT
     pids = CONSOLE_PIDS if role == "console" else f"$(systemctl show -p MainPID --value {REMOTE_UNIT})"
-    pat = "rtpstreamdepay" if role == "console" else "rtpstreampay"
+    pat = "unixfdsrc" if role == "console" else "rtpstreampay"
     text = out(host, f"echo P; {PROC.format(pids=pids)}; echo G; ps -eo pid,ppid,args --no-headers | "
                      f"grep -E 'gst-launch-1.0.*{pat}' | grep -v grep; echo S; "
                      f"systemctl show -p NRestarts -p ActiveState -p MainPID {unit} | tr '\\n' ' '; echo; "
@@ -264,7 +261,6 @@ class Fault:
 
     def __init__(self, kind, remote, outage, prompt=fresh_input):
         self.kind, self.rh, self.outage, self.prompt, self.pid = kind, remote, outage, prompt, None
-        self.killed = []
 
     def inject(self):
         rh = self.rh
@@ -283,13 +279,6 @@ class Fault:
         if self.kind == "restart":
             code, _ = ssh(rh, f"systemctl restart {REMOTE_UNIT}")
             return code == 0, "systemctl restart"
-        if self.kind == "sender-kill":
-            pids = out(rh, f"pgrep -u sheregesh-ui -f '{GEN_PAT}'").split()
-            if not pids:
-                return False, "нет генератора видео на pi2"
-            self.killed = pids
-            code, _ = ssh(rh, f"kill -KILL {' '.join(pids)}")
-            return code == 0, f"SIGKILL {pids}"
         if self.kind == "manual":
             self.prompt("ОТКЛЮЧИТЕ кабель Ethernet удалённого блока (pi2) и нажмите Enter в тот же момент… ")
             return True, "кабель отключён человеком (±1 с)"
@@ -308,11 +297,6 @@ class Fault:
             self.prompt(f"Подождите не менее {self.outage:.0f} с, ПОДКЛЮЧИТЕ кабель обратно и нажмите Enter в тот же момент… ")
             return True, "кабель подключён человеком (±1 с)"
         return True, "снятие не требуется"
-
-    def new_generator(self):
-        """sender-kill: PID генераторов, которых не было до SIGKILL (перезапуск видеоприёмом)."""
-        now = out(self.rh, f"pgrep -u sheregesh-ui -f '{GEN_PAT}'").split()
-        return [p for p in now if p not in self.killed]
 
     @property
     def holds(self):
@@ -344,11 +328,8 @@ def judge(fault, m, inv):
     return {"verdict": verdict, "criteria": crit, "fails": fails, "errors": errors}
 
 
-def invariants(fault, before, after, new_sessions, measured=None):
-    """Инварианты стенда (не пороги SRS): основание — протоколы S3.1/S3.1-VIDEO и устройство служб.
-    sender-kill: генератор перезапущен — новый процесс (measured["generator_restart_s"]) или новый видеосеанс в журнале
-    блока; новый сеанс не обязателен (Ingest, 3e147dd, перезапускает генератор в том же сеансе)."""
-    measured = measured or {}
+def invariants(fault, before, after, new_sessions):
+    """Инварианты стенда (не пороги SRS): основание — протоколы S3.1/ADR-0016 и устройство служб."""
     inv = {}
     for role in ("console", "remote"):
         b, a = before[role], after[role]
@@ -358,17 +339,12 @@ def invariants(fault, before, after, new_sessions, measured=None):
         sev = "ERROR" if role == "remote" and fault == "pause" else "FAIL"     # watchdog в pause — сценарий нарушен
         inv[f"{role}.nrestarts"] = (a["nrestarts"] == b["nrestarts"], f"{b['nrestarts']} → {a['nrestarts']}", sev)
         inv[f"{role}.failed_units"] = (a["failed"] == 0, f"failed = {a['failed']}", "FAIL")
-        inv[f"{role}.gst_pipelines"] = (a["gst_count"] == 1 and not a["gst_orphans"],
-                                        f"конвейеров {a['gst_count']}, сирот {len(a['gst_orphans'])}", "FAIL")
-    if fault != "sender-kill":
-        inv["remote.journal_session"] = (any("session from" in s and "video" not in s for s in new_sessions),
-                                         "нет новой записи «session from» в журнале блока", "FAIL")
-    else:
-        new_session = any("video: session from" in s for s in new_sessions)
-        restarted = measured.get("generator_restart_s") is not None
-        inv["remote.generator_restarted"] = (restarted or new_session,
-                                             "генератор не перезапущен: нового процесса нет, нового видеосеанса нет",
-                                             "FAIL")
+        most = 1 if role == "console" else 0          # пульт: не больше одного декодера GUI; блок: ни одного
+        inv[f"{role}.gst_pipelines"] = (a["gst_count"] <= most and not a["gst_orphans"],
+                                        f"конвейеров {a['gst_count']} (не больше {most}), сирот {len(a['gst_orphans'])}",
+                                        "FAIL")
+    inv["remote.journal_session"] = (any("session from" in s and "video" not in s for s in new_sessions),
+                                     "нет новой записи «session from» в журнале блока", "FAIL")
     return inv
 
 
@@ -404,40 +380,20 @@ def wait_ready(sampler, timeout):
     return False
 
 
-def vsessions(ui):
-    return (ui.get("video") or {}).get("sessions") or 0
+def vsession(ui):
+    """Сеанс SRTP службы rx пульта (video.link.session); «» — нет."""
+    return ((ui.get("video") or {}).get("link") or {}).get("session") or ""
 
 
-def vframes(ui):
-    return (ui.get("video") or {}).get("frames_decoded") or 0
-
-
-def resumed_at(rows, t0, s0, restart_at):
-    """sender-kill (Ingest): секунды от t0 до первой строки после перезапуска генератора (restart_at, по часам Mac),
-    где видео играет и кадров больше, чем в последней строке до перезапуска (кадры пошли от нового генератора), —
-    или до нового видеосеанса. None — не наблюдалось."""
-    ref = max([vframes(u) for mono, _b, u in rows if mono <= restart_at and u] or [0])
-    for mono, _b, u in rows:
-        if mono < t0 or not u or not video_up(u):
-            continue
-        if vsessions(u) > s0 or (mono >= restart_at and vframes(u) > ref):
-            return round(mono - t0, 2)
-    return None
-
-
-def measure(rows, t0, back_from, s0, restart_at=None):
+def measure(rows, t0, back_from, s0):
     """Времена цикла по выборке ui-state (чистая функция). Восстановление видео засчитывается только по НОВОМУ
-    видеосеансу (счётчик sessions вырос) — иначе ранняя строка «ещё играет» дала бы ложный ноль. Для sender-kill
-    (restart_at задан) — также по росту кадров после перезапуска генератора в том же сеансе."""
+    сеансу SRTP (session ≠ s0) — иначе ранняя строка «ещё играет» дала бы ложный ноль."""
     m = {"detect_s": first(rows, t0, lambda u: not link_up(u)),
          "video_off_s": first(rows, t0, lambda u: not video_up(u)), "link_back_s": None}
     if m["detect_s"] is not None:
         t_lost = t0 + m["detect_s"]
         m["link_back_s"] = first([r for r in rows if r[0] > t_lost], back_from, link_up)
-    if restart_at is not None:
-        m["video_back_s"] = resumed_at(rows, back_from, s0, restart_at)
-    else:
-        m["video_back_s"] = first(rows, back_from, lambda u: video_up(u) and vsessions(u) > s0)
+    m["video_back_s"] = first(rows, back_from, lambda u: video_up(u) and vsession(u) not in ("", s0))
     m["gui_stale_max_s"] = gui_stale_max(rows)
     m["samples"] = len(rows)
     return m
@@ -446,7 +402,7 @@ def measure(rows, t0, back_from, s0, restart_at=None):
 def run_cycle(i, a, sampler, fault):
     snap_b = {"console": resources(a.console, "console"), "remote": resources(a.remote, "remote")}
     last = sampler.last()
-    s0 = vsessions(last[2]) if last else 0
+    s0 = vsession(last[2]) if last else ""
     since, errors = time.time() - 1, []
     t0 = time.monotonic()
     ok, detail = fault.inject()
@@ -462,34 +418,20 @@ def run_cycle(i, a, sampler, fault):
     t_restore = time.monotonic()
     if not rok:
         errors.append(f"восстановление не подтверждено: {rdetail}")
-    back_from = t0 if fault.kind in ("restart", "sender-kill") else t_restore
+    back_from = t0 if fault.kind == "restart" else t_restore
     deadline = time.monotonic() + a.recover_timeout
-    restart_at, new_gen = None, []
     while time.monotonic() < deadline:
-        if fault.kind == "sender-kill" and ok and restart_at is None:
-            new_gen = fault.new_generator()
-            restart_at = time.monotonic() if new_gen else None
         r = sampler.last()
-        if r and r[0] > back_from and link_up(r[2]) and video_up(r[2]):
-            if vsessions(r[2]) > s0 or (restart_at is not None and
-                                        resumed_at(sampler.since(t0), t0, s0, restart_at) is not None):
-                break
+        if r and r[0] > back_from and link_up(r[2]) and video_up(r[2]) and vsession(r[2]) not in ("", s0):
+            break
         time.sleep(0.5)
     rows = sampler.since(t0)
-    m = {"inject": detail, "restore": rdetail, "video_sessions_before": s0,
-         **measure(rows, t0, back_from, s0, restart_at if fault.kind == "sender-kill" else None)}
-    if fault.kind == "sender-kill":
-        last = rows[-1][2] if rows else {}
-        m.update(generator_restart_s=round(restart_at - t0, 2) if restart_at else None, new_generator=new_gen,
-                 new_video_session=vsessions(last) > s0 if last else None,
-                 no_video_seen=m["video_off_s"] is not None)   # наблюдение: при быстром перезапуске может не быть
-    if fault.kind == "sender-kill" and not all(link_up(u) for _x, _y, u in rows if u):
-        errors.append("управление прерывалось при обрыве только видео (инвариант ADR-0011)")
+    m = {"inject": detail, "restore": rdetail, "video_session_before": s0, **measure(rows, t0, back_from, s0)}
     m["errors"] = errors
     time.sleep(2)                                         # конвейер прошлого сеанса успевает завершиться
     snap_a = {"console": resources(a.console, "console"), "remote": resources(a.remote, "remote")}
     sess = session_lines(a.remote, since)
-    inv = invariants(fault.kind, snap_b, snap_a, sess, m)
+    inv = invariants(fault.kind, snap_b, snap_a, sess)
     res = judge(fault.kind, m, inv)
     return {"cycle": i, "fault": fault.kind, "equivalence": EQUIVALENCE[fault.kind], "measured": m,
             "invariants": {k: {"ok": v[0], "detail": v[1], "severity": v[2]} for k, v in inv.items()},
@@ -522,9 +464,9 @@ def plan(a):
              f"пауза между циклами: {a.gap} с",
              "Предпроверка (только чтение): серийные номера, OTA ∈ IDLE/COMMITTED/ROLLED_BACK, health обеих ролей, связь и видео.",
              "Пороги: " + "; ".join(f"{k} ≤ {LIMITS[k][0]} с ({LIMITS[k][1].split(':')[0]})" for k in APPLICABLE[a.fault]),
-             "Инварианты: NRestarts пульта и блока неизменны, failed = 0, по одному конвейеру GStreamer без сирот, "
-             "новая запись сеанса в журнале блока на каждый цикл (sender-kill: перезапуск генератора — новый "
-             "процесс или новый видеосеанс; новый сеанс не обязателен).",
+             "Инварианты: NRestarts пульта и блока неизменны, failed = 0, gst-launch видео вне служб: пульт ≤ 1 "
+             "(декодер GUI), блок — 0, сирот нет; новая запись сеанса в журнале блока на каждый цикл; видео "
+             "возвращается в новом сеансе SRTP.",
              "Измеряется без порога: возраст ui-state (живость GUI), RSS/потоки/дескрипторы, MemAvailable."]
     return "\n".join(lines)
 

@@ -63,21 +63,18 @@ def write_state(path, state="streaming", **extra):
 
 def test_hello_by_service_availability_and_config(env):
     rx, svc, _ = env
-    assert rx.hello_fields() == {"video_transports": ["srtp", "tls"], "video_rx_port": 7444}
+    assert rx.hello_fields() == {"video_transports": ["srtp"], "video_rx_port": 7444}
     svc.fail["status"] = OSError("нет сокета")
-    assert rx.hello_fields() == {"video_transports": ["tls"]}
-    del svc.fail["status"]
-    rx.transport_pref = "tls"
-    assert rx.hello_fields() == {"video_transports": ["tls"]}
+    assert rx.hello_fields() == {"video_transports": []}            # TLS-видео нет: без службы rx видео нет
 
 
-def test_link_json_transport_and_port(tmp_path):
+def test_link_json_port(tmp_path):
     p = tmp_path / "link.json"
-    p.write_text(json.dumps({"video": {"transport": "tls"}, "video_port": 7555}))
-    assert V.link_video_prefs(p) == ("tls", 7555)
-    p.write_text(json.dumps({"video": True}))
-    assert V.link_video_prefs(p) == ("auto", 7444)
-    assert V.link_video_prefs(tmp_path / "нет.json") == ("auto", 7444)
+    p.write_text(json.dumps({"video": {"transport": "tls"}, "video_port": 7555}))   # прежний ключ transport не влияет
+    assert V.link_video_port(p) == 7555
+    p.write_text(json.dumps({"video": True, "video_port": True}))
+    assert V.link_video_port(p) == 7444
+    assert V.link_video_port(tmp_path / "нет.json") == 7444
 
 
 def test_video_key_allow_start_ack_in_order(env):
@@ -114,44 +111,45 @@ def test_stale_and_bad_key_nack_without_start(env):
     assert len(svc.cmds("start")) == 1
 
 
-def test_allow_failure_nacks_unsupported_and_falls_back(env):
+def test_allow_failure_nacks_unsupported_without_fallback(env):
     rx, svc, _ = env
     svc.allow_ok = False
     rx.handle("video-key", key_body())
     assert not svc.cmds("start")
-    assert [t for t, _ in svc.sent] == ["video-key-ack", "video-fallback"]
+    assert [t for t, _ in svc.sent] == ["video-key-ack"]              # video-fallback пульт больше не шлёт
     assert svc.sent[0][1]["error"] == "unsupported"
-    assert rx.phase == "fallback" and not rx.active
+    assert rx.phase == "failed" and not rx.active
 
 
-def test_start_error_falls_back(env):
+def test_start_error_nacks_and_next_generation_is_accepted(env):
     rx, svc, _ = env
     svc.fail["start"] = CtlError("pipeline", "нет конвейера")
     rx.handle("video-key", key_body())
-    assert [t for t, _ in svc.sent] == ["video-fallback"]
-    assert svc.sent[0][1] == {"stream": "main", "session": "a" * 32, "gen": 1, "reason": "start-failed"}
+    assert svc.sent == [("video-key-ack", {"stream": "main", "session": "a" * 32, "gen": 1, "ok": False,
+                                           "error": "unsupported"})]
     assert svc.cmds("stop") and svc.units[-1] == "sheregesh-video-allow@none.service"
-    assert rx.phase == "fallback"
+    assert rx.phase == "failed"
+    del svc.fail["start"]
+    rx.handle("video-key", key_body(gen=2))                           # блок повторил новым поколением
+    assert svc.sent[-1][1]["ok"] is True and rx.phase == "starting"
 
 
-def test_first_frame_timeout_falls_back(env):
+def test_first_frame_timeout_requests_new_generation(env):
     rx, svc, tmp = env
     rx.handle("video-key", key_body())
     write_state(tmp, state="starting")
     svc.t += 4.9
     rx.tick()
-    assert rx.active
+    assert rx.active and svc.sent[-1][0] == "video-key-ack"
     svc.t += 0.2
     rx.tick()
-    assert rx.phase == "fallback" and svc.sent[-1][0] == "video-fallback"
-    assert svc.sent[-1][1]["reason"] == "no-first-frame"
-    assert svc.units[-1] == "sheregesh-video-allow@none.service" and svc.cmds("stop")
-    svc.sent.clear()
-    rx.handle("video-key", key_body(gen=2))                           # обратно на SRTP в этом сеансе нельзя
-    assert svc.sent[0][1]["ok"] is False and len(svc.cmds("start")) == 1
+    assert rx.active and svc.sent[-1] == ("video-renew", {"stream": "main", "session": "a" * 32, "gen": 1,
+                                                          "reason": "no first frame"})
+    rx.handle("video-key", key_body(gen=2))                           # новое поколение принимается
+    assert svc.sent[-1][1]["ok"] is True and len(svc.cmds("start")) == 2
 
 
-def test_streaming_state_prevents_fallback_and_clock_offset_every_5s(env):
+def test_streaming_state_prevents_renew_and_clock_offset_every_5s(env):
     rx, svc, tmp = env
     rx.handle("video-key", key_body())
     write_state(tmp)
@@ -193,14 +191,14 @@ def test_video_stop_and_new_session(env):
     assert svc.sent[-1][1]["ok"] is True and rx.active
 
 
-def test_session_end_stops_service_and_clears_fallback(env):
+def test_session_end_stops_service_and_clears_failed(env):
     rx, svc, _ = env
     rx.handle("video-key", key_body())
     rx.handle("session-end", {})
     assert not rx.active and svc.cmds("stop") and svc.units[-1].endswith("@none.service")
     svc.fail["start"] = CtlError("pipeline")
     rx.handle("video-key", key_body(gen=1, session="e" * 32))
-    assert rx.phase == "fallback"
+    assert rx.phase == "failed"
     rx.handle("session-end", {})
     assert rx.phase == "idle"
 

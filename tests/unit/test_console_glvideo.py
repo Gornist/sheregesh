@@ -35,12 +35,9 @@ def hw_decoder(monkeypatch):
 
 
 def test_gl_decoder_pipelines_end_in_unixfdsink():
-    a = gst.stream_receiver_gl_args("h264", "/run/x.sock")
-    assert a[:4] == [gst.GST_LAUNCH, "-q", "fdsrc", "fd=0"] and a[-3:] == ["unixfdsink", "socket-path=/run/x.sock",
-                                                                          "sync=false"]
-    assert "videoconvert" not in a and "fdsink" not in a and "rtph264depay" in a
     b = gst.receiver_gl_args("h264", 5600, "/run/y.sock")
-    assert "port=5600" in b and b[-2] == "socket-path=/run/y.sock"
+    assert "port=5600" in b and b[-3:] == ["unixfdsink", "socket-path=/run/y.sock", "sync=false"]
+    assert "videoconvert" not in b and "fdsink" not in b and "rtph264depay" in b
 
 
 RECEIVERS = []

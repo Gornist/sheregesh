@@ -9,7 +9,6 @@
 import shutil
 import signal
 import sys
-import threading
 import time
 
 import pytest
@@ -175,49 +174,21 @@ def test_gui_responsive_when_remote_process_killed(make_ui):
 
 
 # ---------------- видео: остановка конвейера не блокирует поток GUI ----------------
-class _StuckClient:
-    """Подставной VideoClient: run() не реагирует на close() (подключение к пропавшему блоку ещё идёт) или
-    непрерывно пишет в stdin декодера, который его не читает."""
-
-    def __init__(self, mode):
-        self.mode, self.closed = mode, threading.Event()
-
-    def run(self, fd):
-        import os
-        if self.mode == "connect":
-            time.sleep(5)                                   # create_connection/TLS к адресу, которого больше нет
-            return "timeout"
-        try:
-            while True:
-                os.write(fd, b"\0" * 65536)                 # декодер не читает — канал переполняется, запись стоит
-        except OSError as e:
-            return str(e)
-
-    def close(self):
-        self.closed.set()
-
-    def frame_decoded(self, t):
-        pass
-
-    def stats(self):
-        return {}
-
-
 @pytest.mark.test_id("TEST-SW-002")
-@pytest.mark.parametrize("mode", ["connect", "pipe-full"])
-def test_video_stop_on_link_loss_does_not_block_gui_thread(qapp, mode):
-    """Потеря сеанса управления → configure(None, None) в таймере бэкенда. Прежде stop() ждал поток видеоканала
-    до 2 с (join) и декодер (wait) прямо в потоке GUI."""
-    rx = VideoReceiver(command=[sys.executable, "-c", "import time; time.sleep(30)"])    # декодер, не читающий stdin
+def test_video_stop_on_link_loss_does_not_block_gui_thread(qapp):
+    """Потеря сеанса управления → configure(None, None) в таймере бэкенда. Прежде stop() ждал потоки (join) и
+    декодер (wait) прямо в потоке GUI; декодер здесь не реагирует ни на что, кроме SIGKILL."""
+    rx = VideoReceiver(command=[sys.executable, "-c", "import signal, time; signal.signal(signal.SIGTERM, "
+                                "signal.SIG_IGN); time.sleep(30)"])
     try:
-        rx.configure_remote("h264", ("127.0.0.1", 1), lambda: _StuckClient(mode))
+        rx.configure("h264", 5600)
         pump(300)
         assert rx.state == "waiting"
         t0 = time.monotonic()
         rx.configure(None, None)
         dt = (time.monotonic() - t0) * 1000
         assert rx.state == "off"
-        print(f"\nvideo stop ({mode}): {dt:.1f} ms in GUI thread")
+        print(f"\nvideo stop: {dt:.1f} ms in GUI thread")
         assert dt < 100, f"остановка видео заняла {dt:.0f} мс в потоке GUI"
     finally:
         rx.shutdown()

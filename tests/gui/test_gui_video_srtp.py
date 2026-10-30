@@ -11,7 +11,6 @@ spawn, который запускает обычный процесс Python и
 import os
 import subprocess
 import sys
-import threading
 import time
 
 import pytest
@@ -51,28 +50,6 @@ class FakeGl:
 
     def stop(self):
         self.stopped += 1
-
-
-class FakeClient:
-    """Подменный канал удалённого блока: работает, пока его не закроют (для проверки режима TLS после сброса)."""
-
-    info = {}
-
-    def __init__(self):
-        self._closed = threading.Event()
-
-    def run(self, fd):
-        self._closed.wait()
-        return "closed"
-
-    def stats(self):
-        return {}
-
-    def frame_decoded(self, now):
-        pass
-
-    def close(self):
-        self._closed.set()
 
 
 @pytest.fixture(autouse=True)
@@ -234,9 +211,8 @@ def test_service_decoder_socket_error_is_not_reported(qapp, monkeypatch, tmp_pat
         rx.stop()
 
 
-def test_configure_none_or_remote_resets_service_mode(qapp, monkeypatch, tmp_path):
-    """configure(None, None) и configure_remote снимают режим службы; повторный configure_service с теми же
-    аргументами ничего не перезапускает."""
+def test_configure_none_or_local_resets_service_mode(qapp, monkeypatch, tmp_path):
+    """configure(None, None) и локальный UDP (configure) снимают режим службы."""
     gl = FakeGl(ready=False)
     rx, spawned = _receiver(monkeypatch, tmp_path, gl)
     sock = _sock(tmp_path)
@@ -251,10 +227,9 @@ def test_configure_none_or_remote_resets_service_mode(qapp, monkeypatch, tmp_pat
 
     rx2, spawned2 = _receiver(monkeypatch, tmp_path, FakeGl(ready=False))
     rx2.configure_service("h264", sock, _stats)
-    rx2.configure_remote("h264", ("videolink", 5600), FakeClient)
+    rx2.configure("h264", 5600)
     try:
-        assert rx2.metrics()["mode"] == "remote-tls"
-        assert rx2.metrics()["mode"] != "remote-srtp"
+        assert rx2.metrics()["mode"] == "local" and rx2.metrics()["transport"] is None
     finally:
         rx2.stop()
 

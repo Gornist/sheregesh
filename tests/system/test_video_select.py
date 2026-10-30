@@ -1,11 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""S4: выбор видеоисточника блока пультом (протокол 1.2, video-select) через настоящий процесс блока и TLS-канал.
+"""S4: выбор видеоисточника блока пультом (протокол 1.2, video-select) через настоящий процесс блока и канал mTLS.
 
 Список status.video.sources, выбор известного и неизвестного id, сохранение в video-input.json и перечитывание после
-перезапуска блока, 20 переключений synthetic ↔ rtsp без утечек (процессы конвейера, дескрипторы, дочерние процессы),
+перезапуска блока, 20 переключений synthetic ↔ rtsp без утечек (дескрипторы, дочерние процессы),
 совместимость: старый блок (сессия 1.1) — пульт не отправляет; старый пульт (hello 1.1) — блок не исполняет.
-Конвейер — подставной (tests/system/fake_ingest_sender.py), сервер RTSP — TCP-заглушка (проверка присутствия)."""
+Видеосеанса у агента нет (кадры шлёт служба tx по SRTP, ADR-0016): его видеоприём только наблюдает за входом, поэтому
+исправный вход в status.video.source — «starting» (idle), конвейеров агент не запускает. Сервер RTSP — TCP-заглушка
+(проверка присутствия)."""
 import json
 import os
 import shutil
@@ -19,11 +21,10 @@ from pathlib import Path
 import pytest
 
 from procs import Agent, free_port, wait_for
-from sheregesh import videolink
 from sheregesh.link.client import PeerClient
 from sheregesh.link.codec import Decoder, encode
 
-SENDER = Path(__file__).with_name("fake_ingest_sender.py")
+READY = "starting"                     # исправный вход без видеосеанса агента (Ingest idle → starting)
 
 
 @pytest.fixture(scope="module")
@@ -65,30 +66,17 @@ class FakeRTSP:
 
 
 class Unit:
-    """Блок (сетевой профиль, подставной конвейер) + пульт (PeerClient) + видеосеанс (VideoClient)."""
+    """Блок (сетевой профиль) + пульт (PeerClient)."""
 
-    def __init__(self, lab, tmp, *extra, video=True):
+    def __init__(self, lab, tmp, *extra):
         self.tmp, self.lab = tmp, lab
         self.link = tmp / "link.json"
         if not self.link.exists():
             shutil.copyfile(lab["remote"].source, self.link)
-        self.ctl, self.pids = tmp / "sender.ctl", tmp / "sender.pids"
-        self.ctl.write_text("run")
-        self.vport = free_port()
         self.agent = Agent("--link-config", str(self.link), "--bind", "127.0.0.1", "--heartbeat-interval", "0.2",
-                           "--net-video-port", str(self.vport), *extra, "--video-command", sys.executable, str(SENDER),
-                           str(self.ctl), str(self.pids), "30", "h264")
+                           *extra)
         self.pc = PeerClient(None, self.agent.port, heartbeat_timeout_s=2.0, tls_cfg=lab["console"]).start()
-        self.vc = None
         assert wait_for(lambda: self.pc.snapshot()["phase"] == "connected", 10), self.pc.snapshot()
-        if video:
-            self.vc = videolink.VideoClient(lab["console"], "127.0.0.1", self.vport)
-            self.r, self.w = os.pipe()
-            self.vt = threading.Thread(target=self.vc.run, args=(self.w,), daemon=True)
-            self.dt = threading.Thread(target=lambda: [None for _ in iter(lambda: os.read(self.r, 65536), b"")],
-                                       daemon=True)
-            self.vt.start()
-            self.dt.start()
 
     def video(self):
         return (self.pc.snapshot()["telemetry"] or {}).get("video") or {}
@@ -109,33 +97,9 @@ class Unit:
             (self.pc.snapshot()["video_select"], self.video().get("select"))
         return self.video()["select"]
 
-    def sender_pids(self):
-        return [int(x) for x in self.pids.read_text().split()] if self.pids.exists() else []
-
     def close(self):
-        if self.vc is not None:
-            self.vc.close()
-            self.vt.join(5)
         self.pc.stop()
         self.agent.stop()
-        if self.vc is not None:
-            os.close(self.w)
-            self.dt.join(5)
-            os.close(self.r)
-
-
-def alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    try:                                                   # зомби (ещё не снят родителем) — не живой
-        st = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
-        return bool(st) and not st.startswith("Z")
-    except OSError:
-        return True
 
 
 def fd_count(pid):
@@ -169,10 +133,10 @@ def test_sources_list_select_persist_and_reload_after_restart(lab, tmp_path):
             {"id": "rtsp:0", "input": "rtsp", "name": f"RTSP 127.0.0.1:{cam.port}/cam", "available": True,
              "active": False},
             {"id": "rtsp:1", "input": "rtsp", "name": u.sources()[2]["name"], "available": False, "active": False}]
-        assert wait_for(lambda: u.source().get("state") == "streaming", 10), u.source()
+        assert wait_for(lambda: u.source().get("state") == READY, 10), u.source()
         res = u.select("rtsp:0")
         assert res["result"] == "ok" and res["id"] == "rtsp:0" and res["error"] == "", res
-        assert wait_for(lambda: u.source().get("type") == "rtsp" and u.source().get("state") == "streaming", 10)
+        assert wait_for(lambda: u.source().get("type") == "rtsp" and u.source().get("state") == READY, 10)
         assert u.active() == ["rtsp:0"] and u.pc.snapshot()["video_select"]["state"] == "completed"
         saved = json.loads((tmp_path / "video-input.json").read_text())
         assert saved["source"] == "rtsp" and saved["url"].endswith(f":{cam.port}/cam") and len(saved["rtsp_urls"]) == 2
@@ -188,7 +152,7 @@ def test_sources_list_select_persist_and_reload_after_restart(lab, tmp_path):
     log = u.agent.stderr()
     assert "video select 'rtsp:0' (req 1): ok" in log and "unknown-id" in log and "secret" not in log, log
     # перезапуск блока: выбор перечитан из video-input.json
-    u = Unit(lab, tmp_path, video=False)
+    u = Unit(lab, tmp_path)
     try:
         assert wait_for(lambda: u.source().get("type") == "rtsp" and u.active() == ["rtsp:0"], 10), u.video()
         res = u.select("synthetic")
@@ -205,32 +169,26 @@ def test_20_switches_synthetic_rtsp_without_leaks(lab, tmp_path):
     write_config(tmp_path, cam.port)
     u = Unit(lab, tmp_path)
     try:
-        assert wait_for(lambda: u.source().get("state") == "streaming", 10), u.source()
+        assert wait_for(lambda: u.source().get("state") == READY, 10), u.source()
         time.sleep(0.5)
         pid = u.agent.proc.pid
         fds, kids = fd_count(pid), len(children(pid))
         for i in range(20):
             sid, kind = ("rtsp:0", "rtsp") if i % 2 == 0 else ("synthetic", "synthetic")
             assert u.select(sid)["result"] == "ok", i
-            assert wait_for(lambda: u.source().get("type") == kind and u.source().get("state") == "streaming"
+            assert wait_for(lambda: u.source().get("type") == kind and u.source().get("state") == READY
                             and u.active() == [sid], 10), (i, u.source(), u.active())
-            running = [p for p in u.sender_pids() if alive(p)]
-            assert len(running) == 1, (i, running)                       # старый конвейер остановлен
         time.sleep(0.5)
-        assert len(u.sender_pids()) == 21
         assert abs(fd_count(pid) - fds) <= 3, (fds, fd_count(pid))       # дескрипторы не копятся
         assert len(children(pid)) == kids, (kids, children(pid))         # дочерние процессы не копятся
-        st = u.vc.stats()
-        assert st["connected"] and st["seq_gaps"] == 0, st               # один видеосеанс, RTP непрерывен
     finally:
         u.close()
         cam.close()
-    assert not any(alive(p) for p in u.sender_pids())
 
 
 def test_old_remote_session_11_console_does_not_send(lab, tmp_path):
     write_config(tmp_path, free_port())
-    u = Unit(lab, tmp_path, "--protocol", "1.1", video=False)
+    u = Unit(lab, tmp_path, "--protocol", "1.1")
     try:
         assert u.pc.snapshot()["session"] == "1.1"
         # Видеоприём определяет источник в своём потоке (video.synthetic опрашивает gst-inspect): до этого в status
@@ -299,21 +257,20 @@ def test_pipeline_survives_sighup_to_whole_group():
         p.wait(5)
 
 
-def test_sighup_keeps_video_and_deleted_config_means_synthetic(lab, tmp_path):
+def test_sighup_keeps_source_and_deleted_config_means_synthetic(lab, tmp_path):
     import signal
     cam = FakeRTSP()
     write_config(tmp_path, cam.port, source="rtsp", url=f"rtsp://127.0.0.1:{cam.port}/cam")
     u = Unit(lab, tmp_path)
     try:
-        assert wait_for(lambda: u.source().get("type") == "rtsp" and u.source().get("state") == "streaming", 10)
-        pids = u.sender_pids()
-        u.agent.signal(signal.SIGHUP)                     # конвейер в своей группе; cgroup — test_pipeline_survives_…
+        assert wait_for(lambda: u.source().get("type") == "rtsp" and u.source().get("state") == READY, 10)
+        since = u.source()["since_s"]
+        u.agent.signal(signal.SIGHUP)
         time.sleep(1.0)
-        assert u.sender_pids() == pids and all(alive(p) for p in pids)       # конфиг тот же — конвейер не тронут
-        assert u.source()["state"] == "streaming"
+        assert u.source()["state"] == READY and u.source()["since_s"] > since   # конфиг тот же — вход не тронут
         (tmp_path / "video-input.json").unlink()
         u.agent.signal(signal.SIGHUP)
-        assert wait_for(lambda: u.source().get("type") == "synthetic" and u.source().get("state") == "streaming"
+        assert wait_for(lambda: u.source().get("type") == "synthetic" and u.source().get("state") == READY
                         and u.active() == ["synthetic"], 10), u.source()
     finally:
         u.close()
@@ -327,7 +284,7 @@ def test_videoselect_cli_same_path_as_gui(lab, tmp_path):
     from procs import ENV
     cam = FakeRTSP()
     write_config(tmp_path, cam.port)
-    u = Unit(lab, tmp_path, video=False)
+    u = Unit(lab, tmp_path)
     u.pc.stop()                                                  # блок держит один сеанс: освобождаем его для команды
     cfg = json.loads(Path(lab["console"].source).read_text())
     cfg["port"] = u.agent.port
@@ -349,3 +306,17 @@ def test_videoselect_cli_same_path_as_gui(lab, tmp_path):
     finally:
         u.agent.stop()
         cam.close()
+
+
+def test_session_without_srtp_service_does_not_announce_video(tmp_path):
+    """Сеанс 1.5 без службы tx (loopback, видео выключено): блок в режиме off сообщает причину в status.video.srtp,
+    но не объявляет видео (enabled/codec прежние) — иначе пульт запускал бы приёмник UDP без отправителя."""
+    from sheregesh import PROTOCOL_VERSION
+    a = Agent("--heartbeat-interval", "0.2")
+    try:
+        st = _raw_session(a.port, PROTOCOL_VERSION, "synthetic")
+        v = st["video"]
+        assert v["enabled"] is False and v["codec"] is None and "transport" not in v, v
+        assert v["srtp"] == {"state": "off", "error": "no video: video-tx service unavailable"}, v
+    finally:
+        a.stop()

@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Видеоприём удалённого блока: один активный источник (sheregesh.videoinput.VideoSource), его конвейер GStreamer,
-состояние и переподключение. Используется видеосервером (sheregesh.videolink.VideoServer, ADR-0011) вместо прямого
-запуска генератора; защищённый канал и его кадры не меняются.
+состояние и переподключение. Агент блока (сетевой профиль) держит его только для наблюдения за входом —
+status.video.source: видеосеанса у агента нет (attach не вызывается), кадры пульту шлёт служба sheregesh-video-tx
+по SRTP (ADR-0016). Путь с конвейером (attach/take) — для испытаний видеоприёма и RTSP.
 
 Состояния (контракт телеметрии status.video.input.state):
   off        видеоприём выключен
@@ -42,7 +43,7 @@ import time
 from collections import deque
 
 from . import video
-from .videolink import Rfc4571, parse_sps, rtp_info, sps_from_rtp
+from .rtp import Rfc4571, parse_sps, rtp_info, sps_from_rtp
 
 STATES = ("off", "idle", "no-device", "connect-error", "starting", "streaming", "no-signal", "error")
 # Состояния для пульта (контракт sheregesh_console/videosource.py: SOURCE_STATES); idle пульт видит как starting —
@@ -142,7 +143,7 @@ class Ingest:
 
     @classmethod
     def fixed(cls, command, log=lambda m: None, **kw):
-        """Ingest с готовой командой генератора (испытания, прежний параметр VideoServer.command)."""
+        """Ingest с готовой командой генератора (испытания)."""
         return cls(CommandSource, lambda _src: command, log, **kw)
 
     # ---------- запросы (любой поток) ----------

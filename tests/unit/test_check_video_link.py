@@ -26,87 +26,19 @@ def test_errors_are_not_pass(monkeypatch, tmp_path):
     assert s["results"] == {"a": "ERROR", "b": "ERROR", "c": "SKIP"}         # после abort дальше не идём
 
 
-def sk(**kw):
-    m = {"killed": ["12"], "restart_s": 1.1, "left": [], "remote_pipelines": 1, "remote_orphans": [],
-         "video_back_s": 2.0, "control_phase": "connected", "control_dropped": False, "no_video_seen": False,
-         "new_session": False}
-    return {**m, **kw}
+def test_no_plain_flags_tcp_listener_and_plain_udp_ports():
+    """TLS-видеосервера нет: TCP 7444 никто не слушает; UDP 5600/5004 (прежнее незашифрованное видео) — нарушение."""
+    srtp_rx = [["udp", "00000000:1D14", "00000000:0000", "07"], ["udp", "00000000:1D15", "00000000:0000", "07"]]
+    assert cv.judge_no_plain({"console": srtp_rx, "remote": []})["verdict"] == "PASS"
+    listen = [["tcp", "00000000:1D14", "00000000:0000", "0A"]]
+    r = cv.judge_no_plain({"console": srtp_rx, "remote": listen})
+    assert r["verdict"] == "FAIL" and r["violations"] == ["remote: listen tcp 0.0.0.0:7444"], r
+    r = cv.judge_no_plain({"console": [["udp", "0100007F:15E0", "00000000:0000", "07"]], "remote": []})
+    assert r["verdict"] == "FAIL" and "udp video port" in r["violations"][0], r
 
 
-def test_sender_kill_same_session_without_no_video_is_pass():
-    """Ingest (3e147dd): генератор перезапущен в том же видеосеансе, «нет видео» не наступило — PASS."""
-    assert cv.judge_sender_kill(sk()) == ("PASS", [])
-    assert cv.judge_sender_kill(sk(no_video_seen=True, new_session=True))[0] == "PASS"
-
-
-def test_sender_kill_failures_and_errors():
-    assert cv.judge_sender_kill(sk(restart_s=None))[0] == "FAIL"
-    assert cv.judge_sender_kill(sk(video_back_s=None))[0] == "FAIL"
-    assert cv.judge_sender_kill(sk(video_back_s=10.4))[0] == "FAIL"
-    assert cv.judge_sender_kill(sk(left=["12"]))[0] == "FAIL"
-    assert cv.judge_sender_kill(sk(remote_pipelines=2))[0] == "FAIL"
-    assert cv.judge_sender_kill(sk(remote_orphans=["99 1 gst-launch"]))[0] == "FAIL"
-    assert cv.judge_sender_kill(sk(control_dropped=True))[0] == "FAIL"
-    assert cv.judge_sender_kill(sk(killed=[]))[0] == "ERROR"
-
-
-class Board:
-    """Подмена SSH: pi2 — генератор 12, после SIGKILL через 2 опроса появляется 57; pi1 — кадры растут после
-    перезапуска, сеанс прежний."""
-
-    def __init__(self):
-        self.killed, self.polls, self.frames = False, 0, 1000
-
-    def __call__(self, host, cmd, timeout=120):
-        if host == "r":
-            if cmd.startswith("pgrep"):
-                if not self.killed:
-                    return "12"
-                self.polls += 1
-                return "57" if self.polls > 2 else ""
-            if cmd.startswith("kill -KILL"):
-                self.killed = True
-                return ""
-            if cmd.startswith("ps -eo"):
-                return "57 4000 gst-launch-1.0 ... rtpstreampay ! fdsink"
-            if "link-status" in cmd:
-                return json.dumps({"video": {"sender_restarts": 1 if self.polls > 2 else 0}})
-            return ""
-        if "ui-state" in cmd:
-            if self.killed and self.polls > 2:
-                self.frames += 30
-            return json.dumps({"video": {"mode": "remote-tls", "state": "playing", "sessions": 1,
-                                         "frames_decoded": self.frames}})
-        if "link-status" in cmd:
-            return json.dumps({"phase": "connected"})
-        return ""
-
-
-def test_sc_sender_kill_recovers_in_same_session(monkeypatch):
-    board = Board()
-    monkeypatch.setattr(cv, "ssh", board)
-    monkeypatch.setattr(cv.time, "sleep", lambda s: None)
-    r = cv.sc_sender_kill("c", "r", timeout=5)
-    assert r["verdict"] == "PASS", r["problems"]
-    assert r["new_pids"] == ["57"] and r["new_session"] is False and r["sessions"] == [1, 1]
-
-
-def _win(link0, link1, dec0=0, dec1=600, frames0=0, frames1=600):
-    c0 = {"link": {"connected": True, **link0}, "sessions": 1, "frames_decoded": dec0, "restarts": 0,
-          "codec": "h264", "output": "640x360"}
-    c1 = {"link": {"connected": True, "stream_sps": {"width": 1280, "height": 720}, **link1}, "sessions": 1,
-          "frames_decoded": dec1, "restarts": 0, "codec": "h264", "output": "640x360"}
-    return c0, c1, {"frames": frames0}, {"frames": frames1}
-
-
-def test_stream_window_measured_zero_passes_unmeasured_fails():
+def test_delta_measured_zero_differs_from_unmeasured():
     """Контракт видео v9: «ноль потерь» — только измеренный ноль; неизмеренный счётчик (None) не превращается в 0."""
-    base = {"frames": 0, "packets": 0, "bytes": 0, "seq_gaps": 0, "lost_packets": 0, "bad_rtp": 0}
-    end = {"frames": 600, "packets": 900, "bytes": 1_500_000, "seq_gaps": 0, "lost_packets": 0, "bad_rtp": 0}
-    r = cv.judge_stream(*_win(base, end), 20.0)
-    assert r["verdict"] == "PASS" and r["metrics"]["seq_gaps"] == 0 and "unmeasured" not in r
-    r = cv.judge_stream(*_win({**base, "seq_gaps": None}, {**end, "seq_gaps": None}), 20.0)
-    assert r["verdict"] == "FAIL" and r["metrics"]["seq_gaps"] is None and r["unmeasured"] == ["seq_gaps"]
     assert cv.delta({"x": None}, {"x": 5}, "x") is None and cv.delta({}, {"x": 5}, "x") is None
     assert cv.delta({"x": 0}, {"x": 0}, "x") == 0
 
@@ -117,7 +49,6 @@ def test_latency_judged_by_metric_with_same_bounds():
             "decode_latency_ms": {"p50": None, "p95": None, "samples": 0, "desync_resets": 0}}
     r = cv.judge_latency(srtp)
     assert r["verdict"] == "PASS" and r["capture_to_decoded_ms"]["p50"] == 80.0
-    assert "measured_part_p50_ms" not in r and "transport_pi2_to_pi1_ms" not in r     # не складывается с TLS
     assert cv.judge_latency({**srtp, "capture_to_decoded_ms": {"p50": None, "samples": 0}})["verdict"] == "FAIL"
     # стенд 2026-10-29: p50 −49 мс получил PASS — задержка «захват → декодирован» не бывает ≤ 0 (кодер, сеть и
     # декодер); такое значение — ошибка смещения часов, а не измерение
@@ -127,11 +58,10 @@ def test_latency_judged_by_metric_with_same_bounds():
         assert r["verdict"] == "FAIL" and "смещени" in r["reason"], (bad, r)
     tls = {"transport": "tls", "transport_latency_ms": {"p50": 4.0, "samples": 600},
            "decode_latency_ms": {"p50": 30.0, "samples": 600, "desync_resets": 0}}
-    r = cv.judge_latency(tls)
-    assert r["verdict"] == "PASS" and r["measured_part_p50_ms"] == 34.0 and "capture_to_decoded_ms" not in r
+    assert cv.judge_latency(tls)["verdict"] == "FAIL"                  # TLS-видео удалено (ADR-0011)
 
 
-# SRTP (ADR-0016): по службам видео, а не по TLS-видеосерверу (стенд 2026-10-29: исправный поток 30 к/с давал FAIL)
+# SRTP (ADR-0016): по службам видео (стенд 2026-10-29: исправный поток 30 к/с по прежнему TLS-критерию давал FAIL)
 CH, RH = "192.168.1.92", "192.168.1.171"
 SESS = {"state": "streaming", "transport": "srtp", "session": "00cf96", "gen": 2, "ssrc": 125430704}
 CONTROL = {"phase": "connected", "tls": "TLSv1.3", "peer_uri": "urn:sheregesh:remote:100000009d497e91", "host": RH}

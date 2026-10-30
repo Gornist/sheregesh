@@ -176,7 +176,7 @@ def console_board(tmp_path):
     (b.persistent / "home/sheregesh-ui/.config/sheregesh").mkdir(parents=True)
     (b.persistent / "home/sheregesh-ui/.config/sheregesh/console.role").write_text("urn\n")
     b.status_files = {"/run/sheregesh-ui/link-status.json": {"phase": "connected", "tls": "TLSv1.3"},
-                      "/run/sheregesh-ui/ui-state.json": {"video": {"mode": "remote-tls", "state": "playing",
+                      "/run/sheregesh-ui/ui-state.json": {"video": {"mode": "remote-srtp", "state": "playing",
                                                                     "decoded_fps_5s": 30.0}}}
     b.enable()
     assert b.request("install", b.payload("1.1.0"))[0]["result"] == "OK"
@@ -218,10 +218,8 @@ def test_confirm_refused_when_any_mandatory_gate_fails(tmp_path, breakage, gate)
     assert res["state"]["state"] != "COMMITTED" and autoboot(b) == (2, 3)      # основной слот не сменился
 
 
-@pytest.mark.parametrize("mode", ["remote-tls", "remote-srtp"])      # ADR-0016: видео по TLS или через службу rx
-def test_confirm_commits_console_when_all_gates_pass(tmp_path, mode):
+def test_confirm_commits_console_when_all_gates_pass(tmp_path):     # ADR-0016: видео только через службу rx
     b = console_board(tmp_path)
-    b.status_files["/run/sheregesh-ui/ui-state.json"]["video"]["mode"] = mode
     res, _ = b.request("confirm")
     assert res["result"] == "OK", [c for c in res["checks"] if c["status"] != "PASS"]
     assert autoboot(b) == (3, 2) and res["state"]["state"] == "COMMITTED"
@@ -348,7 +346,7 @@ def test_confirm_after_old_agent_install_checks_presence_not_comparison(tmp_path
     (b.persistent / "home/sheregesh-ui/.config/sheregesh/link.json").write_text("{}\n")
     (b.persistent / "home/sheregesh-ui/.local/share/sheregesh/link/device.key").write_text("K\n")
     b.status_files = {"/run/sheregesh-ui/link-status.json": {"phase": "connected", "tls": "TLSv1.3"},
-                      "/run/sheregesh-ui/ui-state.json": {"video": {"mode": "remote-tls", "state": "playing",
+                      "/run/sheregesh-ui/ui-state.json": {"video": {"mode": "remote-srtp", "state": "playing",
                                                                     "decoded_fps_5s": 30.0}}}
     b.enable()
     assert b.request("install", b.payload("1.1.0"))[0]["result"] == "OK"
@@ -394,3 +392,12 @@ def test_remote_video_gate_requires_frames_not_just_listening(tmp_path):
     b.agent().on_boot()
     res, _ = b.request("confirm")
     assert res["result"] == "FAILED" and "video" in res["reason"]                # сервер слушает, но кадров нет
+
+
+def test_confirm_refuses_console_with_removed_tls_video_mode(tmp_path):
+    """TLS-видео (ADR-0011) удалено: режим remote-tls в ui-state больше не подтверждает видео."""
+    b = console_board(tmp_path)
+    b.status_files["/run/sheregesh-ui/ui-state.json"]["video"]["mode"] = "remote-tls"
+    res, _ = b.request("confirm")
+    failed = [c["id"] for c in res["checks"] if c["status"] != "PASS" and c["mandatory"]]
+    assert res["result"] == "FAILED" and failed == ["video"], failed

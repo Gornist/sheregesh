@@ -409,12 +409,13 @@ def step_link(a, ctx):
     s = E.jload((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
     ui = E.jload(E.out(a.console, f"cat {E.UI}"))
     st = E.jload(E.out(a.remote, f"cat {REMOTE_STATUS}"))
+    tx = ((E.jload(E.out(a.remote, "cat /run/sheregesh-video/state.json")).get("streams") or {}).get("main") or {})
     facts = {"check_link": s.get("results"), "peerLink": ui.get("peerLink"), "linkTls": ui.get("linkTls"),
-             "remote_tls": st.get("tls"), "video_transport": (st.get("video") or {}).get("transport")}
+             "remote_tls": st.get("tls"), "video_transport": tx.get("transport")}      # служба tx блока (ADR-0016)
     if not s:
         return {"verdict": "ERROR", "reason": "check_link без summary.json", "log": text[-2000:]}
     ok = (all(v == "PASS" for v in (s.get("results") or {}).values()) and facts["peerLink"] == "CONNECTED"
-          and facts["linkTls"] == "TLSv1.3" and facts["video_transport"] == "tls1.3-mutual")
+          and facts["linkTls"] == "TLSv1.3" and facts["video_transport"] == "srtp")
     return {"verdict": "PASS" if ok else "FAIL", **facts}
 
 
@@ -562,7 +563,7 @@ def plan(a):
         "S4 приёмка — порядок (≈ 11–14 мин):",
         "  0  предпроверка: серийные номера, OTA ∈ IDLE/COMMITTED/ROLLED_BACK; slot_guard snap pi1/pi2 «до»   ~1 мин",
         "  1  VID-01 службы, failed, health обеих ролей                                                  ~0,3 мин",
-        "  2  VID-02 check_link health,identity; TLS 1.3 управления, tls1.3-mutual видео                 ~1 мин",
+        "  2  VID-02 check_link health,identity; TLS 1.3 управления, видео SRTP                         ~1 мин",
         f"  3  VID-03/04 (+рендер VID-05/06) gui_capture --by video на pi1: {'да' if a.gui else 'нет (--gui) → ERROR'}  ~2 мин",
         f"  4  VID-05/06 потеря/возврат: synthetic SIGSTOP конвейера {a.outage} с × {a.cycles}; RTSP: {rtsp}  ~2–3 мин",
         f"  5  VID-07 переключения synthetic↔rtsp × {a.switches}, ресурсы до/после                       ~2 мин",

@@ -11,7 +11,7 @@
   P2-01  загрузка с обновлённого слота: слот B, OTA (trial: TRYBOOT/HEALTH_PENDING, tryboot; committed: COMMITTED),
          образ bd74c8c (/usr/share/sheregesh/build.json) и его ota_version, код приложения — заводской (не DEV-выпуск),
          uptime, failed-юниты 0, sheregesh-health PASS
-  P2-02  SSH, связь с pi1: check_link --only health,identity, TLS 1.3 управления, видео tls1.3-mutual,
+  P2-02  SSH, связь с pi1: check_link --only health,identity, TLS 1.3 управления, видео SRTP,
          check_video_link --only session (s4_accept.step_link)
   P2-03  synthetic до GUI pi1: выбор GUI-путём (videoselect через работающий пульт = Backend.selectVideoSource),
          live и кадры растут по ui-state; --gui — снимок gui_capture --by select
@@ -518,7 +518,7 @@ def step_link(a, ctx):
     elif any(v != "PASS" for v in cvl.values()):
         fails.append(f"check_video_link session {cvl}")
     v = "FAIL" if fails else "ERROR" if errors else "PASS"
-    ok = f"SSH {who.splitlines()[0] if who else '?'}, mTLS TLSv1.3, видео tls1.3-mutual, session PASS"
+    ok = f"SSH {who.splitlines()[0] if who else '?'}, mTLS TLSv1.3, видео SRTP, session PASS"
     return v, "; ".join(fails + errors) or ok, {"link": r, "check_video_link": cvl}
 
 
@@ -769,7 +769,7 @@ def plan(a):
         "S5 pi2 после OTA bd74c8c — фаза trial (пробная загрузка B, до confirm), ≈ 4–5 мин (P2-05 — после confirm):",
         "  P2-01 слот B, TRYBOOT/HEALTH_PENDING, tryboot, образ bd74c8c / 0.1.1792949168, заводской код,",
         "        failed 0, health PASS; иначе активные шаги BLOCKED                                     ~0,5 мин",
-        "  P2-02 SSH; check_link health,identity; TLS 1.3, видео tls1.3-mutual; check_video_link session   ~1,5 мин",
+        "  P2-02 SSH; check_link health,identity; TLS 1.3, видео SRTP; check_video_link session   ~1,5 мин",
         f"  P2-03 synthetic GUI-путём (videoselect via console), live, кадры растут; снимок GUI: {gui}  ~0,3 мин",
         f"  P2-04 {a.rtsp_id} (shcam H.264 1280×720@30) — выбор, live                                ~0,3 мин",
         "  P2-06 S5-D1: выбор сохраняется в video-input.json, переживает systemctl restart sheregesh-remote-net ~1 мин",

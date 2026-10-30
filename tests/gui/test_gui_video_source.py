@@ -49,27 +49,23 @@ while True:
     time.sleep(0.04)
 """]
 
-TEL = {"enabled": True, "active": True, "codec": "h264", "port": 5600, "transport": "tls"}
-INFO_11 = {"codec": "h264", "width": 1280, "height": 720, "fps": 30}
+TEL = {"enabled": True, "active": True, "codec": "h264", "transport": "srtp"}
 STATES = {
     "synthetic-stream": {"telemetry_video": {**TEL, "source": {"input": "synthetic", "state": "streaming",
                                                                "device": "videotestsrc smpte", "width": 1280,
-                                                               "height": 720, "fps": 30}},
-                         "session_info": INFO_11},
-    "legacy-1.1": {"telemetry_video": TEL, "session_info": INFO_11},
+                                                               "height": 720, "fps": 30}}},
+    "legacy-1.1": {"telemetry_video": TEL},
     "cvbs-no-signal": {"telemetry_video": {**TEL, "source": {"input": "cvbs", "state": "no-signal",
                                                              "device": "/dev/video0 (EasyCAP UTV007)",
                                                              "error": "no video sync on composite input",
-                                                             "width": 720, "height": 576, "fps": 25}},
-                       "session_info": {"codec": "h264", "width": 720, "height": 576, "fps": 25}},
+                                                             "width": 720, "height": 576, "fps": 25}}},
     "hdmi-no-device": {"telemetry_video": {**TEL, "source": {"input": "hdmi", "state": "no-device",
                                                              "device": "tc358743 (CSI-2)",
-                                                             "error": "/dev/video0 not found: HDMI bridge not detected"}},
-                       "session_info": {}},
+                                                             "error": "/dev/video0 not found: HDMI bridge not detected"}}},
     "rtsp-connect-error": {"telemetry_video": {**TEL, "source": {
         "input": "rtsp", "state": "connect-error", "url": "rtsp://admin:s3cret@192.168.1.64:554/Streaming/Channels/101",
         "error": "Could not open resource for reading and writing: rtsp://admin:s3cret@192.168.1.64:554/"
-                 "Streaming/Channels/101 (Connection refused)"}}, "session_info": {}},
+                 "Streaming/Channels/101 (Connection refused)"}}},
 }
 CONNECTED = {"peerLink": "CONNECTED", "linkView": "CONNECTED", "peerState": "connected", "peerDetail": "ok",
              "peerDevice": "remote-emu-01", "peerSoftware": "0.1.0.dev0", "peerRole": "remote", "peerProtocol": PROTOCOL_VERSION,
@@ -208,7 +204,7 @@ def test_block_11_without_source_fields(ui):
     show(ui, "video")
     src = text(ui, "videoSourceText")
     assert "Синтетический" in src and "не сообщается" in src, src
-    assert b.videoSource["live"] and "1280×720" in text(ui, "videoInfo")
+    assert b.videoSource["live"]                       # режима источника блок 1.1 не сообщает (INFO был только у TLS)
     show(ui, "dashboard")
     assert text(ui, "linkVideo").startswith("Видео (Синтетический): воспроизводится")
 

@@ -750,7 +750,7 @@ def _sanitize_status(body):
         out["video"] = {"enabled": bool(v.get("enabled")), "active": bool(v.get("active")),
                         "codec": v.get("codec") if v.get("codec") in ("h264", "jpeg") else None,
                         "port": int(v["port"]) if isinstance(v.get("port"), int) and 1024 <= v["port"] <= 65535 else None,
-                        "transport": v["transport"] if v.get("transport") in ("tls", "srtp") else None}
+                        "transport": v["transport"] if v.get("transport") == "srtp" else None}
         src = _sanitize_video_source(v.get("source"))
         if src is not None:                       # видеоприём блока: необязательное поле (протокол 1.1 без изменений)
             out["video"]["source"] = src

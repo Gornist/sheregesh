@@ -3,8 +3,8 @@
 """DUAL-DEVICE E2E, приёмник видео пульта (offscreen, подставные декодеры без GStreamer): находки D1–D3 агента VIDEO.
 
 D1 — пауза перед повтором сбрасывается после восстановления потока (прежде с третьего обрыва каждое восстановление
-ждало 4 с); D2 — причина разрыва видеоканала не затирается кодом выхода декодера; D3 — PermissionError от killpg
-(macOS, группа уже распалась) не роняет остановку.
+ждало 4 с); D3 — PermissionError от killpg (macOS, группа уже распалась) не роняет остановку. D2 (причина разрыва
+TLS-видеоканала) снята вместе с TLS-видео (ADR-0011).
 """
 import os
 import signal
@@ -49,35 +49,6 @@ def test_d1_backoff_still_grows_while_stream_never_recovers(qapp):
         rx.configure("jpeg", 5999)
         assert wait_until(lambda: rx.restarts >= 3, 10), delays
         assert [round(d) for d in delays[:3]] == [1, 2, 4], delays
-    finally:
-        rx.shutdown()
-
-
-class _ClosedLink:
-    """Подставной VideoClient: блок сразу закрыл видеоканал."""
-
-    def run(self, fd):
-        return "соединение закрыто блоком"
-
-    def close(self):
-        pass
-
-    def frame_decoded(self, t):
-        pass
-
-    def stats(self):
-        return {}
-
-
-def test_d2_video_link_reason_kept_over_decoder_exit_code(qapp):
-    decoder = [sys.executable, "-c", "import sys\nwhile sys.stdin.buffer.read(65536): pass\n"]   # выход по EOF, код 0
-    rx = VideoReceiver(command=decoder)
-    seen = []
-    rx.stateChanged.connect(lambda: rx.state == "restarting" and seen.append(rx.error))
-    try:
-        rx.configure_remote("h264", ("127.0.0.1", 1), _ClosedLink)
-        assert wait_until(lambda: len(seen) >= 2, 8), seen
-        assert all(e == "video link: соединение закрыто блоком" for e in seen), seen
     finally:
         rx.shutdown()
 

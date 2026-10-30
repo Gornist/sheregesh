@@ -7,9 +7,9 @@
 командует службе по локальному сокету (`start`, `stop`, `status`). Ключ живёт только в теле video-key и в команде
 `start`; в журнал, status и текст ошибок он не попадает (всё сообщение видеосеанса проходит через `session.mask`).
 
-Источник у кадров один владелец: в режиме SRTP устройство открыто службой tx, а TLS-видеосеанс агента не принимается
-(`tls_allowed`). Переход на TLS — только по `video-fallback` текущего поколения: сначала `stop` службы, потом TLS.
-Обратно на SRTP внутри сеанса управления не переходим.
+Источник у кадров один владелец — служба tx. Другого видеотранспорта нет (TLS-видео ADR-0011 удалено): пульт без SRTP
+или блок без службы tx — сеанс управления без видео (режим off, причина — в status.video.srtp.error). `video-fallback`
+текущего поколения от старого пульта останавливает службу; видео в этом сеансе управления больше не предлагается.
 
 Блокирующие вызовы (сокет службы, systemctl) выполняются в потоке (`asyncio.to_thread`), состояние защищено замком.
 """
@@ -58,18 +58,19 @@ def systemctl_allow(target: str) -> None:
 
 
 def choose_transport(session: str | None, peer_hello, srtp_ok: bool) -> str:
-    """SRTP — только в сеансе ≥ 1.5, если пульт объявил srtp и порт приёма, а у агента SRTP доступен; иначе TLS."""
+    """SRTP — только в сеансе ≥ 1.5, если пульт объявил srtp и порт приёма, а у агента SRTP доступен; иначе видео нет
+    («none» — с причиной в журнале и status)."""
     if not srtp_ok or "video-key" not in TYPES.get(session or "", ()) or not isinstance(peer_hello, dict):
-        return "tls"
+        return "none"
     transports, port = peer_hello.get("video_transports"), peer_hello.get("video_rx_port")
     if isinstance(transports, list) and "srtp" in transports \
             and isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535:
         return "srtp"
-    return "tls"
+    return "none"
 
 
 class VideoTx:
-    """Видеосеанс блока. Режимы: none (нет сеанса / до hello), srtp, tls (выбор TLS или откат)."""
+    """Видеосеанс блока. Режимы: none (нет сеанса / до hello), srtp, off (сеанс управления без видео)."""
 
     def __init__(self, *, send, log, spec_fn, profile_fn=None, ctl=None, allow=None, clock=time.monotonic,
                  enabled=True):
@@ -107,13 +108,8 @@ class VideoTx:
             self._lock = asyncio.Lock()
         return self._lock
 
-    @property
-    def tls_allowed(self) -> bool:
-        """TLS-видеосеанс агента принимается, пока SRTP не выбран (после отката mode == «tls»)."""
-        return self.mode != "srtp"
-
     def transports(self) -> list[str]:
-        return ["srtp", "tls"] if self.srtp_ok and self.enabled else ["tls"]
+        return ["srtp"] if self.srtp_ok and self.enabled else []
 
     # --- обёртки над блокирующими вызовами -------------------------------------------------------------------
 
@@ -146,9 +142,11 @@ class VideoTx:
             ok = await self.probe()
             transport = choose_transport(session, peer_hello, ok)
             if transport != "srtp" or not peer_ip:
-                self.mode = "tls"
-                self._log(f"video: transport tls (srtp {'available' if ok else 'unavailable'})")
-                return "tls"
+                self.mode = "off"
+                self.error = ("no video: " + ("console does not offer srtp" if ok else
+                                              "video-tx service unavailable" if self.enabled else "video disabled"))
+                self._log(f"video: {self.error}")
+                return "none"
             self.mode, self.peer_ip, self.rx_port = "srtp", peer_ip, peer_hello["video_rx_port"]
             self.tx.new_control_session()
             self._log(f"video: transport srtp -> {peer_ip}:{self.rx_port}")
@@ -239,12 +237,13 @@ class VideoTx:
         self.allowed = False
 
     async def _fallback(self) -> None:
-        """Пульт переходит на TLS: служба остановлена, затем принимается TLS-видеосеанс агента."""
+        """Старый пульт просит откат на TLS-видео, которого больше нет: служба остановлена, сеанс — без видео."""
         await self._stop_service("fallback")
         await self._set_allow_none()
-        self.mode, self.offer, self.started, self.acked = "tls", None, False, False
+        self.mode, self.offer, self.started, self.acked = "off", None, False, False
         self.svc = {}
-        self._log("video: fallback to tls")
+        self.error = "no video: console requested fallback, tls video removed"
+        self._log(f"video: {self.error}")
 
     async def on_select(self) -> None:
         """video-select сменил источник: новое поколение (новый ключ и SSRC), `start` с новым spec — после ack."""
@@ -321,7 +320,9 @@ class VideoTx:
     # --- состояние для status.video ---------------------------------------------------------------------------
 
     def status(self) -> dict | None:
-        """Дополнение к status.video; None — SRTP не используется, поля прежние."""
+        """Дополнение к status.video; None — сеанса управления нет, поля прежние."""
+        if self.mode == "off":
+            return {"active": False, "srtp": {"state": "off", "error": self.error}}
         if self.mode != "srtp":
             return None
         st = self.svc or {}

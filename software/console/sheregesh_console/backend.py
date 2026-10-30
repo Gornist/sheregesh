@@ -266,15 +266,12 @@ class Backend(QObject):
             self.tick()
 
     def _make_videorx(self, link_cfg):
-        """Видеосеанс SRTP: настройки видео — из link.json (video.transport, video_port), канал — через self.client."""
-        pref, port = videorx.link_video_prefs(getattr(link_cfg, "source", None))
-        if link_cfg is not None:
-            port = link_cfg.video_port
+        """Видеосеанс SRTP: порт видео — из link.json (video_port), канал — через self.client."""
+        port = link_cfg.video_port if link_cfg is not None else videorx.link_video_port()
         vrx = videorx.VideoRx(lambda t, b: self.client is not None and self.client.send_video(t, b),
                               lambda: self.client.peer_ip() if self.client is not None else None,
                               clock_offset=lambda: self.client.clock_offset() if self.client is not None else None,
-                              log=lambda level, text: self.log(level, "video", text), transport_pref=pref,
-                              rx_port=port)
+                              log=lambda level, text: self.log(level, "video", text), rx_port=port)
         return vrx.start()
 
     def stop(self):

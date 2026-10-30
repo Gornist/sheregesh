@@ -6,10 +6,7 @@
 Основной поток GUI лишь забирает кадр по таймеру, поэтому сбой, зависание или отсутствие видео
 не блокируют интерфейс. Источник — синтетический генератор (sheregesh.video) или локальный видеовход пульта
 (S3.3, sheregesh.videoinput: стандартное устройство V4L2/UVC) — тот же процесс, тот же разбор кадров и перезапуск.
-Удалённый блок (S3.1-VIDEO): RTP приходит по защищённому видеоканалу (sheregesh.videolink, TLS 1.3 с взаимной
-аутентификацией) и подаётся декодеру через stdin; разрыв канала завершает декодер, и он перезапускается с новым
-подключением. Незащищённого удалённого источника нет.
-Режим «служба» (ADR-0016, транспорт SRTP): приём, расшифровку и декодирование ведёт служба sheregesh-video-rx, а GUI
+Удалённый блок — только режим «служба» (ADR-0016, транспорт SRTP; TLS-видео ADR-0011 удалено): приём, расшифровку и декодирование ведёт служба sheregesh-video-rx, а GUI
 берёт готовые кадры из её сокета unixfdsink (dmabuf): GL — unixfdsrc в процессе GUI (glvideo), без дисплея — дочерний
 gst-launch unixfdsrc → RGBx → stdout и прежний _reader. Метрики канала — из state.json службы (videorx).
 """
@@ -96,15 +93,11 @@ class VideoReceiver(QObject):
         self._command = command            # для испытаний: подмена конвейера
         self._codec = None
         self._port = None
-        self._remote = None                # (ключ, фабрика VideoClient) — удалённый блок по защищённому каналу
         self._service = None               # ((кодек, путь сокета кадров), stats()) — кадры службы rx (SRTP)
         self._svc_pending = False          # сокета кадров службы ещё нет: ждём и повторяем
         self._svc_dead = False             # приёмник GL службы упал (нет процесса, который можно убить)
         self._local = None                 # (ключ, opener() → VideoSource) — локальный видеовход пульта (S3.3)
         self._source = None                # текущий VideoSource локального входа
-        self._client = None
-        self._feeder = None
-        self._sessions = 0
         self._decoded = deque(maxlen=300)
         self._proc = None
         self._thread = None
@@ -204,30 +197,16 @@ class VideoReceiver(QObject):
     # ---------- управление ----------
     def configure(self, codec, port):
         """Источник сообщил кодек и порт. Перезапуск только при изменении."""
-        if (codec, port) == (self._codec, self._port) and self._remote is None and self._local is None and \
+        if (codec, port) == (self._codec, self._port) and self._local is None and \
                 self._service is None and self._proc is not None:
             return
         self.stop()
         self._backoff = 0
-        self._remote = self._local = self._source = self._service = None
+        self._local = self._source = self._service = None
         self._codec, self._port = codec, port
         if codec is None or port is None:
             self._set_state("off")
             return
-        if self._command is None and not gst.available():
-            self._error = "gst-launch-1.0 not found"
-            self._set_state("unavailable")
-            return
-        self._start()
-
-    def configure_remote(self, codec, key, factory):
-        """Удалённый блок: видео только по защищённому каналу. factory() → новый sheregesh.videolink.VideoClient."""
-        if self._remote is not None and self._remote[0] == (codec, key) and self._state != "off":
-            return
-        self.stop()
-        self._backoff = 0
-        self._local = self._source = self._service = None
-        self._remote, self._codec, self._port = ((codec, key), factory), codec, key[1]
         if self._command is None and not gst.available():
             self._error = "gst-launch-1.0 not found"
             self._set_state("unavailable")
@@ -241,7 +220,7 @@ class VideoReceiver(QObject):
             return
         self.stop()
         self._backoff = 0
-        self._remote = self._local = self._source = None
+        self._local = self._source = None
         self._service, self._codec, self._port = ((codec, sock_path), stats), codec, None
         if self._command is None and not gst.available():
             self._error = "gst-launch-1.0 not found"
@@ -257,19 +236,13 @@ class VideoReceiver(QObject):
             return
         self.stop()
         self._backoff = 0
-        self._remote, self._codec, self._port, self._source, self._service = None, None, None, None, None
+        self._codec, self._port, self._source, self._service = None, None, None, None
         self._local = (key, opener)
         if self._command is None and not gst.available():
             self._error = "gst-launch-1.0 not found"
             self._set_state("unavailable")
             return
         self._start()
-
-    def session_info(self):
-        """INFO текущего видеосеанса удалённого блока (кодек, режим и — с блоков после 1.1 — источник); иначе {}."""
-        client = self._client
-        info = client.info if client is not None else None
-        return dict(info) if isinstance(info, dict) else {}
 
     def metrics(self):
         """Для диагностики без дисплея: фактически декодированные кадры и состояние видеоканала."""
@@ -279,14 +252,12 @@ class VideoReceiver(QObject):
             frames = self._seq
         out = {"state": self._state, "codec": self._codec, "frames_decoded": frames, "restarts": self._restarts,
                "decoded_fps_5s": round(len(recent) / 5.0, 1) if recent else 0.0, "output": f"{FRAME_W}x{FRAME_H}",
-               "error": self._error, "mode": "remote-tls" if self._remote else "remote-srtp" if self._service else
-               "local-input" if self._local else ("local" if self._codec else "off"), "sessions": self._sessions,
-               "transport": "srtp" if self._service else "tls" if self._remote else None}
+               "error": self._error, "mode": "remote-srtp" if self._service else
+               "local-input" if self._local else ("local" if self._codec else "off"),
+               "transport": "srtp" if self._service else None}
         if self._local is not None and self._source is not None:
             out["source"] = self._source.info()
-        if self._client is not None:
-            out["link"] = self._client.stats()
-        elif self._service is not None:
+        if self._service is not None:
             out["link"] = self._service[1]()
         return out
 
@@ -330,7 +301,6 @@ class VideoReceiver(QObject):
         if self._service is not None:
             self._start_service()
             return
-        remote = self._remote is not None
         if self._local is not None:
             try:
                 src = self._source = self._local[1]()
@@ -350,27 +320,18 @@ class VideoReceiver(QObject):
                 os.unlink(self._gl_sock)
             except OSError:
                 pass
-            args = gst.stream_receiver_gl_args(self._codec, self._gl_sock) if remote else \
-                gst.receiver_gl_args(self._codec, self._port, self._gl_sock)
-        elif remote:
-            args = self._command or gst.stream_receiver_args(self._codec, FRAME_W, FRAME_H)
+            args = gst.receiver_gl_args(self._codec, self._port, self._gl_sock)
         else:
             args = self._command or gst.receiver_args(self._codec, self._port, FRAME_W, FRAME_H)
         gl_on = self._gl_sock is not None
         try:
-            self._proc = spawn_logged(args, stdin=subprocess.PIPE if remote else subprocess.DEVNULL,
+            self._proc = spawn_logged(args, stdin=subprocess.DEVNULL,
                                       stdout=subprocess.DEVNULL if gl_on else subprocess.PIPE)
         except OSError as e:
             self._error = str(e)
             self._schedule_restart()
             return
-        self._error = ""                    # до запуска потока видеоканала: его причина разрыва не затирается
-        if remote:
-            self._client = self._remote[1]()
-            self._sessions += 1
-            self._feeder = threading.Thread(target=self._feed, args=(self._client, self._proc, self._gen),
-                                            name="video-link", daemon=True)
-            self._feeder.start()
+        self._error = ""
         self._started_at = time.monotonic()
         with self._lock:
             self._last_frame_t = None
@@ -400,9 +361,6 @@ class VideoReceiver(QObject):
             self._seq += 1
             self._last_frame_t = now
             self._decoded.append(now)
-        client = self._client
-        if client is not None:
-            client.frame_decoded(now)
         if FRAME_WAKE:
             self._arrived.emit()
 
@@ -423,28 +381,14 @@ class VideoReceiver(QObject):
             except (ProcessLookupError, PermissionError):
                 pass
 
-    def _feed(self, client, proc, gen):
-        """Видеоканал → stdin декодера. Конец канала (разрыв, отказ аутентификации) закрывает stdin — декодер
-        завершается, и _poll перезапускает его с новым подключением."""
-        why = client.run(proc.stdin.fileno())
-        if gen == self._gen:                # причина остановленного сеанса не затирает состояние нового
-            self._error = f"video link: {why}"
-        try:
-            proc.stdin.close()
-        except OSError:
-            pass
-
     def stop(self):
         """Остановка без ожидания в потоке GUI (E2E-08). Вызывается из таймера бэкенда при потере связи: прежде
-        здесь были join(2 с) потока видеоканала и wait() декодера, и подключение видеоканала, ещё не завершённое
-        (TCP/TLS к пропавшему блоку), или декодер, переставший читать stdin, останавливали интерфейс на секунды.
-        Теперь: декодер — SIGKILL (запись в его stdin сразу получает EPIPE), канал — close(), а ожидание потоков и
-        процесса — в фоновом потоке. Поколение _gen отсекает запоздалые кадры и ошибки остановленного конвейера."""
+        здесь были join(2 с) потоков и wait() декодера, и зависший декодер останавливал интерфейс на секунды.
+        Теперь: декодер — SIGKILL, а ожидание потоков и процесса — в фоновом потоке. Поколение _gen отсекает запоздалые кадры и ошибки остановленного конвейера."""
         with self._lock:
             self._gen += 1
             self._latest = None
         self._svc_pending = self._svc_dead = False
-        client, self._client = self._client, None
         proc, self._proc = self._proc, None
         if self._gl_on:
             self.gl.stop()
@@ -455,15 +399,13 @@ class VideoReceiver(QObject):
             except OSError:
                 pass
             self._gl_sock = None
-        threads = [t for t in (self._feeder, self._thread) if t is not None]
-        self._feeder = self._thread = None
+        threads = [t for t in (self._thread,) if t is not None]
+        self._thread = None
         if proc is not None:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):   # macOS: группа уже распалась — PermissionError
                 pass
-        if client is not None:
-            client.close()
         if proc is not None:
             try:                            # после SIGKILL процесс обычно завершается за миллисекунды; зависший
                 proc.wait(timeout=REAP_WAIT_S)   # в ядре (драйвер V4L2) дождётся фоновый поток, а не интерфейс
@@ -534,9 +476,6 @@ class VideoReceiver(QObject):
                 frame, got = bytearray(size), 0
                 if FRAME_WAKE:
                     self._arrived.emit()
-                client = self._client
-                if client is not None:
-                    client.frame_decoded(now)
         finally:
             raw.close()
 
@@ -582,11 +521,9 @@ class VideoReceiver(QObject):
             self._start()
             return
         if self._proc is not None and self._proc.poll() is not None:
-            if not (self._remote is not None and self._error.startswith("video link:")):
-                # причина разрыва видеоканала важнее кода выхода декодера, который она и вызвала
-                tail = exit_reason(self._proc)
-                self._error = (f"{'capture' if self._local else 'decoder'} exited with code {self._proc.returncode}"
-                               + (f": {tail}" if tail else ""))
+            tail = exit_reason(self._proc)
+            self._error = (f"{'capture' if self._local else 'decoder'} exited with code {self._proc.returncode}"
+                           + (f": {tail}" if tail else ""))
             self.stop()
             self._schedule_restart()
             return

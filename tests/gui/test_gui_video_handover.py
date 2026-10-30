@@ -81,8 +81,7 @@ def make(tmp_path, telemetry_video, configure=True):
     pause = tmp_path / "pause"
     b = Backend(tmp_path / "data", autostart=False, video_command=[sys.executable, "-c", PAUSABLE_DECODER, str(pause)],
                 journal=MemoryJournal())
-    report = {"mode": "remote", "telemetry_video": telemetry_video,
-              "session_info": {"codec": "h264", "width": 1280, "height": 720, "fps": 30}}
+    report = {"mode": "remote", "telemetry_video": telemetry_video}
     b.videoops.report = lambda: report
     b.report = report
     b.peer = Peer(report)

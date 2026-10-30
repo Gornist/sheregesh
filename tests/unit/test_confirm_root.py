@@ -67,9 +67,11 @@ class Stand:
             "time": time.time() - (0 if fresh else 600), "connected": connected, "tls": "TLSv1.3",
             "session": PROTOCOL_VERSION, "stats": {"auth_failures": 0},
             "peer": {"addr": "192.168.1.92", "tls": "TLSv1.3",
-                     "hello": {"proto": PROTOCOL_VERSION, "software": __version__}},
-            "video": {"port": 7444, "transport": "tls1.3-mutual", "active": True, "frames": 21830,
-                      "sender_fps_5s": 30.0}}))
+                     "hello": {"proto": PROTOCOL_VERSION, "software": __version__}}}))
+        v = self.b.root / "run/sheregesh-video/state.json"            # видео — служба tx по SRTP (ADR-0016)
+        v.parent.mkdir(parents=True, exist_ok=True)
+        v.write_text(json.dumps({"role": "tx", "time": time.time(), "streams": {"main": {
+            "state": "streaming", "transport": "srtp", "peer": "192.168.1.92", "rtp": {"packets": 21830}}}}))
 
     def new_slot_build(self, version="1.1.0"):
         p = self.b.root / "usr/share/sheregesh/build.json"

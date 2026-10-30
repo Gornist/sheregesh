@@ -9,7 +9,7 @@ S5-11…S5-15). Поверх tools/probe/s4_accept.py: те же выборки 
   python3 tools/probe/s5_accept.py --source v4l2:<id>|v4l2 --out DIR [--gui] [--gui-fault]
       [--manual-fault cable|usb] [--standard pal|ntsc] [--mode WxH@fps] [--format F] [--source-cmd CMD] [--only …]
 
-  S5-01  службы, failed, health; связь TLS 1.3 / видео tls1.3-mutual (s4_accept VID-01/02)
+  S5-01  службы, failed, health; связь TLS 1.3 / видео SRTP (s4_accept VID-01/02)
   S5-11  выбор v4l2:<id> тем же вызовом, что кнопка «Видео» (gui_capture --by select --select <id>,synthetic):
          снимки потока адаптера в GUI pi1, кадр меняется; возврат на synthetic — тоже GUI-путём (VID-03/04)
   S5-12  потеря сигнала: ЧЕЛОВЕК вынимает кабель CVBS/HDMI (или USB — --manual-fault usb) по подсказке; пульт

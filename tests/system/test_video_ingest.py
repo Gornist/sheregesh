@@ -5,8 +5,8 @@
 утечек (20 циклов: процессы, дескрипторы, потоки), непрерывность RTP при перезапуске конвейера.
 
 Без GStreamer и устройств: конвейер — tests/system/fake_ingest_sender.py (RTP в stdout, поведение — управляющим
-файлом), источник — подделка с управляемыми present()/signal(). Сквозная проверка через настоящий TLS-видеоканал —
-test_video_server_survives_unplug_and_signal_loss."""
+файлом), источник — подделка с управляемыми present()/signal(). Агент блока держит видеоприём только для наблюдения
+за входом (status.video.source) — test_agent_video_config_reload_and_telemetry_contract."""
 import os
 import shutil
 import socket
@@ -18,8 +18,8 @@ from pathlib import Path
 import pytest
 
 from procs import wait_for
+from sheregesh import rtp
 from sheregesh import videoinput as vi
-from sheregesh import videolink
 from sheregesh.videoingest import Ingest, RtpContinuity, jpeg_size
 
 SENDER = Path(__file__).with_name("fake_ingest_sender.py")
@@ -143,7 +143,7 @@ def test_stream_states_metrics_and_release(tmp_path):
         assert st["format"] == "mjpeg" and (st["width"], st["height"]) == (1280, 720) and st["fps"] == 30.0
         assert (st["stream_width"], st["stream_height"]) == (1280, 720)          # из SPS потока
         assert 20 <= st["fps_actual"] <= 40, st
-        assert len(c.pkts) > 60 and all(videolink.rtp_info(p) for p in c.pkts)
+        assert len(c.pkts) > 60 and all(rtp.rtp_info(p) for p in c.pkts)
         c.close()
         assert wait_for(state_is(ing, "idle"), 3)
         assert wait_for(lambda: not any(alive(p) for p in b.all_pids()), 3)       # конвейер остановлен вместе с сеансом
@@ -403,7 +403,7 @@ def test_jpeg_size_from_rfc2435_header():
     assert jpeg_size(bytes([0, 0, 1, 0, 1, 50, 160, 90])) is None                # не первый фрагмент
 
 
-# ---------------- сквозная проверка через защищённый видеоканал ----------------
+# ---------------- агент блока: сетевой профиль (mTLS канала управления) ----------------
 @pytest.fixture(scope="module")
 def lab(tmp_path_factory):
     from sheregesh.link import pki
@@ -422,51 +422,6 @@ def lab(tmp_path_factory):
             "console": device("console", "console", "PI1", "remote:PI2")}
 
 
-def test_video_server_survives_unplug_and_signal_loss(lab, tmp_path):
-    """Видеосеанс не рвётся при отключении устройства и потере сигнала; пульт видит паузу в кадрах, затем поток
-    продолжается в том же сеансе без разрывов номеров RTP (буфер джиттера пульта не сбрасывается)."""
-    b = Bench(tmp_path)
-    log = Log()
-    ing = Ingest(b.opener, b.command, log, no_signal_s=0.5, presence_s=0.2, signal_s=0.1, max_backoff_s=0.5)
-    srv = videolink.VideoServer(lab["remote"], "h264", lambda a: None, log, bind="127.0.0.1", port=0,
-                                ingest=ing).start()
-    cl = videolink.VideoClient(lab["console"], "127.0.0.1", srv.port)
-    r, w = os.pipe()
-    out = {}
-    t = threading.Thread(target=lambda: out.setdefault("why", cl.run(w)), daemon=True)
-    d = threading.Thread(target=lambda: [None for _ in iter(lambda: os.read(r, 65536), b"")], daemon=True)
-    t.start()
-    d.start()
-    try:
-        assert wait_for(lambda: cl.stats()["frames"] > 30, 8), cl.stats()
-        assert cl.stats()["source"] == {"codec": "h264", "width": 1280, "height": 720, "fps": 30, "source": {
-            "input": "hdmi", "type": "v4l2", "device": f"/dev/v4l/by-id/{b.ident}", "width": 1280, "height": 720,
-            "fps": 30.0}}                                                       # INFO: режим источника для пульта
-        b.unplug()
-        assert wait_for(lambda: srv.stats()["source"]["state"] == "no-device", 3)
-        f0 = cl.stats()["frames"]
-        time.sleep(1.0)
-        assert cl.stats()["frames"] - f0 <= 2 and cl.stats()["connected"]         # сеанс жив, кадров нет
-        b.replug()
-        assert wait_for(lambda: srv.stats()["source"]["state"] == "streaming", 5)
-        b.set("pause")
-        assert wait_for(lambda: srv.stats()["source"]["state"] == "no-signal", 3)
-        b.set("run")
-        assert wait_for(lambda: cl.stats()["frames"] > f0 + 30, 8)
-        st = cl.stats()
-        assert st["connected"] and st["seq_gaps"] == 0 and st["lost_packets"] == 0, st
-        assert srv.stats()["sessions"] == 1 and srv.stats()["sender_restarts"] >= 1   # перезапуск — в том же сеансе
-    finally:
-        cl.close()
-        t.join(5)
-        srv.close()
-        os.close(w)
-        d.join(5)
-        os.close(r)
-    assert not any(alive(p) for p in b.all_pids())
-
-
-# ---------------- агент блока: конфигурация видеоприёма и телеметрия ----------------
 def test_agent_video_config_reload_and_telemetry_contract(lab, tmp_path):
     """video-input.json рядом с link.json (каталог пользователя, без правки юнита в /usr), SIGHUP — смена источника;
     пульт получает status.video.source через свою проверку телеметрии (_sanitize_status)."""
@@ -476,9 +431,7 @@ def test_agent_video_config_reload_and_telemetry_contract(lab, tmp_path):
     from sheregesh.link.client import PeerClient
     link = tmp_path / "link.json"
     shutil.copyfile(lab["remote"].source, link)
-    b = Bench(tmp_path)
-    a = Agent("--link-config", str(link), "--bind", "127.0.0.1", "--heartbeat-interval", "0.2",
-              "--net-video-port", str(free_port()), "--video-command", *b.command(None))
+    a = Agent("--link-config", str(link), "--bind", "127.0.0.1", "--heartbeat-interval", "0.2")
     pc = PeerClient(None, a.port, heartbeat_timeout_s=2.0, tls_cfg=lab["console"]).start()
     try:
         def inp():

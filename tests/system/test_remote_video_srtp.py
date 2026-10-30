@@ -8,8 +8,9 @@ status / start / stop записываются и получают ответ п
 --peer-timeout).
 
 A — полный сеанс: video-key → ack → start (тот же ssrc, ключ, session, gen), статус srtp; ключ не попадает в статусы и
-в журнал агента. B — bye и закрытие сокета: stop службы, allow@none. D — video-fallback: stop, allow@none, переход на TLS
-без нового ключа. E — пульт 1.4: video-key не отправляется, video-key-ack игнорируется. F — служба недоступна: только tls.
+в журнал агента. B — bye и закрытие сокета: stop службы, allow@none. D — video-fallback старого пульта: stop, allow@none,
+сеанс без видео (off) и без нового ключа. E — пульт 1.4: video-key не отправляется, video-key-ack игнорируется.
+F — служба недоступна: видеотранспортов нет (TLS-видео удалено).
 """
 import json
 import shutil
@@ -182,7 +183,7 @@ class Rig:
         body = {"proto": proto, "software": h["body"]["software"], "hardware": h["body"]["hardware"],
                 "role": "console", "device_id": "c"}
         if proto == "1.5":
-            body.update(video_transports=["srtp", "tls"], video_rx_port=PEER_RX_PORT)
+            body.update(video_transports=["srtp"], video_rx_port=PEER_RX_PORT)
         c.send("hello", body)
         return c, h["body"]
 
@@ -233,7 +234,7 @@ def test_srtp_session_video_key_ack_start(rig):
     """A: полный сеанс SRTP; ключ есть только в video-key и в start, но не в статусах и журнале агента."""
     agent = rig.launch()
     c, hello = rig.console(agent)
-    assert hello["video_transports"] == ["srtp", "tls"]
+    assert hello["video_transports"] == ["srtp"]
     b, a = establish(rig, c)
     assert b["transport"] == "srtp" and b["rtcp_port"] == PEER_RTCP_PORT and b["gen"] == 1
     assert b["srtp"]["cipher"] == "aes-128-gcm" and b["codec"] and isinstance(b["ssrc"], int) and b["ssrc"] > 0
@@ -268,8 +269,9 @@ def test_bye_stops_service_and_closes_allow(rig):
     assert rig.systemctl().splitlines() == [ALLOW_LINE, ALLOW_NONE_LINE]
 
 
-def test_fallback_stops_service_and_goes_tls(rig):
-    """D: video-fallback текущего поколения → stop службы, allow@none, transport не srtp; нового ключа нет."""
+def test_fallback_stops_service_and_leaves_session_without_video(rig):
+    """D: video-fallback (старый пульт) текущего поколения → stop службы, allow@none, режим off с причиной; нового
+    ключа нет."""
     agent = rig.launch()
     c, _ = rig.console(agent)
     b, _ = establish(rig, c)
@@ -277,7 +279,8 @@ def test_fallback_stops_service_and_goes_tls(rig):
     assert wait_for(lambda: rig.tx.count("stop") == 1, 5), rig.tx.snapshot()
     assert wait_for(lambda: ALLOW_NONE_LINE in rig.systemctl().splitlines(), 5), rig.systemctl()
     assert rig.tx.calls_of("stop")[0]["reason"] == "fallback"
-    assert wait_for(lambda: video_of(c).get("transport") != "srtp", 5), video_of(c)
+    assert wait_for(lambda: (video_of(c).get("srtp") or {}).get("state") == "off", 5), video_of(c)
+    assert video_of(c).get("transport") != "srtp" and video_of(c)["enabled"] is False
     time.sleep(1.5)
     assert len(c.msgs_of("video-key")) == 1, "после отката SRTP-поколение открыто заново"
     assert rig.tx.count("start") == 1
@@ -287,7 +290,7 @@ def test_console_14_gets_no_video_key(rig):
     """E: пульт 1.4 без video_transports — video-key не отправляется, video-key-ack игнорируется."""
     agent = rig.launch()
     c, hello = rig.console(agent, proto="1.4")
-    assert hello["video_transports"] == ["srtp", "tls"]
+    assert hello["video_transports"] == ["srtp"]
     assert wait_for(lambda: c.msgs_of("status"), 5)
     c.send("video-key-ack", {"stream": "main", "session": "0" * 32, "gen": 1, "ok": True})
     time.sleep(1.5)
@@ -297,13 +300,13 @@ def test_console_14_gets_no_video_key(rig):
     assert video_of(c).get("transport") != "srtp"
 
 
-def test_service_unavailable_tls_only(rig):
-    """F: сокет службы недоступен — hello агента с video_transports == [tls], video-key не приходит."""
+def test_service_unavailable_no_video_transports(rig):
+    """F: сокет службы недоступен — hello агента с video_transports == [], video-key не приходит."""
     empty = rig.base / "empty"
     empty.mkdir()
     agent = rig.launch({**rig.env, RUNTIME_ENV: str(empty)})
     c, hello = rig.console(agent)
-    assert hello["video_transports"] == ["tls"]
+    assert hello["video_transports"] == []
     assert wait_for(lambda: c.msgs_of("status"), 5)
     time.sleep(1.5)
     assert c.msgs_of("video-key") == []

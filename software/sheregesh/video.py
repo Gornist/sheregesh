@@ -4,8 +4,8 @@
 
 Источник — встроенный генератор videotestsrc или стандартное устройство V4L2/UVC (S3.3, sheregesh.videoinput: один
 интерфейс VideoSource; конвейеры собираются только здесь). Передача — RTP/UDP на 127.0.0.1 (автономный режим) или
-RTP поверх канала процесса (RFC 4571, rtpstreampay/rtpstreamdepay) для защищённого видеоканала между платами
-(sheregesh.videolink, ADR-0011): тогда RTP не попадает ни в один сокет.
+RTP поверх канала процесса (RFC 4571, rtpstreampay) для видеоприёма блока (sheregesh.videoingest). Видео между
+платами — служба sheregesh-video-tx/rx по SRTP (ADR-0016), её конвейеры — в sheregesh.videosvc.
 Кодек: H.264 — аппаратный v4l2h264enc/v4l2h264dec (Pi 4), иначе openh264enc → avdec_h264/openh264dec;
 при отсутствии работающей связки — MJPEG (jpegenc → jpegdec). Аппаратный путь подтверждает проба S2-4.
 """
@@ -236,17 +236,9 @@ def sender_args(codec, port, width=1280, height=720, fps=30, host="127.0.0.1", p
 
 
 def stream_sender_args(codec, width=1280, height=720, fps=30, pattern="smpte", src=None):
-    """RTP в stdout с кадрированием RFC 4571 (2 байта длины + пакет) — для защищённого канала, без сокетов."""
+    """RTP в stdout с кадрированием RFC 4571 (2 байта длины + пакет) — конвейер видеоприёма (videoingest)."""
     return _encoded(codec, width, height, fps, pattern, src) + ["!", "rtpstreampay", "!", "fdsink", "fd=1",
                                                                  "sync=false"]
-
-
-def stream_receiver_args(codec, width, height):
-    """RTP из stdin (RFC 4571) → сырые кадры RGBx фиксированного размера в stdout."""
-    caps = H264_CAPS if codec == "h264" else JPEG_CAPS
-    stream_caps = caps.replace("application/x-rtp,", "application/x-rtp-stream,")
-    return [GST_LAUNCH, "-q", "fdsrc", "fd=0", "!", stream_caps, "!", "rtpstreamdepay", "!", caps, "!"] + \
-        _depay_decode(codec) + _to_rgbx(width, height)
 
 
 def _depay_decode(codec):
@@ -274,14 +266,6 @@ def gl_capable(codec) -> bool:
         return False
     pair = h264_elements()
     return pair is not None and pair[1] == "v4l2h264dec"
-
-
-def stream_receiver_gl_args(codec, socket_path):
-    """RTP из stdin (RFC 4571) → декодер → unixfdsink (ADR-0015)."""
-    caps = H264_CAPS if codec == "h264" else JPEG_CAPS
-    stream_caps = caps.replace("application/x-rtp,", "application/x-rtp-stream,")
-    return [GST_LAUNCH, "-q", "fdsrc", "fd=0", "!", stream_caps, "!", "rtpstreamdepay", "!", caps, "!"] + \
-        _depay_decode(codec) + _to_unixfd(socket_path)
 
 
 def receiver_gl_args(codec, port, socket_path):

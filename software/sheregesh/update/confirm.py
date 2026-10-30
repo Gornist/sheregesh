@@ -163,18 +163,13 @@ def gates(layout, state, probe: Probe, lab_video=True):
             f"{ls.get('phase')} {ls.get('tls')} {ls.get('peer_uri')}")
         if lab_video:
             v = probe.json_file("/run/sheregesh-ui/ui-state.json").get("video") or {}
-            add("video", v.get("mode") in ("remote-tls", "remote-srtp") and v.get("state") == "playing"
+            add("video", v.get("mode") == "remote-srtp" and v.get("state") == "playing"
                 and (v.get("decoded_fps_5s") or 0) >= 25, f"{v.get('mode')} {v.get('state')} {v.get('decoded_fps_5s')} к/с")
     elif r == "remote":
         ls = probe.json_file("/run/sheregesh-remote/link-status.json")
         add("mtls", bool(ls.get("connected")) and bool(ls.get("tls")),
             f"сеанс {'есть' if ls.get('connected') else 'нет'}, {(ls.get('peer') or {}).get('addr')}")
         if lab_video:
-            # Не только «сервер слушает»: есть видеосеанс с пультом и генератор выдал кадры (счётчик блока).
-            # Приём и декодирование на пульте проверяются независимо процедурой (check_video_link с pi1).
-            v = ls.get("video") or {}
-            tls = (v.get("port") == 7444 and v.get("transport") == "tls1.3-mutual" and bool(v.get("active"))
-                   and (v.get("frames") or 0) > 0 and (v.get("sender_fps_5s") or 0) > 0)
             # ADR-0016: видео через службу tx по SRTP. Кадров служба tx не считает — признак потока: RTP-пакеты
             # отправлены пульту того же сеанса управления (адрес peer state.json = адрес сеанса mTLS).
             tx = probe.json_file(VIDEO_STATE)
@@ -183,9 +178,8 @@ def gates(layout, state, probe: Probe, lab_video=True):
             peer = (ls.get("peer") or {}).get("addr")
             srtp = (m.get("state") == "streaming" and m.get("transport") == "srtp" and peer is not None
                     and m.get("peer") == peer and isinstance(packets, int) and packets > 0)
-            add("video", tls or srtp,
-                f"видеосервер {v.get('transport')} порт {v.get('port')}, сеанс {'есть' if v.get('active') else 'нет'}, "
-                f"кадров {v.get('frames')}, {v.get('sender_fps_5s')} к/с; служба tx {m.get('state') or 'нет'} "
+            add("video", srtp,
+                f"служба tx {m.get('state') or 'нет'} "
                 f"{m.get('transport') or '-'} → {m.get('peer') or '-'}, RTP-пакетов {packets}")
     ok = all(c["status"] == "PASS" for c in checks if c["mandatory"])
     return ok, checks

@@ -50,7 +50,6 @@ from pathlib import Path
 
 from sheregesh import PROTOCOL_VERSION, __version__, sdnotify, timepeer, video, videoinput, videosources
 from sheregesh.videoingest import Ingest
-from sheregesh.videolink import VideoServer
 from .session import ConsoleSession
 from .videotx import VideoTx
 from sheregesh.control import wire as control_wire
@@ -113,16 +112,11 @@ class Agent:
         self.tls_cfg = getattr(args, "tls_cfg", None)
         self.time_task = None                       # sheregesh-time-peer@ адреса пульта (ADR-0017)
         self.ctx = tls.make_context(self.tls_cfg, server=True) if self.tls_cfg else None
-        # Сетевой профиль: видео — только по защищённому каналу (S3.1-VIDEO, ADR-0011), без UDP-отправителя.
-        self.vserver = None
-        net_video = self.tls_cfg is not None and self.tls_cfg.video and not args.no_video
-        if net_video and args.video_command:          # испытания: подставной генератор, без пробы GStreamer
-            self.net_video_codec = args.video_codec
-        else:
-            # Источник может появиться позже (горячее подключение): канал объявляется при любом его состоянии.
-            self.net_video_codec = video.choose_codec(args.video_codec) if net_video and video.available() \
-                else None
-        # Видеосеанс SRTP (ADR-0016): агент — клиент службы sheregesh-video-tx; TLS-видео — резерв (videotx.py)
+        # Сетевой профиль: видео — только SRTP через службу sheregesh-video-tx (ADR-0016), без UDP-отправителя.
+        # Агент сам кадров не шлёт: видеоприём (self.ingest) только следит за входом для status.video.source.
+        self.net_video = self.tls_cfg is not None and self.tls_cfg.video and not args.no_video
+        self.ingest = None
+        # Видеосеанс SRTP (ADR-0016): агент — клиент службы sheregesh-video-tx (videotx.py)
         self.vtx = VideoTx(send=self.send, log=lambda s: log(s), spec_fn=lambda: self.video_spec,
                            profile_fn=self.video_profile, enabled=not args.no_video)
         self.vtx_task = None                         # опрос службы tx раз в секунду, не задерживает основной цикл
@@ -163,13 +157,9 @@ class Agent:
         return {"width": a.video_width, "height": a.video_height, "fps": a.video_fps, "bitrate": 6000}
 
     def video_ingest(self):
-        """Видеоприём сетевого профиля: источник по описанию, конвейер — тот же stream_sender_args (сквозной или
-        с кодером), что и раньше."""
-        a = self.args
-        if a.video_command:                       # испытания: источник — по описанию, конвейер — подставной
-            return Ingest(self.open_video_source, lambda _src: list(a.video_command), log)
-        return Ingest(self.open_video_source, lambda src: video.stream_sender_args(
-            self.net_video_codec, a.video_width, a.video_height, a.video_fps, src=src), log)
+        """Видеоприём сетевого профиля — только наблюдение за входом (есть ли устройство, переподключение, смена
+        источника): видеосеанса у агента нет, конвейер не запускается — устройство открывает служба tx."""
+        return Ingest(self.open_video_source, lambda _src: [], log)
 
     def reload_video(self):
         """SIGHUP: перечитать --video-config и сменить источник (старый конвейер останавливается до запуска нового)."""
@@ -189,8 +179,8 @@ class Agent:
         """Сменить источник: сетевой профиль — видеоприём (старый конвейер останавливается до запуска нового),
         локальный (UDP) — источник открывается заново, отправитель перезапускается следующим тиком."""
         self.video_spec = spec
-        if self.vserver is not None:
-            self.vserver.ingest.switch(lambda: self.open_video_source(spec))
+        if self.ingest is not None:
+            self.ingest.switch(lambda: self.open_video_source(spec))
         elif self.args.video:
             self.video_stop()
             src = self.open_video_source(spec) if spec["source"] != "synthetic" else None
@@ -204,7 +194,7 @@ class Agent:
         sid, req = body.get("id"), body.get("req")
         req = req if isinstance(req, int) and not isinstance(req, bool) and 0 <= req < 2 ** 31 else 0
         shown = sid[:96] if isinstance(sid, str) else ""
-        if self.vserver is None and not self.args.video:
+        if self.ingest is None and not self.args.video:
             res = {"result": "error", "error": "video disabled on remote unit"}
         else:
             spec = self.catalog.resolve(sid)
@@ -230,25 +220,26 @@ class Agent:
     def video_status(self):
         """status.video: прежние поля + необязательный объект source (видеоприём; протокол 1.1 без изменений: старый
         пульт его отбрасывает). Видео выключено — source нет (пульт показывает прежний синтетический режим)."""
-        out = ({"enabled": True, "active": self.vserver.active, "codec": self.net_video_codec,
-                "port": self.vserver.port, "transport": "tls"} if self.vserver is not None else
+        out = ({"enabled": True, "active": False, "codec": "h264"} if self.ingest is not None else
                {"enabled": bool(self.video_codec), "active": self.video_proc is not None,
                 "codec": self.video_codec, "port": self.video_port})
-        if self.vserver is not None or self.video_codec or self.video_src_error:
+        if self.ingest is not None or self.video_codec or self.video_src_error:
             out["source"] = self.video_source_status()
             out["sources"] = self.catalog.snapshot()     # S4: список источников (необязательное поле)
         if self.conn is not None and self.conn.video_select is not None:   # итог video-select этого сеанса (1.2)
             out["select"] = dict(self.conn.video_select)
         srtp = self.vtx.status()                         # SRTP: фактический транспорт и состояние службы tx
-        if srtp is not None:
+        if srtp is not None and srtp.get("transport") == "srtp":
             out.update(srtp, enabled=True, codec=out.get("codec") or "h264")
+        elif srtp is not None and not self.args.video:   # сеанс без видео (off): только причина, прежние поля;
+            out["srtp"] = srtp["srtp"]                   # локальный профиль UDP (--video) видео ведёт сам
         return out
 
     def video_source_status(self):
         """Контракт status.video.source (Ingest.status). Локальный профиль (UDP): источник находится один раз при
         запуске — состояние грубое (streaming | starting | no-device)."""
-        if self.vserver is not None:
-            return self.vserver.ingest.status()
+        if self.ingest is not None:
+            return self.ingest.status()
         a = self.args
         src = self.video_src or (videoinput.SyntheticSource(a.video_width, a.video_height, a.video_fps)
                                  if self.video_spec["source"] == "synthetic" else None)
@@ -387,8 +378,6 @@ class Agent:
         elif kind == "video-off":
             self.video_stop()
             self.video_off_until = self.now() + float(arg)
-            if self.vserver is not None:            # и защищённый видеоканал: сеанс закрыт, новые отклоняются до конца
-                self.vserver.drop("неисправность video-off")
             await self.vtx.end("fault video-off")
         elif kind == "alert":
             self.alerts.append(arg)
@@ -403,8 +392,6 @@ class Agent:
         await self.vtx.end("control session replaced")   # video-stop уходит ещё старому пульту, пока он не оборван
         if self.conn is not None:                   # одно соединение: новое заменяет старое (старое могло «повиснуть»)
             self.conn.writer.transport.abort()
-        if self.vserver is not None:                # видеосеанс привязан к сеансу управления — новый сеанс, новое видео
-            self.vserver.drop("сеанс управления заменён")
         # Новый сеанс — новый объект: версия, ожидание heartbeat, итог выбора видео и rc-state прежнего не переходят
         conn = self.conn = ConsoleSession(writer, (writer.get_extra_info("peername") or (None,))[0])
         if "video-key" in TYPES.get(self.proto, ()):
@@ -431,25 +418,11 @@ class Agent:
             self.drop(conn)
             # Сеанс управления кончился любым путём (обрыв, EOF, «bye» — тот уже снял сеанс): если он не заменён
             # новым, видео закрывается. Новый сеанс сам закрыл видео при подключении.
-            if self.conn is None and self.vserver is not None:
-                self.vserver.drop("сеанс управления завершён")
             if self.conn is None:
                 await self.vtx.end("control session closed")
             if self.conn is None:                   # не заменён новым: команды органов управления — FAILSAFE сразу
                 self.control.on_link_lost()
             writer.close()
-
-    def authorize_video(self, addr):
-        """Видеосеанс — только тому же пульту (URI проверен TLS) и с того же адреса, что текущий сеанс управления."""
-        if self.conn is None or self.peer_desc is None:
-            return "no active control session"
-        if not self.vtx.tls_allowed:
-            return "srtp video session"
-        if self.now() < self.video_off_until:
-            return "video off (fault)"
-        if self.peer_desc.get("addr") != addr:
-            return f"control session is from {self.peer_desc.get('addr')}"
-        return None
 
     async def secure(self, writer) -> bool:
         """Сетевой профиль: адрес из локальной подсети → TLS 1.3 с сертификатом пульта → URI пульта из конфигурации."""
@@ -495,8 +468,6 @@ class Agent:
         conn.writer.transport.abort()
         self.drop(conn)
         self.control.on_link_lost()
-        if self.vserver is not None:
-            self.vserver.drop("пульт не отвечает")
         self.vtx_end_task = asyncio.ensure_future(self.vtx.end("console silent"))
 
     def established(self, conn, mtype) -> bool:
@@ -670,7 +641,6 @@ class Agent:
               "tls": self.ctx is not None, "listen": f"{self.args.host}:{self.port}", "connected": self.conn is not None,
               "session": self.conn.version if self.conn is not None else None, "peer": self.peer_desc, "stats": self.stats,
               "own_uri": self.tls_cfg.own_uri if self.tls_cfg else None,
-              "video": self.vserver.stats() if self.vserver is not None else None,
               "module": self.module.health() if self.module is not None else None,
               "control": self.control.health()}
         path = Path(self.args.status_file)
@@ -686,12 +656,9 @@ class Agent:
         server = await asyncio.start_server(self.handle, self.args.host, self.args.port, limit=128 * 1024)
         self.port = port = server.sockets[0].getsockname()[1]
         print(f"LISTENING port={port}" + (f" tls=1.3 mutual peer={self.tls_cfg.peer_uri}" if self.ctx else ""), flush=True)
-        if self.net_video_codec:
-            self.vserver = VideoServer(self.tls_cfg, self.net_video_codec, self.authorize_video, log, bind=self.args.host,
-                                       port=self.args.net_video_port, width=self.args.video_width,
-                                       height=self.args.video_height, fps=self.args.video_fps,
-                                       ingest=self.video_ingest()).start()
-            print(f"VIDEO codec={self.net_video_codec} port={self.vserver.port} transport=tls1.3-mutual", flush=True)
+        if self.net_video:
+            self.ingest = self.video_ingest().start()
+            print("VIDEO codec=h264 transport=srtp", flush=True)
             asyncio.get_running_loop().add_signal_handler(signal.SIGHUP, self.reload_video)
         elif self.video_codec:
             print(f"VIDEO codec={self.video_codec} port={self.video_port}", flush=True)
@@ -700,11 +667,11 @@ class Agent:
                   f"{' standard=' + self.video_src.standard if self.video_src.standard else ''}", flush=True)
         if self.video_src_error and (self.args.video or self.tls_cfg is not None):
             print(f"VIDEO unavailable: {self.video_src_error}", flush=True)
-        elif self.args.video and not self.video_codec and not self.net_video_codec:
+        elif self.args.video and not self.video_codec and not self.net_video:
             why = "; ".join(video.PROBE_FAILURES[-4:]) or ("no gst-launch-1.0/videotestsrc/udpsrc" if not video.available()
                                                          else "no working codec")
             print(f"VIDEO unavailable: {why}", flush=True)
-        if self.vserver is not None or self.args.video:
+        if self.ingest is not None or self.args.video:
             self.catalog.start()
         if self.module is not None:
             self.module.start()                       # эмулятора не ждёт: READY придёт по событиям
@@ -832,8 +799,6 @@ def main(argv=None):
     ap.add_argument("--video-config", default=None,
                     help="описание источника в JSON (ключи как в sheregesh.videoinput.open_source); по умолчанию — "
                          "video-input.json рядом с --link-config, если есть; перечитывается по SIGHUP")
-    ap.add_argument("--net-video-port", type=int, default=None, help="порт видеоканала (по умолчанию video_port профиля)")
-    ap.add_argument("--video-command", nargs="+", default=None, help=argparse.SUPPRESS)   # испытания: подмена генератора
     ap.add_argument("--video-sys-root", default=None, help=argparse.SUPPRESS)  # испытания: поддельные sysfs и /dev
     ap.add_argument("--video-dev-root", default=None, help=argparse.SUPPRESS)
     ap.add_argument("--link-config", help="сетевой лабораторный профиль: TLS 1.3 + взаимная аутентификация (S3.1)")
@@ -873,8 +838,8 @@ def main(argv=None):
     def stop(*_):
         agent.video_stop()
         agent.catalog.close()
-        if agent.vserver is not None:
-            agent.vserver.close()
+        if agent.ingest is not None:
+            agent.ingest.close()
         if agent.module is not None:
             agent.module.close()
         sys.exit(0)

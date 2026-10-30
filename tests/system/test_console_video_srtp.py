@@ -111,7 +111,7 @@ def test_video_key_reaches_service_and_ack_returns(rx_service):
         wait_for(lambda: any(m["type"] == "video-key-ack" for m in block.got), 10)
         ack = next(m for m in block.got if m["type"] == "video-key-ack")["body"]
         assert ack == {"stream": "main", "session": "f" * 32, "gen": 1, "ok": True}
-        assert block.hello["video_transports"] == ["srtp", "tls"] and block.hello["video_rx_port"] == 7444
+        assert block.hello["video_transports"] == ["srtp"] and block.hello["video_rx_port"] == 7444
         start = next(a for c, a in calls if c == "start")
         assert start["srtp"] == body["srtp"] and start["ssrc"] == 4242 and start["peer"] == {"ip": "127.0.0.1"}
         assert units == ["sheregesh-video-allow@127.0.0.1.service"]

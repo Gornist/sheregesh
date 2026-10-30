@@ -24,7 +24,7 @@ PEER = "192.168.1.92"
 PEER_PORT = 7444
 RTCP_PORT = 7445
 CIPHER = "aes-128-gcm"
-HELLO = {"video_transports": ["srtp", "tls"], "video_rx_port": PEER_PORT}
+HELLO = {"video_transports": ["srtp"], "video_rx_port": PEER_PORT}
 OTHER_SESSION = "0" * 32                              # заведомо не совпадает с сессией блока (случайной)
 HEX32 = re.compile(r"[0-9a-f]{32}")
 _ABSENT = object()
@@ -133,19 +133,20 @@ def _first(seq, pred) -> int:
 
 # --- 1. choose_transport -------------------------------------------------------------------------------------------
 
-_TRANSPORT_OPTS = {"без-поля": _ABSENT, "только-tls": ["tls"], "srtp-и-tls": ["srtp", "tls"]}
+_TRANSPORT_OPTS = {"без-поля": _ABSENT, "пусто": [], "только-tls": ["tls"], "srtp": ["srtp"],
+                   "srtp-и-tls": ["srtp", "tls"]}
 _PORT_OPTS = {"без-порта": _ABSENT, "порт-7444": 7444, "порт-bool": True, "порт-0": 0, "порт-70000": 70000}
 
 
 def _want(srtp_ok: bool, session, hello) -> str:
     """Ожидание по контракту: srtp только при сеансе ≥ 1.5, доступном srtp, объявленном srtp и валидном порте."""
     if not srtp_ok or session != "1.5" or not isinstance(hello, dict):
-        return "tls"
+        return "none"
     transports, port = hello.get("video_transports"), hello.get("video_rx_port")
     if isinstance(transports, list) and "srtp" in transports \
             and isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535:
         return "srtp"
-    return "tls"
+    return "none"
 
 
 def _transport_cases():
@@ -166,45 +167,45 @@ def test_choose_transport_table(srtp_ok, session, hello):
 
 
 def test_choose_transport_srtp_only_in_full_good_case():
-    """Эталон: сессия 1.5, srtp доступен, пульт объявил srtp и порт — srtp; иначе tls."""
+    """Эталон: сессия 1.5, srtp доступен, пульт объявил srtp и порт — srtp; иначе видео нет (none)."""
     assert choose_transport("1.5", HELLO, True) == "srtp"
-    assert choose_transport("1.5", HELLO, False) == "tls"
-    assert choose_transport("1.4", HELLO, True) == "tls"
-    assert choose_transport(None, HELLO, True) == "tls"
+    assert choose_transport("1.5", HELLO, False) == "none"
+    assert choose_transport("1.4", HELLO, True) == "none"
+    assert choose_transport(None, HELLO, True) == "none"
 
 
 @pytest.mark.parametrize("hello", [None, "srtp", ["srtp"], PEER_PORT], ids=["none", "str", "list", "int"])
 @pytest.mark.parametrize("srtp_ok", [True, False])
-def test_choose_transport_non_dict_hello_is_tls(hello, srtp_ok):
-    """hello, не являющийся объектом, — всегда tls."""
-    assert choose_transport("1.5", hello, srtp_ok) == "tls"
+def test_choose_transport_non_dict_hello_is_none(hello, srtp_ok):
+    """hello, не являющийся объектом, — видео нет."""
+    assert choose_transport("1.5", hello, srtp_ok) == "none"
 
 
-def test_choose_transport_transports_not_a_list_is_tls():
+def test_choose_transport_transports_not_a_list_is_none():
     """video_transports строкой, а не списком, — не объявление srtp."""
-    assert choose_transport("1.5", {"video_transports": "srtp", "video_rx_port": PEER_PORT}, True) == "tls"
+    assert choose_transport("1.5", {"video_transports": "srtp", "video_rx_port": PEER_PORT}, True) == "none"
 
 
 def test_transports_after_successful_probe():
-    """После успешного probe() агент объявляет srtp и tls."""
+    """После успешного probe() агент объявляет только srtp (TLS-видео удалено)."""
     async def scenario():
         rig = Rig()
-        assert rig.vtx.transports() == ["tls"]           # до пробы SRTP не объявляется
+        assert rig.vtx.transports() == []                # до пробы SRTP не объявляется
         assert await rig.vtx.probe() is True
-        assert rig.vtx.transports() == ["srtp", "tls"]
+        assert rig.vtx.transports() == ["srtp"]
     asyncio.run(scenario())
 
 
-def test_transports_tls_only_when_service_down_or_disabled():
-    """Сокет службы недоступен или SRTP выключен — объявляется только tls."""
+def test_transports_empty_when_service_down_or_disabled():
+    """Сокет службы недоступен или SRTP выключен — видеотранспортов нет."""
     async def scenario():
         down = Rig(down=True)
         assert await down.vtx.probe() is False
-        assert down.vtx.transports() == ["tls"]
+        assert down.vtx.transports() == []
 
         disabled = Rig(enabled=False)
         assert await disabled.vtx.probe() is False
-        assert disabled.vtx.transports() == ["tls"]
+        assert disabled.vtx.transports() == []
         assert disabled.ctl.calls == []                  # выключенный SRTP службу даже не опрашивает
     asyncio.run(scenario())
 
@@ -252,7 +253,6 @@ def test_full_cycle_start_only_after_ack():
         assert _first(rig.events, lambda e: e == ("allow", PEER)) < \
             _first(rig.events, lambda e: e[0] == "ctl" and e[1] == "start")
         assert rig.vtx.mode == "srtp"
-        assert rig.vtx.tls_allowed is False
 
         # повтор того же ack не даёт второго start
         await ack(rig, body)
@@ -328,14 +328,12 @@ def test_allow_failure_does_not_block_start():
 
 # --- 5. fallback ------------------------------------------------------------------------------------------------------
 
-def test_fallback_of_current_generation_stops_service_before_tls_allowed():
-    """video-fallback текущего поколения: stop службе раньше, чем TLS принимается; дальше — ничего не делается."""
+def test_fallback_of_current_generation_stops_service_and_leaves_session_without_video():
+    """video-fallback (старый пульт) текущего поколения: stop службе, allow@none, режим off — TLS-видео нет."""
     async def scenario():
         rig = Rig()
         body = await start_srtp(rig)
         await ack(rig, body)
-        seen: list[tuple[str, bool]] = []
-        rig.ctl.observer = lambda cmd, args: seen.append((cmd, rig.vtx.tls_allowed))
 
         # чужой gen и чужая session — игнорируются
         await fallback(rig, body["session"], body["gen"] + 1)
@@ -344,16 +342,16 @@ def test_fallback_of_current_generation_stops_service_before_tls_allowed():
         assert rig.ctl_args("stop") == []
         assert rig.allow_calls == [PEER]
 
-        # текущее поколение — откат
+        # текущее поколение — служба остановлена, сеанс управления без видео
         await fallback(rig, body["session"], body["gen"])
         assert rig.ctl_args("stop") == [{"stream": STREAM, "reason": "fallback"}]
-        assert [tls for cmd, tls in seen if cmd == "stop"] == [False]      # в момент stop TLS ещё не принят
         stop_i = _first(rig.events, lambda e: e[0] == "ctl" and e[1] == "stop")
         none_i = _first(rig.events, lambda e: e == ("allow", "none"))
         assert stop_i < none_i
         assert rig.allow_calls[-1] == "none"
-        assert rig.vtx.mode == "tls"
-        assert rig.vtx.tls_allowed is True
+        assert rig.vtx.mode == "off"
+        st = rig.vtx.status()
+        assert st["active"] is False and st["srtp"]["state"] == "off" and "fallback" in st["srtp"]["error"]
 
         # после отката: ack, tick, select и повторный fallback ничего не делают, SRTP не возвращается
         n_calls, n_sent = len(rig.ctl.calls), len(rig.sent)
@@ -363,7 +361,7 @@ def test_fallback_of_current_generation_stops_service_before_tls_allowed():
         await fallback(rig, body["session"], body["gen"])
         assert len(rig.ctl.calls) == n_calls
         assert len(rig.sent) == n_sent
-        assert rig.vtx.mode == "tls"
+        assert rig.vtx.mode == "off"
     asyncio.run(scenario())
 
 
@@ -557,7 +555,6 @@ def test_end_stops_service_notifies_peer_and_closes_allow():
             ("allow", "none"),
         ]
         assert rig.vtx.mode == "none"
-        assert rig.vtx.tls_allowed is True
 
         n = len(rig.events)
         await rig.vtx.end("session-end")
@@ -565,46 +562,46 @@ def test_end_stops_service_notifies_peer_and_closes_allow():
     asyncio.run(scenario())
 
 
-def test_end_from_none_or_tls_does_nothing():
-    """end без сеанса и в режиме tls не отправляет ничего и не вызывает службу."""
+def test_end_from_none_or_off_does_nothing():
+    """end без сеанса и в режиме off (сеанс без видео) не отправляет ничего и не вызывает службу."""
     async def scenario():
         idle = Rig()
         await idle.vtx.end("session-end")
         assert idle.events == []
 
-        tls = Rig(down=True)
-        assert await tls.vtx.begin(HELLO, PEER, "1.5") == "tls"
-        n_events, n_calls = len(tls.events), len(tls.ctl.calls)
-        await tls.vtx.end("session-end")
-        assert len(tls.events) == n_events
-        assert len(tls.ctl.calls) == n_calls
-        assert tls.vtx.tls_allowed is True
+        off = Rig(down=True)
+        assert await off.vtx.begin(HELLO, PEER, "1.5") == "none"
+        n_events, n_calls = len(off.events), len(off.ctl.calls)
+        await off.vtx.end("session-end")
+        assert len(off.events) == n_events
+        assert len(off.ctl.calls) == n_calls
+        assert off.vtx.mode == "none"
     asyncio.run(scenario())
 
 
 # --- 9. служба недоступна, сессия 1.4 ---------------------------------------------------------------------------------
 
-def test_service_down_begin_is_tls_without_video_key():
-    """Сокет службы недоступен: begin даёт tls, video-key не отправляется, адрес не открывается."""
+def test_service_down_begin_is_no_video_without_video_key():
+    """Сокет службы недоступен: видео нет (off, причина в status), video-key не отправляется, адрес не открывается."""
     async def scenario():
         rig = Rig(down=True)
         assert await rig.vtx.probe() is False
-        assert await rig.vtx.begin(HELLO, PEER, "1.5") == "tls"
-        assert rig.vtx.mode == "tls"
+        assert await rig.vtx.begin(HELLO, PEER, "1.5") == "none"
+        assert rig.vtx.mode == "off"
         assert rig.video_keys() == []
         assert rig.allow_calls == []
-        assert rig.vtx.tls_allowed is True
-        assert rig.vtx.status() is None
+        assert rig.vtx.status() == {"active": False,
+                                    "srtp": {"state": "off", "error": "no video: video-tx service unavailable"}}
     asyncio.run(scenario())
 
 
-def test_session_14_begin_is_tls_even_when_service_available():
-    """Сессия 1.4 (без video-key) при доступной службе — tls, SRTP не запускается."""
+def test_session_14_begin_is_no_video_even_when_service_available():
+    """Сессия 1.4 (без video-key) при доступной службе — видео нет, SRTP не запускается."""
     async def scenario():
         rig = Rig()
         assert await rig.vtx.probe() is True
-        assert await rig.vtx.begin(HELLO, PEER, "1.4") == "tls"
-        assert rig.vtx.mode == "tls"
+        assert await rig.vtx.begin(HELLO, PEER, "1.4") == "none"
+        assert rig.vtx.mode == "off"
         assert rig.video_keys() == []
         assert rig.ctl_args("start") == []
         assert rig.allow_calls == []

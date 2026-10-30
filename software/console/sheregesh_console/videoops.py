@@ -3,13 +3,13 @@
 """Координация видео пульта: какой поток показывает приёмник, что сказать о источнике и выбор источника на блоке.
 
 VideoOps — единственный владелец состояния видео в пульте: видеовход из конфигурации (S3.3) и локальный
-синтетический генератор, маршрут приёмника (служба SRTP, TLS-видеоканал, локальный UDP), описание источника для
+синтетический генератор, маршрут приёмника (служба SRTP, локальный UDP), описание источника для
 экранов (videosource), переход источника (GUI-01), запрос выбора на блоке (S4), событие VIDEO-LOST и переходы видео
 в журналах. Используется из потока интерфейса; сетевой вызов выбора — в отдельном потоке, итог — сигналом.
 
 Backend остаётся Qt/QML-адаптером: его свойства videoSource/videoSources/videoSelection и слот selectVideoSource
-отдают и вызывают это состояние. Точки подмены для испытаний — report() (сведения блока, как из телеметрии и INFO
-видеосеанса) и peer() (клиент канала с select_video_source)."""
+отдают и вызывают это состояние. Точки подмены для испытаний — report() (сведения блока, как из
+телеметрии) и peer() (клиент канала с select_video_source)."""
 import os
 import re
 import signal
@@ -21,7 +21,6 @@ from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from sheregesh import video as gst
 from sheregesh import videoinput
-from sheregesh.videolink import VideoClient
 
 from . import journal as jr
 from . import videosource as vsrc
@@ -165,16 +164,10 @@ class VideoOps(QObject):
             if self.source != "synthetic":
                 pass                                # локальный видеовход или видео выключено (S3.3)
             elif vrx is not None and vrx.active and peer_state == "connected":
-                # Видеосеанс SRTP (ADR-0016): кадры отдаёт служба rx; откат на TLS — по решению пульта (videorx)
+                # Видеосеанс SRTP (ADR-0016): кадры отдаёт служба rx — единственный удалённый видеотранспорт
                 self.video.configure_service(vrx.codec, vrx.frames_path, vrx.stats)
-            elif peer_state == "connected" and vid.get("codec") and vid.get("transport") == "tls" \
-                    and self._link_cfg is not None and self._link_cfg.video and snap.get("host"):
-                # Защищённый видеоканал (S3.1-VIDEO): тот же блок, что у сеанса управления; порт — из своей
-                # конфигурации, не из телеметрии. Незащищённого удалённого источника нет.
-                host, port, cfg = snap["host"], self._link_cfg.video_port, self._link_cfg
-                self.video.configure_remote(vid["codec"], (host, port), lambda: VideoClient(cfg, host, port))
-            elif self._link_cfg is not None and (peer_state != "connected" or vid.get("transport") != "tls"):
-                if self.video.state != "off":       # сеанс управления потерян — видеоканал закрывается
+            elif self._link_cfg is not None:
+                if self.video.state != "off":       # сетевой профиль без сеанса SRTP: видео нет
                     self.video.configure(None, None)
             elif vid.get("codec") and vid.get("port") and peer_state == "connected":
                 self.video.configure(vid["codec"], vid["port"])
@@ -223,8 +216,7 @@ class VideoOps(QObject):
         if self.local_sender is not None:
             return {"mode": "local-synthetic"}
         if self._client() is not None:
-            return {"mode": "remote", "telemetry_video": self.remote_telemetry,
-                    "session_info": self.video.session_info(), "link": self._peer_link}
+            return {"mode": "remote", "telemetry_video": self.remote_telemetry, "link": self._peer_link}
         return {"mode": "off"}
 
     @Slot()

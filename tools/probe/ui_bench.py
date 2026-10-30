@@ -43,7 +43,7 @@ if RTSP_URL and __GL__:   # путь GL (ADR-0015): декодер → unixfdsin
         "gst-launch-1.0", "-q", "rtspsrc", "location=" + RTSP_URL, "latency=50", "protocols=tcp", "!",
         "rtph264depay", "!", "h264parse", "!", "v4l2h264dec", "!", "unixfdsink", "socket-path=" + sock, "sync=false"]
     b = Backend(tempfile.mkdtemp(prefix="ui-bench-"), autostart=True)
-    rep = {"mode": "remote", "link": "CONNECTED", "session_info": {"codec": "h264", "width": 1280, "height": 720, "fps": 30},
+    rep = {"mode": "remote", "link": "CONNECTED",
            "telemetry_video": {"enabled": True, "active": True, "codec": "h264", "source": {
                "input": "rtsp", "state": "streaming", "device": "shcam Pi5 IMX477", "width": 1280, "height": 720, "fps": 30}}}
     b.videoops.report = lambda: rep
@@ -54,7 +54,7 @@ elif RTSP_URL:      # кадры камеры напрямую (rtspsrc → ап
     cmd = ["gst-launch-1.0", "-q", "rtspsrc", "location=" + RTSP_URL, "latency=50", "protocols=tcp", "!",
            "rtph264depay", "!", "h264parse", "!", "v4l2h264dec", "!", *conv, "!", "fdsink", "fd=1", "sync=false"]
     b = Backend(tempfile.mkdtemp(prefix="ui-bench-"), autostart=True, video_command=cmd)
-    rep = {"mode": "remote", "link": "CONNECTED", "session_info": {"codec": "h264", "width": 1280, "height": 720, "fps": 30},
+    rep = {"mode": "remote", "link": "CONNECTED",
            "telemetry_video": {"enabled": True, "active": True, "codec": "h264", "source": {
                "input": "rtsp", "state": "streaming", "device": "shcam Pi5 IMX477", "width": 1280, "height": 720, "fps": 30}}}
     b.videoops.report = lambda: rep

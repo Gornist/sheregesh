@@ -100,8 +100,7 @@ def out_dir(tmp_path):
 def ui(qapp, tmp_path, wide_font):
     compile_translations()
     b = Backend(tmp_path / "data", autostart=False, video_command=FAKE_DECODER)
-    report = {"mode": "remote", "telemetry_video": tel(SOURCES), "session_info": {"codec": "h264", "width": 1280,
-                                                                                    "height": 720, "fps": 30}}
+    report = {"mode": "remote", "telemetry_video": tel(SOURCES)}
     b.videoops.report = lambda: report
     b.report = report
     b.peer = Peer(report)
@@ -191,7 +190,7 @@ def test_select_error_mapping(result, code):
 def test_reconnecting_follows_receiver(rx, display, live):
     """Канал управления восстанавливается: «нет видео/переподключение» — не раньше приёмника. Иначе экран
     опережал журнал, и разрыв короче NO_VIDEO_AFTER_S не записывался (E2E-12, CI ubuntu)."""
-    d = vs.describe("remote", tel(SOURCES), {}, rx_state=rx, link="RECONNECTING")
+    d = vs.describe("remote", tel(SOURCES), rx_state=rx, link="RECONNECTING")
     assert d["state"] == "reconnecting" and vs.display(d, rx) == {"display": display, "live": live}
 
 
