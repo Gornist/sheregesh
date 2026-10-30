@@ -8,7 +8,9 @@
   python3 tools/probe/s8_crsf_accept.py --console 192.168.1.92 --remote 192.168.1.171 --out DIR \\
       [--only CR-04,CR-07,…] [--window 10] [--no-freeze]
 
-К pi1 по USB подключена RadioMaster Boxer (EdgeTX, USB Joystick), как в S7. Модуля нет: backend `crsf-pty-lab` —
+К pi1 по USB подключена RadioMaster Boxer (EdgeTX, USB Joystick), как в S7, или (--sticks-emu) — эмулятор стиков
+`sheregesh_emulators.sticks_uinput` на pi1 от root (виртуальное устройство uinput, профиль Boxer, заданные оси):
+источник стиков записывается в summary («sticks_source»). Модуля нет: backend `crsf-pty-lab` —
 эмулятор ELRS TX (`sheregesh_emulators.elrs_tx`) на псевдотерминале, дочерний процесс sheregesh-remote-net.
 
 Все команды и выборки пульта — один опросчик на pi1 (HELPER, по SSH через `python3 -c`, без файлов на плате, время —
@@ -24,7 +26,8 @@ CrsfOutput, crsf.emu — что принял эмулятор). Сокет пу�
   CR-03  передача стиков выключена → output neutral, каналы эмулятора = 992, взведение false
   CR-04  sticks enable → output live; каналы эмулятора 1–8 = оси пульта (−1000…1000 → 992 ± 820) ±1 шаг 11 бит (и не
          меньше шума осей за окно), 9–16 = 992, взведение true. Стики в окне НЕ ТРОГАТЬ
-  CR-05  то же окно: эмулятор принимает 0x16 с частотой 50 Гц ± 2 %, p99 джиттера ≤ 2 мс (CrsfOutput и эмулятор),
+  CR-05  то же окно: эмулятор принимает 0x16 с частотой 50 Гц ± 2 %, p99 джиттера CrsfOutput ≤ 2 мс, эмулятора ≤ 5 мс
+         (включает его собственные задержки, ADR-0014 §4),
          ошибок CRC за окно 0 (обе стороны)
   CR-06  при live: systemctl stop sheregesh-console (страховочный start) → FAILSAFE → `crsf: live -> neutral`
          ≤ 600 мс от последнего кадра (журнал pi2); пульт запущен → output neutral, эмулятор получает центр
@@ -48,6 +51,7 @@ import math
 import re
 import shlex
 import statistics
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -996,6 +1000,56 @@ def plan(a):
     return "\n".join(out)
 
 
+EMU_SRC = ROOT / "software/emulators/sheregesh_emulators/sticks_uinput.py"
+EMU_STICKS_NAME = "Sheregesh sticks emulator (Boxer profile)"
+
+
+class SticksEmu:
+    """Эмулятор стиков на пульте (--sticks-emu): текст модуля по SSH от root (на плате ничего не ставится), устройство
+    живёт, пока открыт канал; stop() закрывает stdin — эмулятор удаляет устройство и выходит (страховка — max-seconds)."""
+
+    def __init__(self, host, axes, max_s=1800):
+        self.host, self.axes, self.max_s, self.p = host, axes, max_s, None
+
+    def command(self):
+        b64 = base64.b64encode(EMU_SRC.read_bytes()).decode()
+        prog = f"import base64;exec(compile(base64.b64decode('{b64}'),'sticks_uinput','exec'))"
+        return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", f"root@{self.host}",
+                f"python3 -c \"{prog}\" --axes {','.join(map(str, self.axes))} --max-seconds {self.max_s:.0f}"]
+
+    def start(self, timeout=20):
+        self.p = subprocess.Popen(self.command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True)
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout:
+            line = self.p.stdout.readline()
+            if line.startswith("READY "):
+                return line[6:].strip()
+            if not line and self.p.poll() is not None:
+                break
+        self.stop()
+        raise RuntimeError("эмулятор стиков не стартовал на пульте (нужен root по SSH и /dev/uinput)")
+
+    def stop(self):
+        if not self.p:
+            return None
+        try:
+            self.p.stdin.close()
+            return self.p.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.p.kill()
+            return self.p.wait()
+        finally:
+            self.p = None
+
+
+def parse_emu_axes(text):
+    vals = [int(x) for x in text.split(",")]
+    if len(vals) != AXES or any(not -1000 <= v <= 1000 for v in vals):
+        raise argparse.ArgumentTypeError(f"--sticks-emu: {AXES} значений −1000…1000 через запятую")
+    return vals
+
+
 def main(argv=None):
     global LOG
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1006,6 +1060,8 @@ def main(argv=None):
                                    "предусловие CR-02…CR-08 и выполняется, если запрошен любой из них)")
     ap.add_argument("--window", type=float, default=LIMITS["window_s"], help="CR-04/05: окно замера, с")
     ap.add_argument("--no-freeze", action="store_true", help="CR-08 без заморозки агента (только рестарт)")
+    ap.add_argument("--sticks-emu", type=parse_emu_axes, metavar="A1,…,A8",
+                    help="стики — эмулятор uinput на пульте с этими осями (−1000…1000), вместо аппаратуры")
     ap.add_argument("--plan", action="store_true")
     a = ap.parse_args(argv)
     if a.plan:
@@ -1018,10 +1074,32 @@ def main(argv=None):
         ap.error(f"--only: нет известных шагов ({', '.join(STEPS)})")
     a.out.mkdir(parents=True, exist_ok=True)
     LOG = S6.LOG = S7.LOG = a.out / "run.log"
+    emu = SticksEmu(a.console, a.sticks_emu) if a.sticks_emu else None
+    if emu:
+        try:
+            log(f"эмулятор стиков на пульте: {emu.start()}, оси {a.sticks_emu}")
+        except RuntimeError as e:
+            log(f"ПРЕДПРОВЕРКА: {e} — без действий")
+            (a.out / "summary.json").write_text(json.dumps({"preflight": [str(e)], "verdict": "ERROR"},
+                                                           ensure_ascii=False, indent=1))
+            return 2
+    try:
+        return run_steps(a, only, emu)
+    finally:
+        if emu:
+            log(f"эмулятор стиков остановлен (код {emu.stop()})")
+
+
+def run_steps(a, only, emu):
     ids, before, problems = S6.preflight(a)
     meta = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "boards": ids, "limits": LIMITS,
-            "args": {k: str(v) for k, v in vars(a).items()}, "before": before}
+            "args": {k: str(v) for k, v in vars(a).items()}, "before": before,
+            "sticks_source": f"uinput-emu {a.sticks_emu}" if emu else "hardware"}
     stand = Stand(a)
+    if emu and not problems:                       # пульт находит устройство при пересканировании (раз в 1 с)
+        t_e = time.monotonic()
+        while time.monotonic() - t_e < 15 and S7.g(stand.status(), "present") is not True:
+            time.sleep(0.5)
     if not problems:
         r = stand.mod()
         meta["module_before"] = {k: g(r, k) for k in ("support", "state", "output", "backend")}
@@ -1107,7 +1185,8 @@ def main(argv=None):
         run(("CR-08",), restart)
         if "CR-09" in only:
             t0 = time.monotonic()
-            put("CR-09", *step_back(a, stand), t0=t0)
+            r9, m9 = step_back(a, stand)                    # ((вердикт, пояснение), замер) — как у прочих шагов
+            put("CR-09", *r9, m9, t0)
     finally:
         try:
             meta["cleanup"] = restore(a, stand, initial_control, froze)
