@@ -138,7 +138,9 @@ class ShbuildTest(unittest.TestCase):
             self.assertIn(check, text)
         self.assertIn("Type=simple", init)                        # иначе is-system-running --wait ждёт саму пробу
         self.assertTrue(probe.rstrip().endswith("systemctl poweroff"))
-        self.assertIn("ENV{ID_PART_ENTRY_NAME}", init)            # by-slot по меткам GPT, корень образа не меняется
+        self.assertIn("ENV{ID_PART_ENTRY_NAME}", init)
+        self.assertIn("name=shboot", text)                        # итог пробы — отдельным каналом, не консолью
+        self.assertIn("в итоге пробы нет строки", text)           # потерянная строка — провал            # by-slot по меткам GPT, корень образа не меняется
         self.assertIn('mount -o ro "$SYS" /newroot', init)            # корень образа — только чтение
 
 if __name__ == "__main__":

@@ -2,9 +2,11 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Проба внутри загруженного образа (ADR-0018): строки «SHBOOT ключ=значение» в последовательную консоль, затем
-# выключение. Type=simple: задание запуска завершается сразу, is-system-running --wait не ждёт саму пробу.
-out() { echo "SHBOOT $*" > /dev/ttyAMA0; }
+# Проба внутри загруженного образа (ADR-0018): строки «SHBOOT ключ=значение» в отдельный канал virtio-serial
+# (консоль системы с ними не перемешивается; без канала — в консоль), затем выключение. Type=simple: задание
+# запуска завершается сразу, is-system-running --wait не ждёт саму пробу.
+P=/dev/virtio-ports/shboot; [ -e "$P" ] || P=/dev/ttyAMA0
+out() { echo "SHBOOT $*" >> "$P"; }
 out "start"
 timeout 900 systemctl is-system-running --wait >/dev/null 2>&1
 out "state=$(systemctl is-system-running)"
