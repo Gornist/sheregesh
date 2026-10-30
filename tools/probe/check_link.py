@@ -203,7 +203,12 @@ def sc_connect(ch, rh):
 
 
 LISTEN = r"""for f in /proc/net/tcp /proc/net/tcp6 /proc/net/udp /proc/net/udp6; do
-  awk -v f="${f##*/}" 'NR>1 && (f ~ /udp/ || $4=="0A") {print f, $2}' "$f"; done"""
+  awk -v f="${f##*/}" 'NR>1 && (f ~ /udp/ || $4=="0A") {print f, $2, $10}' "$f"; done"""
+# Сокеты службы видео платы (ADR-0016): inode из /proc/<MainPID>/fd — служба работает от sheregesh-ui, как вход по SSH
+VIDEO_SOCKETS = {"console": "sheregesh-video-rx", "remote": "sheregesh-video-tx"}
+VIDEO_FDS = ("p=$(systemctl show -p MainPID --value {unit}); [ \"$p\" -gt 0 ] 2>/dev/null && "
+             "ls -l /proc/$p/fd 2>/dev/null | sed -n 's/.*socket:\\[\\([0-9]*\\)\\].*/\\1/p'")
+EPHEMERAL = range(32768, 61000)            # net.ipv4.ip_local_port_range Linux по умолчанию
 
 
 def _decode(proto, addr):
@@ -217,13 +222,18 @@ def _decode(proto, addr):
     return f"{proto} {ip}:{int(port, 16)}"
 
 
-# 7444 — защищённый видеоканал блока (S3.1-VIDEO, TLS 1.3 с взаимной аутентификацией, ADR-0011)
-ALLOWED = {"console": {"tcp": {22}, "udp": {68, 546}}, "remote": {"tcp": {22, 7443, 7444}, "udp": {68, 546}}}
+# 7444/tcp — защищённый видеоканал блока (S3.1-VIDEO, TLS 1.3 с взаимной аутентификацией, ADR-0011, резерв);
+# UDP 7444/7445 пульта и 7445 блока — видео SRTP/RTCP (ADR-0016, nftables: только адрес второй платы); 123 — chrony
+# (ADR-0017: пульт отвечает только блоку, блок — никому)
+ALLOWED = {"console": {"tcp": {22}, "udp": {68, 123, 546, 7444, 7445}},
+           "remote": {"tcp": {22, 7443, 7444}, "udp": {68, 123, 546, 7445}}}
 
 
-def judge_ports(role, listening, open_tcp, allowed=ALLOWED):
+def judge_ports(role, listening, open_tcp, allowed=ALLOWED, video_owned=()):
     """Не loopback-сокеты платы и порты, открытые из LAN, — только разрешённые. UDP снаружи не сканируется
-    (без ответа нельзя отличить закрытый порт от фильтра) — решение по слушающим сокетам самой платы."""
+    (без ответа нельзя отличить закрытый порт от фильтра) — решение по слушающим сокетам самой платы. Временный порт UDP
+    допустим, только если сокет принадлежит службе видео платы (video_owned — такие строки): это сокеты отправки
+    GStreamer (udpsink RTP/RTCP), а не службы, принимающие соединения."""
     bad = []
     for line in listening:
         proto, addr = line.split()
@@ -231,8 +241,11 @@ def judge_ports(role, listening, open_tcp, allowed=ALLOWED):
         if host.startswith("127.") or host == "::1":
             continue
         fam = "udp" if proto.startswith("udp") else "tcp"
-        if int(port) not in allowed[role][fam]:
-            bad.append(line)
+        if int(port) in allowed[role][fam]:
+            continue
+        if fam == "udp" and int(port) in EPHEMERAL and line in video_owned:
+            continue
+        bad.append(line)
     bad += [f"lan tcp {p}" for p in open_tcp if p not in allowed[role]["tcp"]]
     return bad
 
@@ -252,11 +265,15 @@ def sc_ports(ch, rh):
         raw = ssh(h, LISTEN)
         if not raw.strip():
             return {"verdict": "ERROR", "reason": f"{role}: нет списка сокетов с платы"}
-        local = sorted({_decode(*ln.split()) for ln in raw.splitlines() if ln.strip()})
-        b = judge_ports(role, local, open_)
+        rows = [ln.split() for ln in raw.splitlines() if ln.strip()]
+        inodes = set(ssh(h, VIDEO_FDS.format(unit=VIDEO_SOCKETS[role])).split())
+        local = sorted({_decode(*r[:2]) for r in rows})
+        owned = {_decode(*r[:2]) for r in rows if len(r) > 2 and r[2] in inodes}
+        b = judge_ports(role, local, open_, video_owned=owned)
         bad += [f"{role}: {x}" for x in b]
         out[role] = {"open_from_lan_tcp_ipv4_1_10000": open_, "allowed": {k: sorted(v) for k, v in ALLOWED[role].items()},
-                     "listening_on_board_tcp_udp_v4_v6": local, "not_allowed": b,
+                     "listening_on_board_tcp_udp_v4_v6": local, "video_service_sockets": sorted(owned),
+                     "not_allowed": b,
                      "note": "UDP снаружи не сканируется; IPv6 — по сокетам платы (внешний скан только IPv4)"}
     return {**out, "verdict": "FAIL" if bad else "PASS"}
 

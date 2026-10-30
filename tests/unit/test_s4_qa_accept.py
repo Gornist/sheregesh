@@ -261,3 +261,19 @@ def test_gui_fault_judged_by_dark_field_not_by_unchanged_hash():
     assert ok["VID-05"][0] == "PASS" and ok["VID-06"][0] == "PASS"
     bad = s.judge_gui(base + shots("03-04-no-signal", 0.10, True), want_fault="no-signal")
     assert bad["VID-05"][0] == "FAIL"
+
+
+def test_srtp_fault_seen_on_console_rx():
+    """ADR-0016: под SRTP источник блока — служба tx; при её заморозке состояние блока не наблюдаемо, отказ виден по
+    переходам службы rx пульта (degraded/recovering) после внесения отказа."""
+    t = 1793340000.0
+    tr = [[t - 50, "streaming", "first frame"], [t + 1.2, "degraded", "no frames > 1 s"],
+          [t + 2.2, "recovering", "PLI sent"], [t + 6.0, "streaming", "frames"]]
+    assert s.rx_fault(tr, t) == "rx:degraded"
+    assert s.rx_fault(tr[:1], t) is None                                     # до отказа — не считается
+    assert s.rx_fault([[t - 30, "degraded", "x"]], t) is None
+    assert s.rx_fault([["bad"], None, [t + 1, "recovering", "PLI"]], t) == "rx:degraded"
+    m = {"off_s": 1.1, "back_s": 3.0, "remote_fault_state": "rx:degraded", "transport": "srtp"}
+    assert s.judge_fault(m, ("rx:degraded",))[:2] == ("PASS", "PASS")
+    assert s.judge_fault({**m, "remote_fault_state": None}, ("rx:degraded",))[0] == "FAIL"
+    assert s.jload("не json") == {} and s.jload("[1]") == {} and s.jload('{"a": 1}') == {"a": 1}

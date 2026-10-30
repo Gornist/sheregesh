@@ -129,3 +129,54 @@ def test_latency_judged_by_metric_with_same_bounds():
            "decode_latency_ms": {"p50": 30.0, "samples": 600, "desync_resets": 0}}
     r = cv.judge_latency(tls)
     assert r["verdict"] == "PASS" and r["measured_part_p50_ms"] == 34.0 and "capture_to_decoded_ms" not in r
+
+
+# SRTP (ADR-0016): по службам видео, а не по TLS-видеосерверу (стенд 2026-10-29: исправный поток 30 к/с давал FAIL)
+CH, RH = "192.168.1.92", "192.168.1.171"
+SESS = {"state": "streaming", "transport": "srtp", "session": "00cf96", "gen": 2, "ssrc": 125430704}
+CONTROL = {"phase": "connected", "tls": "TLSv1.3", "peer_uri": "urn:sheregesh:remote:100000009d497e91", "host": RH}
+
+
+def test_srtp_session_by_video_services():
+    rx, tx = {**SESS, "peer": RH}, {**SESS, "peer": CH}
+    assert cv.judge_session_srtp(CONTROL, rx, tx, CH, RH)["verdict"] == "PASS"
+    for bad in ({"tx": {**tx, "gen": 3}}, {"tx": {**tx, "ssrc": 1}}, {"rx": {**rx, "state": "recovering"}},
+                {"tx": {**tx, "peer": "192.168.1.50"}}, {"control": {**CONTROL, "tls": None}},
+                {"rx": {**rx, "transport": "tls"}}):
+        r = cv.judge_session_srtp(bad.get("control", CONTROL), bad.get("rx", rx), bad.get("tx", tx), CH, RH)
+        assert r["verdict"] == "FAIL", bad
+
+
+def _srtp_win(c_extra=None, l_extra=None, x_extra=None):
+    link0 = {"gen": 2, "packets": 1000, "seq_gaps": 0, "lost_packets": 0, "reordered": None}
+    c0 = {"mode": "remote-srtp", "frames_decoded": 100, "restarts": 6, "codec": "h264", "output": "640x360",
+          "state": "playing", "link": link0}
+    c1 = {**c0, "frames_decoded": 700, "link": {**link0, "packets": 14000, "received_fps_5s": 30.0,
+                                                 "jitter_ms": 0.3, **(l_extra or {})}, **(c_extra or {})}
+    x0 = {"session": "00cf96", "gen": 2, "rtp": {"packets": 1100},
+          "source": {"kind": "synthetic", "encoder": "v4l2h264enc", "resolution": "1280x720", "fps": 30}}
+    x1 = {**x0, "rtp": {"packets": 14100}, **(x_extra or {})}
+    return c0, c1, x0, x1
+
+
+def test_srtp_stream_window():
+    r = cv.judge_stream_srtp(*_srtp_win(), 20.0)
+    assert r["verdict"] == "PASS" and r["metrics"]["decoded_fps"] == 30.0 and "unmeasured" not in r, r
+    assert r["metrics"]["reordered"] is None                                  # не измеряется — не требуется
+    for kw in ({"l_extra": {"lost_packets": 2}}, {"l_extra": {"seq_gaps": 1}}, {"c_extra": {"restarts": 7}},
+               {"x_extra": {"rtp": {"packets": 1100}}}, {"l_extra": {"gen": 3}},
+               {"x_extra": {"source": {"resolution": "640x480"}}}, {"c_extra": {"output": "1280x720"}}):
+        assert cv.judge_stream_srtp(*_srtp_win(**kw), 20.0)["verdict"] == "FAIL", kw
+    r = cv.judge_stream_srtp(*_srtp_win(l_extra={"lost_packets": None}), 20.0)
+    assert r["verdict"] == "FAIL" and r["unmeasured"] == ["lost_packets"]
+
+
+def test_srtp_leftovers():
+    rx, tx = {**SESS, "peer": RH}, {**SESS, "peer": CH}
+    gui = ["39100 39062 39100 S gst-launch-1.0 -q unixfdsrc socket-path=/run/sheregesh-video/frames-main.sock ! ..."]
+    assert cv.judge_leftovers_srtp(gui, [], rx, tx)["verdict"] == "PASS"
+    assert cv.judge_leftovers_srtp([], [], rx, tx)["verdict"] == "PASS"                       # путь GL: в процессе GUI
+    assert cv.judge_leftovers_srtp(gui * 2, [], rx, tx)["verdict"] == "FAIL"
+    assert cv.judge_leftovers_srtp(["4 1 4 S gst-launch-1.0 unixfdsrc"], [], rx, tx)["verdict"] == "FAIL"   # сирота
+    assert cv.judge_leftovers_srtp(gui, ["5 9 5 S gst-launch-1.0 rtpstreampay"], rx, tx)["verdict"] == "FAIL"
+    assert cv.judge_leftovers_srtp(gui, [], rx, {**tx, "gen": 3})["verdict"] == "FAIL"

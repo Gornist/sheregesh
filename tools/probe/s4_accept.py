@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT / "tools/deploy/ota-check"))
 import e2e_run as E  # noqa: E402
 
 REMOTE_STATUS = "/run/sheregesh-remote/link-status.json"
+RX_STATE = "/run/sheregesh-video/state.json"           # служба rx пульта (контракт видео §4)
 VCONF = "~/.config/sheregesh/video-input.json"
 GUI_DIR = "/tmp/s4-gui"
 STEPS = ("VID-01", "VID-02", "VID-03", "VID-04", "VID-05", "VID-06", "VID-07", "VID-08", "VID-09")
@@ -133,6 +134,20 @@ def console_live(ui, source=None):
 def remote_is(st, kind, state="streaming"):
     src = remote_source(st)
     return kind in (str(src.get("type", "")).lower(), str(src.get("input", "")).lower()) and src.get("state") == state
+
+
+def jload(text):
+    try:
+        d = json.loads(text or "{}")
+    except ValueError:
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def rx_fault(transitions, wall0):
+    """'rx:degraded' — служба rx пульта с момента wall0 переходила в degraded/recovering (отказ источника под SRTP)."""
+    seen = {t[1] for t in transitions if isinstance(t, list) and len(t) >= 2 and t[0] >= wall0 - 1}
+    return "rx:degraded" if seen & {"degraded", "recovering"} else None
 
 
 def remote_source(st):
@@ -271,10 +286,26 @@ class Stand:
         self.rs = RemoteSampler(a.remote)
         self.orig_conf = None          # исходное содержимое video-input.json (None — файла не было)
 
+    def srtp(self):
+        """Видео идёт через службы (ADR-0016): источник блока — процесс sheregesh-video-tx, а не gst-launch агента."""
+        return (jload(E.out(self.a.console, f"cat {E.UI} 2>/dev/null")).get("video") or {}).get("mode") == "remote-srtp"
+
     def gst_pgid(self):
+        """Группа процессов источника кадров блока: SRTP — служба tx (SIGSTOP группы = «источник не отдаёт кадры»);
+        TLS — конвейер gst-launch …rtpstreampay агента."""
+        if self.srtp():
+            pid = E.out(self.a.remote, "systemctl show -p MainPID --value sheregesh-video-tx").strip()
+            pg = E.out(self.a.remote, f"ps -o pgid= -p {pid}").strip() if pid not in ("", "0") else ""
+            return pg or None
         rows = E.out(self.a.remote, "ps -eo pid,pgid,args --no-headers | grep -E 'gst-launch-1.0.*rtpstreampay' | "
                                     "grep -v grep").split("\n")
         return rows[0].split()[1] if rows and rows[0].strip() else None
+
+    def rx_fault_since(self, wall0):
+        """SRTP: при замороженной tx состояние источника блока не наблюдаемо (процесс стоит) — отказ виден на приёмнике
+        пульта: переход службы rx в degraded/recovering с меткой ≥ wall0 (часы плат согласованы chrony, ADR-0017)."""
+        st = (jload(E.out(self.a.console, f"cat {RX_STATE} 2>/dev/null")).get("streams") or {}).get("main") or {}
+        return rx_fault(st.get("transitions") or [], wall0)
 
     def wait(self, sampler, pred, t0, timeout):
         end = time.monotonic() + timeout
@@ -312,7 +343,8 @@ class Stand:
         a, m = self.a, {"kind": kind, "outage_s": outage}
         pre_rows = self.rs.last()
         m["remote_restarts_before"] = remote_source(pre_rows[2]).get("restarts") if pre_rows else None
-        t0 = time.monotonic()
+        t0, wall0, srtp = time.monotonic(), time.time(), self.srtp()
+        m["transport"] = "srtp" if srtp else "tls"
         if kind == "synthetic":
             pg = self.gst_pgid()
             if not pg:
@@ -331,6 +363,8 @@ class Stand:
         m["remote_states_seen"] = sorted(s for s in states if s)
         m["remote_fault_state"] = next((s for s in ("no-signal", "connect-error", "error", "no-device")
                                         if s in states), None)
+        if srtp and kind == "synthetic":
+            m["remote_fault_state"] = self.rx_fault_since(wall0)
         t1 = time.monotonic()
         if kind == "synthetic":
             ok = ssh(a.remote, f"kill -CONT -- -{pg} 2>/dev/null; echo done")[0] == 0
@@ -390,11 +424,12 @@ def step_gui(a, ctx, stand):
     pp = "PYTHONPATH=$C/software:$C/software/emulators:$C/software/console:$C/software/remote"   # как launcher.py
     subprocess.run(["scp", "-q", str(ROOT / "tools/probe/gui_capture.py"), f"sheregesh-ui@{a.console}:/tmp/"], check=False)
     ctx["console_restarted"] = True
+    srtp = stand.srtp()                 # до остановки пульта: потом ui-state.json устаревает
     try:
         if ssh(a.console, f"systemctl stop {E.CONSOLE_UNIT}")[0] != 0:
             return {"VID-03": ("ERROR", "служба пульта не остановилась")}
         ssh(a.console, f"rm -rf {GUI_DIR}; {rel}; nohup env {pp} python3 /tmp/gui_capture.py --out {GUI_DIR} --by video "
-                       f"--video-states no-signal --timeout 120 >{GUI_DIR}.log 2>&1 &")
+                       f"--video-states no-signal --timeout {35 if srtp else 120} >{GUI_DIR}.log 2>&1 &")
 
         def phase(name, timeout):
             end = time.monotonic() + timeout
@@ -403,8 +438,10 @@ def step_gui(a, ctx, stand):
                     return True
                 time.sleep(1)
             return False
-        notes = {"stream": phase("01-02-stream", 60)}
-        if notes["stream"]:
+        notes = {"stream": phase("01-02-stream", 60), "transport": "srtp" if srtp else "tls"}
+        # SRTP: при остановке потока GUI показывает «starting» (состояние TLS-приёма блока), а не no-signal — открытый
+        # дефект показа (2026-10-30); снимки отказа здесь не делаются, VID-05/06 — по step_faults
+        if notes["stream"] and not srtp:
             pg = stand.gst_pgid()
             if pg:
                 ssh(a.remote, f"nohup sh -c 'sleep {SAFE_CONT_S}; kill -CONT -- -{pg}' >/dev/null 2>&1 &")
@@ -412,7 +449,7 @@ def step_gui(a, ctx, stand):
                 notes["no-signal"] = phase("03-04-no-signal", 12)
                 ssh(a.remote, f"kill -CONT -- -{pg}")
                 notes["recovered"] = phase("05-06-recovered-no-signal", 30)
-        for _ in range(20):                                     # gui_capture завершается сам после done/timeout
+        for _ in range(45):                                     # gui_capture завершается сам после done/timeout
             if ssh(a.console, "pgrep -u sheregesh-ui -f '[/]tmp/gui_capture.py' >/dev/null")[0] != 0:
                 break
             time.sleep(1)
@@ -422,7 +459,7 @@ def step_gui(a, ctx, stand):
     subprocess.run(["scp", "-q", "-r", f"sheregesh-ui@{a.console}:{GUI_DIR}", str(a.out / "gui")], check=False)
     sf = a.out / "gui" / "states.json"
     states = json.loads(sf.read_text()) if sf.exists() else []
-    res = judge_gui(states, want_fault="no-signal")
+    res = judge_gui(states, want_fault=None if notes.get("transport") == "srtp" else "no-signal")
     res["_notes"] = notes
     return res
 
@@ -450,7 +487,9 @@ def step_faults(a, ctx, stand):
                 v6.append("ERROR")
                 problems.append(f"{kind}: {m['error']}")
                 continue
-            a5, a6, p = judge_fault(m, ("no-signal",) if kind == "synthetic" else ("connect-error", "no-signal"))
+            fs = ("rx:degraded",) if m.get("transport") == "srtp" and kind == "synthetic" else \
+                ("no-signal",) if kind == "synthetic" else ("connect-error", "no-signal")
+            a5, a6, p = judge_fault(m, fs)
             v5.append(a5)
             v6.append(a6)
             problems += [f"{kind}: {x}" for x in p]

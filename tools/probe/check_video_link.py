@@ -4,12 +4,15 @@
 
   python3 tools/probe/check_video_link.py --console 192.168.1.92 --remote 192.168.1.171 --out DIR [--only A,B]
 
-Сценарии (DIR/<сценарий>.json, итог DIR/summary.json; PASS | FAIL | SKIP | ERROR):
-  session      медиасеанс по TLS 1.3 с взаимной аутентификацией: обе стороны, URI, журнал блока
+Сценарии (DIR/<сценарий>.json, итог DIR/summary.json; PASS | FAIL | SKIP | ERROR). session и stream судят по режиму
+видео пульта: remote-tls — видеоканал TLS (ADR-0011), remote-srtp — службы видео (ADR-0016, state.json rx и tx):
+  session      TLS: медиасеанс по TLS 1.3 с взаимной аутентификацией, URI, журнал блока; SRTP: канал управления mTLS,
+               rx и tx streaming по SRTP друг к другу, один сеанс, поколение и SSRC
   unauth       посторонний узел (Mac) на порт видео: TCP без TLS, TLS без сертификата, чужой CA, CA стенда с чужой
                идентичностью — отказ у клиента + запись «video auth: reject» + нет «video: session from»
   stream       фактический H.264: пакеты, SPS (разрешение), источник; декодированные кадры на pi1; FPS источника,
-               приёма и декодирования (измерены за окно), выход 640×360; потери (разрывы RTP seq, плохие пакеты)
+               приёма и декодирования (измерены за окно), выход 640×360; потери (разрывы RTP seq, плохие пакеты);
+               SRTP: пакеты tx и rx, потери и разрывы rx, кадры GUI, разрешение источника tx
   latency      транспорт pi2→pi1 (живой поток, смещение часов по PING/PONG) + конвейер кодирования pi2 и декодирования
                pi1 (трассировщик latency GStreamer, отдельные прогоны) → оценка сквозной задержки
   resources    60 с: CPU (одно ядро = 100 %; вся система из 4 ядер), RAM, температура, троттлинг обеих плат и процессов
@@ -22,7 +25,8 @@
                возобновляются ≤ 10 с — в том же видеосеансе (новый сеанс допустим, но не обязателен); «нет видео»
                может не наступить, если перезапуск быстрее NO_VIDEO_AFTER_S (1,5 с) — это наблюдение
   restart      штатный перезапуск sheregesh-remote-net: управление и видео восстанавливаются
-  leftovers    после испытаний: на каждой плате ровно один конвейер видео текущего сеанса, сирот нет
+  leftovers    после испытаний: на каждой плате ровно один конвейер видео текущего сеанса, сирот нет; SRTP: службы
+               rx и tx в одном сеансе, не больше одного декодера GUI на пульте, TLS-конвейеров на блоке нет
 Только синтетический videotestsrc; удалённых команд через лабораторный канал нет. Сигналы — процессам sheregesh-ui.
 """
 import argparse
@@ -42,6 +46,7 @@ CA_DIR = Path("~/.sheregesh-lab-ca").expanduser()
 UI = "/run/sheregesh-ui/ui-state.json"
 C_STATUS = "/run/sheregesh-ui/link-status.json"
 R_STATUS = "/run/sheregesh-remote/link-status.json"
+VSTATE = "/run/sheregesh-video/state.json"       # служба видео платы (контракт видео §4): rx на пульте, tx на блоке
 VPORT = 7444
 VERDICTS = ("PASS", "FAIL", "SKIP", "ERROR")
 BASELINE = {"console": {"cpu_busy_pct": 3.0, "mem_used_mb": 297}, "remote": {"cpu_busy_pct": 0.5, "mem_used_mb": 149}}
@@ -77,6 +82,15 @@ def rv(rh):
     return jread(rh, R_STATUS).get("video") or {}
 
 
+def vs(host):
+    """Поток main службы видео платы (state.json) или {}."""
+    return (jread(host, VSTATE).get("streams") or {}).get("main") or {}
+
+
+def srtp(c):
+    return c.get("mode") == "remote-srtp"
+
+
 def playing(ch):
     return lambda: (lambda v: v.get("mode") in ("remote-tls", "remote-srtp") and v.get("state") == "playing")(cv(ch))
 
@@ -86,10 +100,26 @@ def journal(host, unit, since, pattern):
                ).splitlines()
 
 
+def judge_session_srtp(link_status, rx, tx, ch, rh):
+    """SRTP (ADR-0016): сеанс управления mTLS и службы видео обеих плат в одном сеансе, поколении и SSRC, адреса —
+    друг друга. TLS-видеосервер блока в этом режиме не используется."""
+    keys = ("state", "transport", "session", "gen", "ssrc", "peer")
+    res = {"control": {k: link_status.get(k) for k in ("phase", "tls", "peer_uri", "host")},
+           "rx": {k: rx.get(k) for k in keys}, "tx": {k: tx.get(k) for k in keys}}
+    ok = (link_status.get("phase") == "connected" and link_status.get("tls") == "TLSv1.3"
+          and (link_status.get("peer_uri") or "").startswith("urn:sheregesh:remote:")
+          and rx.get("state") == tx.get("state") == "streaming" and rx.get("transport") == tx.get("transport") == "srtp"
+          and rx.get("peer") == rh and tx.get("peer") == ch and bool(rx.get("session"))
+          and all(rx.get(k) == tx.get(k) for k in ("session", "gen", "ssrc")))
+    return {**res, "verdict": "PASS" if ok else "FAIL"}
+
+
 def sc_session(ch, rh):
     if not wait(playing(ch), 90):
         return {"verdict": "FAIL", "reason": "видео на пульте не в playing за 90 с", "console": cv(ch), "remote": rv(rh)}
     c, r = cv(ch), rv(rh)
+    if srtp(c):
+        return judge_session_srtp(jread(ch, C_STATUS), vs(ch), vs(rh), ch, rh)
     link = c.get("link") or {}
     log = ssh(rh, "journalctl -u sheregesh-remote-net -o cat --no-pager | grep -E 'video: session from' | tail -1")
     ok = (link.get("tls") == "TLSv1.3" and (link.get("peer_uri") or "").startswith("urn:sheregesh:remote:")
@@ -166,6 +196,11 @@ def sc_unauth(ch, rh):
 def sc_stream(ch, rh, window=20.0):
     if not wait(playing(ch), 60):
         return {"verdict": "FAIL", "reason": "нет видео", "console": cv(ch)}
+    if srtp(cv(ch)):
+        c0, x0, t0 = cv(ch), vs(rh), time.time()
+        time.sleep(window)
+        c1, x1, t1 = cv(ch), vs(rh), time.time()
+        return judge_stream_srtp(c0, c1, x0, x1, t1 - t0)
     c0, r0, t0 = cv(ch), rv(rh), time.time()
     time.sleep(window)
     c1, r1, t1 = cv(ch), rv(rh), time.time()
@@ -212,6 +247,36 @@ def judge_stream(c0, c1, r0, r1, dt):
           and m["decoder_restarts"] == 0 and m["decoded_fps"] >= 0.9 * m["received_fps"] and m["sender_fps"] > 0)
     dec = m["decoded_fps"]
     res["fps_target_30"] = {"sender": m["sender_fps"], "decoded": dec, "meets_29": dec is not None and dec >= 29.0}
+    return {**res, "verdict": "PASS" if ok else "FAIL"}
+
+
+def judge_stream_srtp(c0, c1, x0, x1, dt):
+    """Окно живого потока SRTP: link пульта (videorx: пакеты, разрывы, потери rx), кадры GUI, служба tx блока (пакеты,
+    источник). «Ноль ошибок» — только измеренный ноль; reordered/auth_fail/replay_fail конвейер не измеряет (контракт
+    v9) — в окне не требуются и показываются как есть."""
+    l0, l1 = c0.get("link") or {}, c1.get("link") or {}
+    same = (l0.get("gen") == l1.get("gen") and x0.get("session") == x1.get("session") and bool(x1.get("session"))
+            and l1.get("gen") == x1.get("gen"))
+    m = {"window_s": round(dt, 1), "same_session": bool(same),
+         "tx_packets": delta(x0.get("rtp") or {}, x1.get("rtp") or {}, "packets"), "rx_packets": delta(l0, l1, "packets"),
+         "decoded_frames": delta(c0, c1, "frames_decoded"), "seq_gaps": delta(l0, l1, "seq_gaps"),
+         "lost_packets": delta(l0, l1, "lost_packets"), "decoder_restarts": delta(c0, c1, "restarts"),
+         "jitter_ms": l1.get("jitter_ms"), "reordered": l1.get("reordered"), "auth_fail": l1.get("auth_fail"),
+         "replay_fail": l1.get("replay_fail")}
+    m["decoded_fps"] = _rate(m["decoded_frames"], dt)
+    m["received_fps_5s"] = l1.get("received_fps_5s")
+    src = x1.get("source") or {}
+    res = {"transport": "srtp", "metrics": m, "source": {k: src.get(k) for k in ("kind", "encoder", "resolution", "fps")},
+           "decoder_output": c1.get("output"), "codec": c1.get("codec"), "console_state": c1.get("state")}
+    need = ("tx_packets", "rx_packets", "decoded_frames", "seq_gaps", "lost_packets", "decoder_restarts")
+    unmeasured = [k for k in need if m[k] is None]
+    if unmeasured:
+        res["unmeasured"] = unmeasured
+    ok = (not unmeasured and same and m["tx_packets"] > 0 and m["rx_packets"] > 0 and m["decoded_frames"] > 0
+          and m["seq_gaps"] == 0 and m["lost_packets"] == 0 and m["decoder_restarts"] == 0
+          and src.get("resolution") == "1280x720" and c1.get("codec") == "h264" and c1.get("output") == "640x360")
+    dec = m["decoded_fps"]
+    res["fps_target_30"] = {"decoded": dec, "meets_29": dec is not None and dec >= 29.0}
     return {**res, "verdict": "PASS" if ok else "FAIL"}
 
 
@@ -478,9 +543,26 @@ def sc_restart(ch, rh):
             "verdict": "PASS" if ctl is not None and back is not None else "FAIL"}
 
 
+def judge_leftovers_srtp(console_rows, remote_rows, rx, tx):
+    """SRTP: конвейеры видео — внутри служб rx и tx (один поток main каждая, в одном сеансе); на пульте — не больше
+    одного декодера GUI (gst-launch unixfdsrc, путь RGBx без дисплея; GL — в процессе GUI), на блоке — ни одного
+    gst-launch видеоканала TLS; сирот (родитель 1) нет."""
+    orphans = [r for r in console_rows + remote_rows if r.split()[1:2] == ["1"]]
+    out = {"console": {"gui_decoders": console_rows, "count": len(console_rows)},
+           "remote": {"tls_pipelines": remote_rows, "count": len(remote_rows)}, "orphans": orphans,
+           "rx": {k: rx.get(k) for k in ("state", "session", "gen")}, "tx": {k: tx.get(k) for k in ("state", "session", "gen")}}
+    ok = (len(console_rows) <= 1 and not remote_rows and not orphans and rx.get("state") == tx.get("state") == "streaming"
+          and bool(rx.get("session")) and rx.get("session") == tx.get("session") and rx.get("gen") == tx.get("gen"))
+    return {**out, "verdict": "PASS" if ok else "FAIL"}
+
+
 def sc_leftovers(ch, rh):
     if not wait(playing(ch), 60):
         return {"verdict": "ERROR", "reason": "нет видео"}
+    if srtp(cv(ch)):
+        ps = "ps -eo pid,ppid,pgid,stat,args --no-headers | grep -E '{}' | grep -v grep"
+        return judge_leftovers_srtp(ssh(ch, ps.format("gst-launch-1.0.*unixfdsrc")).splitlines(),
+                                    ssh(rh, ps.format("gst-launch-1.0.*rtpstreampay")).splitlines(), vs(ch), vs(rh))
     out = {}
     for role, h, pat in (("console", ch, "gst-launch-1.0.*rtpstreamdepay"), ("remote", rh, "gst-launch-1.0.*rtpstreampay")):
         rows = ssh(h, f"ps -eo pid,ppid,pgid,stat,args --no-headers | grep -E '{pat}' | grep -v grep").splitlines()

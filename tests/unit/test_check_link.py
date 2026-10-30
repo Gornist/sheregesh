@@ -136,3 +136,18 @@ def test_unconfirmed_resume_aborts_remaining_scenarios(monkeypatch, tmp_path):
     assert cl.main(["--console", "c", "--remote", "r", "--out", str(tmp_path), "--only", "hb-loss,restart"]) == 1
     s = json.loads((tmp_path / "summary.json").read_text())
     assert s["results"] == {"hb-loss": "ERROR", "restart": "SKIP"} and not ran
+
+
+def test_ports_srtp_chrony_and_video_service_sockets():
+    """ADR-0016/0017: UDP видео (пульт 7444/7445, блок 7445) и chrony 123 — разрешены; временный UDP — только сокет
+    службы видео (udpsink GStreamer), чужой временный — нет. Стенд 2026-10-29: ports FAIL на исправных платах."""
+    console = ["udp 0.0.0.0:123", "udp6 :::123", "udp 0.0.0.0:7444", "udp 0.0.0.0:7445", "udp 0.0.0.0:60073",
+               "udp6 :::36755", "udp 0.0.0.0:68"]
+    owned = {"udp 0.0.0.0:60073", "udp6 :::36755"}
+    assert cl.judge_ports("console", console, [22], video_owned=owned) == []
+    assert cl.judge_ports("console", console, [22]) == ["udp 0.0.0.0:60073", "udp6 :::36755"]   # чей — неизвестно
+    remote = ["udp 0.0.0.0:7445", "udp 0.0.0.0:59726", "udp 0.0.0.0:123", "tcp 0.0.0.0:7443"]
+    assert cl.judge_ports("remote", remote, [22, 7443], video_owned={"udp 0.0.0.0:59726"}) == []
+    assert cl.judge_ports("remote", ["udp 0.0.0.0:7444"], [22]) == ["udp 0.0.0.0:7444"]      # блок 7444/udp не слушает
+    assert cl.judge_ports("console", ["udp 0.0.0.0:5353"], [22], video_owned={"udp 0.0.0.0:5353"}) == \
+        ["udp 0.0.0.0:5353"]                                                                   # не временный — нет
