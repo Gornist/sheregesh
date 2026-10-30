@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Имя системы по роли платы (пульт — pi1, блок — pi2) до запуска сети: DHCP уходит уже с ним (SendHostname networkd
+# по умолчанию). Маркер роли — в /home (общий /persistent), поэтому после local-fs. Временное имя ядра: корень
+# только для чтения, /etc/hostname образа не меняется.
+[Unit]
+Description=Sheregesh: system hostname by board role (console pi1, remote pi2)
+DefaultDependencies=no
+After=local-fs.target
+Before=systemd-networkd.service network-pre.target sysinit.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+ExecStart=/usr/bin/sheregesh-hostname
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateNetwork=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN
+RestrictAddressFamilies=AF_UNIX
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+WantedBy=sysinit.target

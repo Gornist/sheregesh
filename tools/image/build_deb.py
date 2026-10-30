@@ -64,10 +64,11 @@ WRAPPERS = {   # команда → модуль (-m) или скрипт из /
     "usr/bin/sheregesh-ota-agent": "sheregesh.update.ota",        # агент обновления A/B, root (S3.1-DEPLOY)
     "usr/bin/sheregesh-ota-client": "sheregesh.update.ota_client",  # клиент агента для sheregesh-ui
 }
-# Помощники root: межсетевой экран видео (ADR-0016, юнит sheregesh-video-allow@) и источники времени chrony
-# (ADR-0017, юниты sheregesh-time-role и sheregesh-time-peer@). Помощник лежит в /usr/lib/sheregesh, команда в /usr/bin —
-# обёртка python3 -I, как у прочих системных команд.
-HELPERS = {"sheregesh-video-allow": "юнит sheregesh-video-allow@", "sheregesh-time": "юниты sheregesh-time-*"}
+# Помощники root: межсетевой экран видео (ADR-0016, юнит sheregesh-video-allow@), источники времени chrony
+# (ADR-0017, юниты sheregesh-time-role и sheregesh-time-peer@) и имя системы по роли (юнит sheregesh-hostname).
+# Помощник лежит в /usr/lib/sheregesh, команда в /usr/bin — обёртка python3 -I, как у прочих системных команд.
+HELPERS = {"sheregesh-video-allow": "юнит sheregesh-video-allow@", "sheregesh-time": "юниты sheregesh-time-*",
+           "sheregesh-hostname": "юнит sheregesh-hostname"}
 HELPER_SRC = Path(__file__).resolve().parent / "bin"
 HELPER_DST = f"{PREFIX}/tools/image/bin"
 NFT_DIR = Path(__file__).resolve().parent / "nft"

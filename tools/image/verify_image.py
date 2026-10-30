@@ -387,6 +387,16 @@ def time_checks(rep, root, packages_tsv):
             and "sheregesh-time-peer@" in rules and "stop" not in rules and "restart" not in rules, TIME_POLKIT)
 
 
+def hostname_checks(rep, root):
+    """Имя системы по роли (пульт pi1, блок pi2): помощник, юнит до systemd-networkd, включён в sysinit."""
+    unit = root.cat("/usr/lib/systemd/system/sheregesh-hostname.service")
+    rep.add("hostname.role", "имя системы по роли: sheregesh-hostname до сети, включён (sysinit)",
+            "ExecStart=/usr/bin/sheregesh-hostname" in unit and "Before=systemd-networkd.service" in unit
+            and "python3 -I " in root.cat("/usr/bin/sheregesh-hostname")
+            and root.exists("/usr/lib/sheregesh/tools/image/bin/sheregesh-hostname")
+            and "sheregesh-hostname.service" in " ".join(root.ls("/etc/systemd/system/sysinit.target.wants")))
+
+
 def verify(img, variant, out):
     rep = Report()
     dev = "-dev-" in variant
@@ -506,6 +516,7 @@ def verify(img, variant, out):
             packages_tsv = root.cat("/usr/share/sheregesh/image-packages.tsv")
             video_checks(rep, root, packages_tsv)
             time_checks(rep, root, packages_tsv)
+            hostname_checks(rep, root)
             status = data.cat("/slots/system_a/var/lib/dpkg/status")
             # Установлен — если последнее слово Status «installed» (в т. ч. «purge ok installed» после неудачного purge).
             installed = sorted(b.split("\n")[0][9:] for b in status.split("\n\n") if b.startswith("Package: ") and
