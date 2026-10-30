@@ -94,10 +94,21 @@ class Pattern(Gtk.ApplicationWindow):
         self.fullscreen()
         self.add_tick_callback(self.tick)
 
+    def keep_fullscreen(self):
+        """MS2130 «отключается», пока блок не захватывает: GNOME снимает выход и возвращает его, а окно остаётся
+        маленьким при флаге fullscreen. Окно заметно меньше монитора — выйти из полного экрана и войти снова."""
+        mons = Gdk.Display.get_default().get_monitors()
+        if mons.get_n_items() == 0:
+            return
+        geo = mons.get_item(0).get_geometry()
+        if not self.is_fullscreen() or self.canvas.get_width() < geo.width * 0.9:
+            self.unfullscreen()
+            GLib.timeout_add(300, lambda: (self.fullscreen(), False)[1])
+
     def tick(self, _widget, _clock):
         self.canvas.frames += 1
-        if self.canvas.frames % 60 == 0 and not self.is_fullscreen():
-            self.fullscreen()       # MS2130 «отключается», пока блок не захватывает: GNOME снимает выход, окно мельчает
+        if self.canvas.frames % 60 == 0:
+            self.keep_fullscreen()
         self.canvas.queue_draw()
         if self.seconds and time.monotonic() - self.t0 > self.seconds:
             self.get_application().quit()
