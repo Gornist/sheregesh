@@ -21,6 +21,7 @@ from test_gui_video_source import CONNECTED, FAKE_DECODER, STATES
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools/probe"))
 import gui_capture  # noqa: E402
+import s4_accept  # noqa: E402
 
 QQuickStyle.setStyle("Fusion")
 
@@ -83,6 +84,9 @@ def test_capture_by_video_follows_actual_transitions(qapp, tmp_path):
         assert pairs[prefix]["frame_changed"] and pairs[prefix]["videoSource"]["live"], prefix
     for prefix, fault in (("03-04-no-signal", "no-signal"), ("07-08-no-device", "no-device")):
         s = pairs[prefix]
-        assert not s["frame_changed"], f"{prefix}: в кадре меняется изображение при отказе источника"
+        # Критерий отказа — тёмное поле кадра, как у приёмки (s4_accept.judge_gui): подпись «no frames for N s» в поле
+        # меняет хеш области между снимками, если секунда сменилась, поэтому frame_changed тут не критерий (под
+        # нагрузкой — ~30 % ложных падений, 2026-10-30)
+        assert s["frame_dark"] >= s4_accept.DARK_MIN, f"{prefix}: поле кадра не тёмное при отказе: {s['frame_dark']}"
         assert s["videoSource"]["display"] == fault and not s["videoSource"]["live"]
         assert s["video"]["state"] == "playing"        # кадры от блока шли, но не выдавались за видео
