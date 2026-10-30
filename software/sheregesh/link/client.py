@@ -78,6 +78,7 @@ class PeerClient:
         # on_session_end(), peer_ip — sheregesh_console.videorx.VideoRx; None — только TLS-видео, hello без video_*.
         self.video_session = video_session
         self._clock_samples = deque(maxlen=20)   # ts блока − время приёма (с) по heartbeat текущего соединения
+        self._rtt_min = None                     # наименьший RTT (мс), сообщённый блоком в этом соединении
         if tls_cfg is None:
             if not (host or "").startswith("127."):
                 raise ValueError("без сетевого профиля (TLS) канал только через loopback (127.0.0.0/8)")
@@ -218,16 +219,22 @@ class PeerClient:
             return self._st.host
 
     def clock_offset(self):
-        """Оценка смещения часов блок − пульт (с) или None. По heartbeat блока: ts блока − момент приёма даёт
-        смещение минус односторонняя задержка; задержку берём как половину rtt_avg_ms из телеметрии блока
-        (его измерение по ack). Медиана последних 20; без rtt — None (по одной стороне задержку не оценить).
-        Точность — порядка асимметрии сети (миллисекунды в проводной сети), не NTP-класса."""
+        """Оценка смещения часов блок − пульт (с) или None. По heartbeat блока: ts блока − момент приёма = смещение
+        минус задержка доставки. Как фильтр часов NTP: берётся выборка с наименьшей задержкой (наибольшее значение из
+        последних 20) и половина наименьшего RTT блока в этом соединении — задержанные heartbeat и выбросы RTT оценку не
+        сдвигают (стенд: rtt_max 1,5 с при обычных 2 мс; прежняя медиана + rtt_avg/2 зависела от них). Без RTT —
+        None. Точность — порядка асимметрии сети (доли миллисекунды в проводной сети)."""
         with self._lock:
-            rtt = ((self._st.telemetry or {}).get("link") or {}).get("rtt_avg_ms")
-            samples = sorted(self._clock_samples)
-        if not samples or not isinstance(rtt, (int, float)):
+            rtt, samples = self._rtt_min, list(self._clock_samples)
+        if not samples or rtt is None:
             return None
-        return samples[len(samples) // 2] + rtt / 2000.0
+        return max(samples) + rtt / 2000.0
+
+    def _on_rtt(self, rtt_ms):
+        """RTT блока из status (link.rtt_last_ms): наименьший за соединение — оценка задержки без очередей."""
+        if isinstance(rtt_ms, (int, float)) and not isinstance(rtt_ms, bool) and 0 <= rtt_ms < 60000:
+            with self._lock:
+                self._rtt_min = rtt_ms if self._rtt_min is None else min(self._rtt_min, rtt_ms)
 
     def module_command(self, op: str, args: dict | None = None, wait_s: float = 5.0) -> dict:
         """Команда подсистеме внешнего модуля блока (протокол 1.3, module-cmd; ADR-0012, разделы 6.3 и 9.2).
@@ -485,6 +492,7 @@ class PeerClient:
         self.counters.connects += 1
         self._last_peer_seq = None
         self._clock_samples.clear()
+        self._rtt_min = None
         if self.video_session is not None:
             self.video_session.on_session_start()
         self._set(phase="handshake", detail="handshake", peer={}, session=None, telemetry=None)
@@ -614,7 +622,9 @@ class PeerClient:
             self._set(last_rx=time.monotonic())
             self._ack(seq)
         elif mtype == "status":
-            self._set(telemetry=_sanitize_status(body))
+            tel = _sanitize_status(body)
+            self._on_rtt((tel.get("link") or {}).get("rtt_last_ms"))
+            self._set(telemetry=tel)
         elif mtype == "rc-state":
             rs = control_wire.sanitize_rc_state(body)
             if rs is None:
