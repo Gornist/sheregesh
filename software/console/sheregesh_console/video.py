@@ -40,6 +40,37 @@ STALL_RESTART_S = 5.0       # локальный вход: нет кадров �
 
 
 
+ERR_TAIL = 12                       # строк stderr декодера/захвата в памяти; в причину выхода — последние 200 символов
+
+
+def _drain_stderr(proc):
+    """stderr дочернего GStreamer — в proc.err_tail (gst-launch -q пишет туда только ошибки). Чтение до EOF: иначе
+    переполненный канал остановил бы декодер."""
+    try:
+        for line in iter(proc.stderr.readline, b""):
+            proc.err_tail.append(line.decode("utf-8", "replace").strip()[:200])
+    except (OSError, ValueError):
+        pass
+
+
+def spawn_logged(args, **kw):
+    """gst.spawn со stderr в буфер: причину отказа декодер сообщает только там (раньше stderr уходил в DEVNULL, и
+    в журнале оставалось «exited with code 1» без причины — стенд 2026-10-30)."""
+    proc = gst.spawn(args, stderr=subprocess.PIPE, **kw)
+    proc.err_tail = deque(maxlen=ERR_TAIL)
+    proc.err_thread = threading.Thread(target=_drain_stderr, args=(proc,), name="video-stderr", daemon=True)
+    proc.err_thread.start()
+    return proc
+
+
+def exit_reason(proc):
+    """Последние строки stderr завершившегося процесса через « | » (не длиннее 200 символов) или ""."""
+    t = getattr(proc, "err_thread", None)
+    if t is not None:
+        t.join(0.5)                                  # дочитать строки, записанные перед выходом
+    return " | ".join(x for x in getattr(proc, "err_tail", ()) if x)[-200:]
+
+
 def service_rgbx_args(path, width, height):
     """Кадры службы rx без дисплея → RGBx в stdout. Служба отдаёт dmabuf v4l2h264dec (caps memory:DMABuf, DMA_DRM),
     их не принимают программные videoscale/videoconvert (not-negotiated). На Pi 4 — ISP: v4l2convert импортирует
@@ -276,8 +307,7 @@ class VideoReceiver(QObject):
         if not gl_on:
             args = self._command or service_rgbx_args(path, FRAME_W, FRAME_H)
             try:
-                self._proc = gst.spawn(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                       stderr=subprocess.DEVNULL)
+                self._proc = spawn_logged(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
             except OSError as e:
                 self._error = str(e)
                 self._schedule_restart()
@@ -328,8 +358,8 @@ class VideoReceiver(QObject):
             args = self._command or gst.receiver_args(self._codec, self._port, FRAME_W, FRAME_H)
         gl_on = self._gl_sock is not None
         try:
-            self._proc = gst.spawn(args, stdin=subprocess.PIPE if remote else subprocess.DEVNULL,
-                                   stdout=subprocess.DEVNULL if gl_on else subprocess.PIPE, stderr=subprocess.DEVNULL)
+            self._proc = spawn_logged(args, stdin=subprocess.PIPE if remote else subprocess.DEVNULL,
+                                      stdout=subprocess.DEVNULL if gl_on else subprocess.PIPE)
         except OSError as e:
             self._error = str(e)
             self._schedule_restart()
@@ -554,7 +584,9 @@ class VideoReceiver(QObject):
         if self._proc is not None and self._proc.poll() is not None:
             if not (self._remote is not None and self._error.startswith("video link:")):
                 # причина разрыва видеоканала важнее кода выхода декодера, который она и вызвала
-                self._error = f"{'capture' if self._local else 'decoder'} exited with code {self._proc.returncode}"
+                tail = exit_reason(self._proc)
+                self._error = (f"{'capture' if self._local else 'decoder'} exited with code {self._proc.returncode}"
+                               + (f": {tail}" if tail else ""))
             self.stop()
             self._schedule_restart()
             return

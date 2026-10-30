@@ -285,3 +285,20 @@ def test_service_rgbx_args_take_dmabuf(monkeypatch):
     assert gl[:3] == ["env", "GST_GL_WINDOW=surfaceless", "GST_GL_PLATFORM=egl"] and "glupload" in gl
     assert "videoscale" not in gl and "video/x-raw,format=RGBx,width=640,height=360" in gl
 
+
+
+def test_service_decoder_exit_reason_comes_from_stderr(qapp, monkeypatch, tmp_path):
+    """Стенд 2026-10-30: декодер GUI падал с кодом 1, причина GStreamer терялась (stderr в DEVNULL). Последние строки
+    stderr — в причину выхода (видна в журнале «video: no stream … error=…»); stderr читается, а не копится в канале."""
+    script = ("import sys; print('x' * 5000, file=sys.stderr)\n"            # больше буфера строки — не блокирует
+              "print('ERROR: from element /GstPipeline:pipeline0/GstUnixFdSrc:unixfdsrc0: Internal data stream error.',"
+              " file=sys.stderr)\nprint('streaming stopped, reason error (-5)', file=sys.stderr); sys.exit(1)")
+    rx, spawned = _receiver(monkeypatch, tmp_path, FakeGl(ready=False), cmd=[sys.executable, "-c", script])
+    rx.configure_service("h264", _sock(tmp_path), _stats)
+    try:
+        assert spawned[0][1]["stderr"] == subprocess.PIPE
+        assert wait_until(lambda: rx.state == "restarting", 5), rx.state
+        assert rx.error.startswith("decoder exited with code 1: "), rx.error
+        assert "Internal data stream error" in rx.error and "reason error (-5)" in rx.error and len(rx.error) < 260
+    finally:
+        rx.stop()
