@@ -28,10 +28,12 @@ _STREAM_RE = re.compile(r"[a-z0-9-]{1,16}")
 _SESSION_RE = re.compile(r"[0-9a-f]{32}")
 
 
-def _default_stream() -> dict:
+def _default_stream(role: str = "rx") -> dict:
+    """Поток в idle. У tx frames/fps — null (контракт v11: кадры tx не считаются), у rx — измеренный ноль."""
+    tx = role == "tx"
     return {
         "state": "idle", "transport": "srtp", "session": "", "gen": 0, "ssrc": 0, "peer": "",
-        "since_s": 0.0, "frames": 0, "fps": 0.0, "bitrate_kbps": 0,
+        "since_s": 0.0, "frames": None if tx else 0, "fps": None if tx else 0.0, "bitrate_kbps": 0,
         "rtp": dict(RTP_UNMEASURED),
         "srtp": dict(SRTP_UNMEASURED),
         "rtcp": {"pli_sent": 0, "pli_received": 0, "keyframes_requested": 0, "keyframe_unsupported": False},
@@ -110,7 +112,7 @@ class StateWriter:
             raise ValueError("неверное имя потока")
         st = self._streams.get(name)
         if st is None:
-            st = self._streams[name] = _default_stream()
+            st = self._streams[name] = _default_stream(self.role)
             self._since[name] = self._mono()
         return st
 
@@ -226,8 +228,8 @@ _STREAM_FIELDS = {
     "ssrc": lambda v: _int(v) and 0 <= v < 2**32,
     "peer": lambda v: isinstance(v, str),
     "since_s": lambda v: _num(v) and v >= 0,
-    "frames": lambda v: _int(v) and v >= 0,
-    "fps": lambda v: _num(v) and v >= 0,
+    "frames": lambda v: v is None or (_int(v) and v >= 0),     # контракт v11: null — tx кадры не считает
+    "fps": lambda v: v is None or (_num(v) and v >= 0),
     "bitrate_kbps": lambda v: _num(v) and v >= 0,
     "last_frame_age_s": _opt_num,
     "restarts": lambda v: _int(v) and v >= 0,

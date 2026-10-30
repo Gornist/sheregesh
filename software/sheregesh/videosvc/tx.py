@@ -150,7 +150,7 @@ class TxService(M.ServiceBase):
 
         self._last[stream] = (session, gen)                  # с этого момента пара (ключ, SSRC) считается использованной
         self._act[stream] = act
-        self.state.update(stream, session=session, gen=gen, ssrc=ssrc, peer=ip, error="", frames=0, fps=0.0,
+        self.state.update(stream, session=session, gen=gen, ssrc=ssrc, peer=ip, error="", frames=None, fps=None,   # v11: tx кадры не считает
                           bitrate_kbps=int(profile["bitrate"]), source=med.info,
                           rtp=dict(RTP_UNMEASURED),          # контракт v9: lost/jitter у tx не измеряются
                           rtcp={"pli_sent": 0, "pli_received": 0, "keyframes_requested": 0,

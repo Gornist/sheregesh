@@ -664,3 +664,14 @@ def test_status_line_начинается_с_tx(svc, factory):
     assert line.startswith("tx ") and "main=idle" in line
     svc.handle("start", start_args())
     assert svc.status_line().startswith("tx ") and "main=starting" in svc.status_line()
+
+
+def test_tx_frames_and_fps_unmeasured(svc):
+    """Контракт v11, §4: служба tx кадры не считает — frames и fps у tx null с начала поколения, а не 0 (стенд
+    2026-10-29: tx показывал «0 кадров, 0 к/с» при потоке 30 к/с). Схема v1 принимает null у этих полей."""
+    from sheregesh.videosvc.state import validate_state
+    svc.handle("start", start_args(gen=1))
+    st = svc.state.snapshot()
+    m = st["streams"]["main"]
+    assert m["frames"] is None and m["fps"] is None and m["last_frame_age_s"] is None
+    assert validate_state(st) == []

@@ -64,7 +64,7 @@ def test_file_has_schema_v1_defaults(tmp_path):
     assert isinstance(main["since_s"], float) and main["since_s"] >= 0
     expected = {
         "state": "idle", "transport": "srtp", "session": "", "gen": 0, "ssrc": 0, "peer": "",
-        "since_s": main["since_s"], "frames": 1, "fps": 0.0, "bitrate_kbps": 0,
+        "since_s": main["since_s"], "frames": 1, "fps": None, "bitrate_kbps": 0,       # tx: fps null (v11)
         "rtp": {"packets": None, "lost": None, "jitter_ms": None, "reordered": None},   # контракт v9: не измерено
         "srtp": {"auth_fail": None, "replay_fail": None, "unknown_ssrc": 0},
         "rtcp": {"pli_sent": 0, "pli_received": 0, "keyframes_requested": 0, "keyframe_unsupported": False},
@@ -511,3 +511,15 @@ def test_unmeasured_counters_are_null_and_measured_zero_stays_zero(tmp_path):
     old["streams"]["main"]["rtp"]["reordered"] = 0
     old["streams"]["main"]["srtp"].update(auth_fail=0, replay_fail=0)
     assert validate_state(old) == []
+
+
+def test_idle_tx_stream_frames_unmeasured(tmp_path):
+    """Контракт v11: поток tx и в idle — frames/fps null; rx — измеренный ноль."""
+    from sheregesh.videosvc.state import validate_state
+    tx, rx = _writer(tmp_path / "tx.json", "tx"), _writer(tmp_path / "rx.json", "rx")
+    tx.update("main", error="")
+    rx.update("main", error="")
+    t, r = tx.snapshot(), rx.snapshot()
+    assert (t["streams"]["main"]["frames"], t["streams"]["main"]["fps"]) == (None, None)
+    assert (r["streams"]["main"]["frames"], r["streams"]["main"]["fps"]) == (0, 0.0)
+    assert validate_state(t) == [] and validate_state(r) == []
