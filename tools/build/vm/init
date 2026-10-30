@@ -1,0 +1,54 @@
+#!/bin/busybox sh
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# initramfs загрузочного теста (ADR-0018). Диск vda — весь образ (GPT, метки разделов как на карте), vdb — модули
+# ядра Debian. Делает только то, чего нет в виртуальной машине, и ничего не меняет в корне образа:
+#  1) маркер роли сценария на persistent (как после pair; fresh — без роли);
+#  2) ссылки /dev/disk/by-slot/* по меткам разделов — правилом udev в /run (на Pi их строит rpi-slot-label по
+#     дереву устройств загрузчика, в virt его нет);
+#  3) модули ядра Debian поверх /usr/lib/modules (в образе — модули ядра Pi);
+#  4) проба shboot-probe.service в /run/systemd/system; затем switch_root в /sbin/init образа.
+/bin/busybox --install -s /bin
+mount -t proc proc /proc; mount -t sysfs sys /sys; mount -t devtmpfs dev /dev
+log() { echo "shboot-init: $*" > /dev/console; }
+SC=$(sed -n 's/.*shboot\.scenario=\([a-z]*\).*/\1/p' /proc/cmdline)
+for m in $(cat /modules.order); do insmod "/mods/$m" 2>/dev/null; done
+for _ in $(seq 50); do [ -e /sys/class/block/vda ] && [ -e /sys/class/block/vdb ] && break; sleep 0.1; done
+part() { for u in /sys/class/block/vda*/uevent; do grep -q "^PARTNAME=$1\$" "$u" && { d=${u%/uevent}; echo "/dev/${d##*/}"; return; }; done; }
+SYS=$(part system_a); PERS=$(part persistent)
+[ -n "$SYS" ] && [ -n "$PERS" ] || { log "нет разделов system_a/persistent"; poweroff -f; }
+mkdir -p /newroot /p
+mount -o ro "$SYS" /newroot || { log "system_a не смонтирован"; poweroff -f; }
+UI=$(awk -F: '$1=="sheregesh-ui"{print $3}' /newroot/etc/passwd)
+mount "$PERS" /p
+H=/p/home/sheregesh-ui
+rm -f "$H"/.config/sheregesh/*.role
+if [ "$SC" != fresh ]; then
+  mkdir -p "$H/.config/sheregesh"; echo urn:boot-check > "$H/.config/sheregesh/$SC.role"
+fi
+chown -R "$UI:$UI" "$H/.config"; chmod 0700 "$H"
+umount /p
+mount -t tmpfs -o mode=0755 tmpfs /newroot/run
+mkdir -p /newroot/run/udev/rules.d /newroot/run/systemd/system/multi-user.target.wants /newroot/run/shboot
+cat > /newroot/run/udev/rules.d/90-shboot-slots.rules <<'EOF'
+SUBSYSTEM=="block", ENV{ID_PART_ENTRY_NAME}=="system_a", SYMLINK+="disk/by-slot/active/system"
+SUBSYSTEM=="block", ENV{ID_PART_ENTRY_NAME}=="boot_a", SYMLINK+="disk/by-slot/active/boot"
+SUBSYSTEM=="block", ENV{ID_PART_ENTRY_NAME}=="persistent", SYMLINK+="disk/by-slot/persistent"
+SUBSYSTEM=="block", ENV{ID_PART_ENTRY_NAME}=="bootconfig", SYMLINK+="disk/by-slot/bootconfig"
+EOF
+mount -o ro /dev/vdb /newroot/usr/lib/modules || log "модули ядра не смонтированы"
+cp /probe.sh /newroot/run/shboot/probe.sh
+cat > /newroot/run/systemd/system/shboot-probe.service <<'EOF'
+[Unit]
+Description=shboot: проверки загрузочного теста
+After=multi-user.target
+[Service]
+Type=simple
+ExecStart=/bin/sh /run/shboot/probe.sh
+EOF
+ln -s ../shboot-probe.service /newroot/run/systemd/system/multi-user.target.wants/shboot-probe.service
+log "сценарий $SC, корень $SYS, persistent $PERS, sheregesh-ui uid $UI"
+umount /proc /sys
+mount --move /dev /newroot/dev 2>/dev/null || umount /dev
+exec switch_root /newroot /sbin/init

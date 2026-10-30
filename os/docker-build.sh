@@ -36,10 +36,14 @@ elif [[ -f "$ROOT/.git" ]]; then
 fi
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --format=%ct)}"
 docker volume create sheregesh-image-work >/dev/null
-exec docker run --rm --privileged --platform linux/arm64 \
+# SHEREGESH_CONTAINER_NAME — имя контейнера (сервис сборки останавливает его по тайм-ауту и отмене, ADR-0018);
+# SHEREGESH_BUILDER_IMAGE — заранее подготовленный сборщик (tools/build/builder.Dockerfile): зависимости
+# rpi-image-gen уже стоят — без apt-get update и install_deps.sh под эмуляцией в каждой сборке.
+NAMEARGS=(); [[ -n "${SHEREGESH_CONTAINER_NAME:-}" ]] && NAMEARGS=(--name "$SHEREGESH_CONTAINER_NAME")
+exec docker run --rm --privileged --platform linux/arm64 ${NAMEARGS[@]+"${NAMEARGS[@]}"} \
   -v "$ROOT":/src:ro -v "$ROOT/build/image":/out -v sheregesh-image-work:/work ${KEYARGS[@]+"${KEYARGS[@]}"} \
   -e CFG="$CFG" -e SHEREGESH_POST_ONLY="${SHEREGESH_POST_ONLY:-}" -e SHEREGESH_BUILD_AS_ROOT="${SHEREGESH_BUILD_AS_ROOT:-}" -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
-  debian:trixie bash -euo pipefail -c '
+  "${SHEREGESH_BUILDER_IMAGE:-debian:trixie}" bash -euo pipefail -c '
     export DEBIAN_FRONTEND=noninteractive
     # Скачанные пакеты контейнера сборки и syft — в постоянном томе /work/cache: повторная сборка их не качает
     # (с devbox загрузки с GitHub и зеркал бывают ~30 КБ/с). Кэш — только скорость: проверки sha/подписей те же.
@@ -47,8 +51,10 @@ exec docker run --rm --privileged --platform linux/arm64 \
     rm -f /etc/apt/apt.conf.d/docker-clean
     echo "Dir::Cache::archives \"/work/cache/apt\";" > /etc/apt/apt.conf.d/90-sheregesh-cache
     echo "== $(date -u +%T) подготовка контейнера сборки"
-    apt-get update -qq && apt-get install -y -qq --no-install-recommends sudo git ca-certificates curl python3 python3-yaml \
-      qt6-l10n-tools zstd rsync >/dev/null
+    PKGS="sudo git ca-certificates curl python3 python3-yaml qt6-l10n-tools zstd rsync"
+    # в готовом сборщике пакеты уже стоят: install без update — проверка за секунды; иначе — как раньше
+    apt-get install -y -qq --no-install-recommends $PKGS >/dev/null 2>&1 \
+      || { apt-get update -qq && apt-get install -y -qq --no-install-recommends $PKGS >/dev/null; }
     id builder >/dev/null 2>&1 || useradd -m -s /bin/bash builder
     echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
     chown builder /work
@@ -74,7 +80,11 @@ exec docker run --rm --privileged --platform linux/arm64 \
     sudo -u builder git -C /work/rpi-image-gen cat-file -e "$RIG_REF^{commit}" 2>/dev/null \
       || sudo -u builder git -C /work/rpi-image-gen fetch -q --depth 1 origin "$RIG_REF"
     sudo -u builder git -C /work/rpi-image-gen checkout -q --force "$RIG_REF"
-    /work/rpi-image-gen/install_deps.sh >/dev/null
+    if [ "$(cat /etc/sheregesh-builder 2>/dev/null)" = "$RIG_REF" ]; then
+      echo "== $(date -u +%T) сборщик с зависимостями rpi-image-gen $RIG_REF — install_deps пропущен"
+    else
+      /work/rpi-image-gen/install_deps.sh >/dev/null
+    fi
     # SBOM: слой sbom rpi-image-gen берёт syft из PATH, иначе ставит через get.anchore.io (с devbox — таймауты,
     # OTA CLOSURE). Та же версия, что в хуке sbom05-syft, — из релиза GitHub с проверкой по checksums.txt.
     SYFT_VER="$(sed -n "s/^SYFT_VER=v\([0-9.]*\).*/\1/p" /work/rpi-image-gen/layer/sbom/sbom.d/hooks/sbom05-syft)"
