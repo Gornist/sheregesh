@@ -51,6 +51,7 @@ from pathlib import Path
 from sheregesh import PROTOCOL_VERSION, __version__, sdnotify, timepeer, video, videoinput, videosources
 from sheregesh.videoingest import Ingest
 from sheregesh.videolink import VideoServer
+from .session import ConsoleSession
 from .videotx import VideoTx
 from sheregesh.control import wire as control_wire
 from sheregesh.control.receiver import ControlReceiver
@@ -88,8 +89,7 @@ class Agent:
         self.hb_delay = 0.0
         self.video_off_until = 0.0
         self.alerts = []
-        self.writer = None
-        self.hb_wait = None                          # monotonic первого heartbeat, на который пульт ещё не ответил
+        self.conn = None                             # текущий сеанс управления (ConsoleSession) или None
         self.written_connected = None                # «connected» в последнем записанном файле состояния
         self.seq = 0
         self.ignored = 0
@@ -101,7 +101,6 @@ class Agent:
         # Локальный профиль (--video, UDP 127.0.0.1): источник находится один раз при запуске, как в S3.3.
         self.video_spec = video_spec(args)
         self.video_rtsp = videosources.rtsp_items(read_video_config(args), self.video_spec)
-        self.video_select = None                    # результат последнего video-select (status.video.select)
         self.scan_kw = {k: v for k, v in (("sys_root", args.video_sys_root), ("dev_root", args.video_dev_root)) if v}
         self.catalog = videosources.Catalog(lambda: (self.video_spec, self.video_rtsp), self.scan_kw)
         self.video_src, self.video_src_error = None, ""
@@ -124,15 +123,13 @@ class Agent:
             self.net_video_codec = video.choose_codec(args.video_codec) if net_video and video.available() \
                 else None
         # Видеосеанс SRTP (ADR-0016): агент — клиент службы sheregesh-video-tx; TLS-видео — резерв (videotx.py)
-        self.peer_addr = None                        # адрес пульта текущего сеанса управления
         self.vtx = VideoTx(send=self.send, log=lambda s: log(s), spec_fn=lambda: self.video_spec,
                            profile_fn=self.video_profile, enabled=not args.no_video)
         self.vtx_task = None                         # опрос службы tx раз в секунду, не задерживает основной цикл
         self.vtx_end_task = None
         self.handshakes = None                       # asyncio.Semaphore: не более 4 рукопожатий одновременно
         self.sent = {}                               # seq heartbeat/event → (тип, monotonic) для ack
-        self.session = None
-        self.peer_desc = None
+        self.peer_desc = None                        # TLS-идентичность последнего прошедшего проверку пульта (secure)
         self.event_k = 0
         self.next_event = time.monotonic() + (args.event_interval or 0)
         self.stats = {"sessions": 0, "auth_failures": 0, "rejected_addr": 0, "peer_timeouts": 0, "acks": 0,
@@ -151,8 +148,6 @@ class Agent:
         self.control = ControlReceiver(time.monotonic, timeout_ms=args.rc_timeout_ms,
                                        log=lambda s: log(f"control: {s}"))
         self.rc_state_at = 0.0                      # monotonic последней отправки rc-state
-        self.hello_writer = None                    # сеанс, чей hello согласовал self.session
-        self.rc_state_sent = None                   # control.transitions в последнем отправленном rc-state
         self.rc_state_task = None                   # отправка rc-state не задерживает такт сторожа
         self.control_written = None                 # control.transitions в последнем записанном файле состояния
 
@@ -203,7 +198,7 @@ class Agent:
             if self.video_codec is None and (src is None or src.available):
                 self.video_codec = video.choose_codec(self.args.video_codec)
 
-    def select_video(self, body):
+    def select_video(self, body, conn):
         """video-select (протокол 1.2): id из status.video.sources → смена источника и сохранение выбора в
         video-input.json. Неизвестный id — ошибка в status.video.select, источник не меняется."""
         sid, req = body.get("id"), body.get("req")
@@ -229,7 +224,7 @@ class Agent:
                         res["error"] = "saved, but --video-source overrides video-input.json at start"
                 except (OSError, ValueError) as e:
                     res["error"] = f"selection not saved: {e}"
-        self.video_select = {"req": req, "id": shown, **res}
+        conn.video_select = {"req": req, "id": shown, **res}
         log(f"video select {shown!r} (req {req}): {res['result']}{': ' + res['error'] if res['error'] else ''}")
 
     def video_status(self):
@@ -242,8 +237,8 @@ class Agent:
         if self.vserver is not None or self.video_codec or self.video_src_error:
             out["source"] = self.video_source_status()
             out["sources"] = self.catalog.snapshot()     # S4: список источников (необязательное поле)
-        if self.video_select is not None:                # результат video-select этого сеанса (протокол 1.2)
-            out["select"] = dict(self.video_select)
+        if self.conn is not None and self.conn.video_select is not None:   # итог video-select этого сеанса (1.2)
+            out["select"] = dict(self.conn.video_select)
         srtp = self.vtx.status()                         # SRTP: фактический транспорт и состояние службы tx
         if srtp is not None:
             out.update(srtp, enabled=True, codec=out.get("codec") or "h264")
@@ -288,11 +283,12 @@ class Agent:
     async def send(self, mtype, body, writer=None):
         """writer — соединение, которому предназначено сообщение: если оно уже заменено или закрыто, не отправляется
         (задачи прежнего сеанса не пишут в новый)."""
-        if self.writer is None or (writer is not None and writer is not self.writer):
+        conn = self.conn
+        if conn is None or (writer is not None and writer is not conn.writer):
             return
         self.seq += 1
-        if mtype == "heartbeat" and self.hb_wait is None:
-            self.hb_wait = time.monotonic()
+        if mtype == "heartbeat" and conn.hb_wait is None:
+            conn.hb_wait = time.monotonic()
         if mtype in ("heartbeat", "event"):
             self.sent[self.seq] = (mtype, time.monotonic())
             if len(self.sent) > 256:
@@ -305,21 +301,24 @@ class Agent:
         log(f"time: peer {detail}" if ok else f"time: peer not set: {detail}")
 
     async def send_raw(self, data: bytes):
-        writer = self.writer
-        if writer is None:
+        conn = self.conn
+        if conn is None:
             return
         try:
-            writer.write(data)
-            await asyncio.wait_for(writer.drain(), DRAIN_TIMEOUT_S)
+            conn.writer.write(data)
+            await asyncio.wait_for(conn.writer.drain(), DRAIN_TIMEOUT_S)
         except (ConnectionError, RuntimeError):
-            if self.writer is writer:
-                self.writer = None
+            self.drop(conn)
         except (asyncio.TimeoutError, TimeoutError):
             log(f"console does not read for {DRAIN_TIMEOUT_S:.0f} s (send buffer full): connection dropped")
             self.stats["peer_timeouts"] += 1
-            writer.transport.abort()
-            if self.writer is writer:
-                self.writer = None
+            conn.writer.transport.abort()
+            self.drop(conn)
+
+    def drop(self, conn):
+        """Сеанс conn больше не текущий (обрыв, bye, отказ версии). Чужой — уже заменённый — не трогается."""
+        if self.conn is conn:
+            self.conn = None
 
     def status_body(self):
         p = self.power.read()
@@ -329,7 +328,7 @@ class Agent:
                 "video": self.video_status(),
                 "active_events": list(self.alerts),
                 "link": {k: v for k, v in self.stats.items() if isinstance(v, (int, float))}}
-        if self.module is not None and "module-cmd" in TYPES.get(self.session or "", ()):
+        if self.module is not None and self.conn is not None and self.conn.established("module-cmd"):
             body["module"] = self.module.status()     # только сессия ≥ 1.3: старый пульт модуль не видит
         return body
 
@@ -379,9 +378,9 @@ class Agent:
                    "long": b'{"pad":"' + b"x" * (70 * 1024) + b'"}\n'}[arg]
             await self.send_raw(raw)
         elif kind == "close":
-            if self.writer:
-                self.writer.close()
-                self.writer = None
+            if self.conn is not None:
+                self.conn.writer.close()
+                self.conn = None
         elif kind == "crash":
             self.video_stop()
             os._exit(70)
@@ -402,19 +401,15 @@ class Agent:
             writer.close()
             return
         await self.vtx.end("control session replaced")   # video-stop уходит ещё старому пульту, пока он не оборван
-        if self.writer is not None:                 # одно соединение: новое заменяет старое (старое могло «повиснуть»)
-            self.writer.transport.abort()
+        if self.conn is not None:                   # одно соединение: новое заменяет старое (старое могло «повиснуть»)
+            self.conn.writer.transport.abort()
         if self.vserver is not None:                # видеосеанс привязан к сеансу управления — новый сеанс, новое видео
             self.vserver.drop("сеанс управления заменён")
-        self.writer = writer
-        self.session = self.hello_writer = None     # согласование версии — заново, своим hello этого соединения
-        self.peer_addr = (writer.get_extra_info("peername") or (None,))[0]
+        # Новый сеанс — новый объект: версия, ожидание heartbeat, итог выбора видео и rc-state прежнего не переходят
+        conn = self.conn = ConsoleSession(writer, (writer.get_extra_info("peername") or (None,))[0])
         if "video-key" in TYPES.get(self.proto, ()):
             await self.vtx.probe()                  # hello объявляет srtp, только если сокет службы tx отвечает
-        self.hb_wait = None
-        self.video_select = None                    # результат выбора — только для сеанса, который его запросил
         self.control.on_link_lost()                 # прежний сеанс (если был) кончился; нумерация кадров — заново
-        self.rc_state_sent = None
         if self.module is not None:
             self.module.new_session()               # и итог команды модулю — тоже
         await self.send("hello", self.info())
@@ -424,31 +419,29 @@ class Agent:
                 data = await reader.read(65536)
                 if not data:
                     break
-                if self.writer is writer:
-                    self.hb_wait = None             # пульт жив: любой приём от него
+                if self.conn is conn:
+                    conn.hb_wait = None             # пульт жив: любой приём от него
                 for msg in dec.feed(data):
-                    if self.writer is not writer:
+                    if self.conn is not conn:
                         break                       # закрытое или заменённое соединение ничего не исполняет
                     await self.on_message(msg, writer)
         except ConnectionError:
             pass
         finally:
-            if self.writer is writer:
-                self.writer = None
-            # Сеанс управления кончился любым путём (обрыв, EOF, «bye» — тот уже обнулил writer): если он не заменён
+            self.drop(conn)
+            # Сеанс управления кончился любым путём (обрыв, EOF, «bye» — тот уже снял сеанс): если он не заменён
             # новым, видео закрывается. Новый сеанс сам закрыл видео при подключении.
-            if self.writer is None and self.vserver is not None:
+            if self.conn is None and self.vserver is not None:
                 self.vserver.drop("сеанс управления завершён")
-            if self.writer is None:
+            if self.conn is None:
                 await self.vtx.end("control session closed")
-            if self.writer is None:                 # не заменён новым: команды органов управления — FAILSAFE сразу
+            if self.conn is None:                   # не заменён новым: команды органов управления — FAILSAFE сразу
                 self.control.on_link_lost()
-                self.session = self.hello_writer = None
             writer.close()
 
     def authorize_video(self, addr):
         """Видеосеанс — только тому же пульту (URI проверен TLS) и с того же адреса, что текущий сеанс управления."""
-        if self.writer is None or self.peer_desc is None:
+        if self.conn is None or self.peer_desc is None:
             return "no active control session"
         if not self.vtx.tls_allowed:
             return "srtp video session"
@@ -493,31 +486,30 @@ class Agent:
         пока нечего подтверждать. В сессии с ack пульт отвечает на каждый heartbeat; нет ни одного байта от пульта дольше
         --peer-timeout после отправленного heartbeat — соединение разрывается (REQ-SYS-002: «нет связи» ≤ 5 с на обеих
         сторонах). abort, а не close: неотправленный буфер на мёртвое соединение не держит сокет до таймаута TCP."""
-        limit = self.args.peer_timeout
-        if not (limit and self.writer is not None and self.hb_wait is not None
-                and "ack" in TYPES.get(self.session or "", ()) and mono - self.hb_wait > limit):
+        limit, conn = self.args.peer_timeout, self.conn
+        if not (limit and conn is not None and conn.hb_wait is not None and conn.established("ack")
+                and mono - conn.hb_wait > limit):
             return
         self.stats["peer_timeouts"] += 1
-        log(f"console silent {mono - self.hb_wait:.1f} s (no ack): connection dropped")
-        self.writer.transport.abort()
-        self.writer = None
-        self.hb_wait = None
+        log(f"console silent {mono - conn.hb_wait:.1f} s (no ack): connection dropped")
+        conn.writer.transport.abort()
+        self.drop(conn)
         self.control.on_link_lost()
         if self.vserver is not None:
             self.vserver.drop("пульт не отвечает")
         self.vtx_end_task = asyncio.ensure_future(self.vtx.end("console silent"))
 
-    def established(self, writer, mtype) -> bool:
-        """Прикладная команда исполняется только в сеансе актуального соединения после его собственного hello и только
-        если согласованная версия её знает. Проверяется перед каждым изменением общего состояния, в том числе после
+    def established(self, conn, mtype) -> bool:
+        """Прикладная команда исполняется только в текущем сеансе после его собственного hello и только если
+        согласованная версия её знает. Проверяется перед каждым изменением общего состояния, в том числе после
         await."""
-        return writer is self.writer and writer is self.hello_writer and mtype in TYPES.get(self.session or "", ())
+        return conn is not None and conn is self.conn and conn.established(mtype)
 
     async def on_message(self, msg, writer=None):
         """Сообщение соединения writer (по умолчанию — текущего). Сообщения заменённого или закрытого соединения не
         исполняются: они не закрывают новое соединение и не меняют его версию, видео и выход управления."""
-        writer = self.writer if writer is None else writer
-        if writer is None or writer is not self.writer:
+        conn = self.conn
+        if conn is None or (writer is not None and writer is not conn.writer):
             self.ignored += 1
             return
         if isinstance(msg, BadMessage):
@@ -526,65 +518,78 @@ class Agent:
             return
         mtype, body = msg["type"], msg["body"]
         if mtype == "hello":
-            n = negotiate(self.proto, body.get("proto"), body.get("software"), body.get("hardware"))
-            log(f"hello from console proto={body.get('proto')} -> {n.reason}")
-            self.session = n.session if n.compatible else None
-            self.hello_writer = writer if n.compatible else None
-            if self.peer_desc is not None:          # что сообщил пульт — для проверки версий в sheregesh-health
-                self.peer_desc["hello"] = {k: body.get(k) for k in ("proto", "software", "hardware")}
-            if not n.compatible:
-                await self.send("error", {"code": "PEER-INCOMPAT", "reason": n.reason, "local": self.proto}, writer)
-                writer.close()
-                if self.writer is writer:
-                    self.writer = None
-            else:                                   # выбор транспорта видео (SRTP при 1.5 и объявлении обеих сторон)
-                peer_ip = self.peer_desc.get("addr") if self.peer_desc else self.peer_addr
-                if self.tls_cfg is not None:        # ADR-0017: пульт — источник времени блока (сеть стенда)
-                    self.time_task = asyncio.create_task(self.time_peer(peer_ip))
-                await self.vtx.begin(body, peer_ip, n.session)
-                if self.writer is not writer and self.hello_writer is None:
-                    await self.vtx.end("control session replaced")   # заменён во время выбора: видео не для него
+            await self.on_hello(conn, body)
         elif mtype == "bye":
-            writer.close()
-            if self.writer is writer:
-                self.writer = None
-        elif mtype == "video-select" and self.established(writer, mtype):
-            self.select_video(body)
-            if self.established(writer, mtype):
-                await self.vtx.on_select()          # SRTP: новое поколение с новым источником
-        elif mtype in ("video-key-ack", "video-fallback", "video-renew") and self.established(writer, mtype):
-            await self.vtx.on_message(mtype, body)
-        elif mtype == "module-cmd" and self.established(writer, mtype):
-            if self.module is not None:
-                self.module.command(body)
-                if self.writer is writer:           # итог (или pending) — сразу, не ждать heartbeat
-                    await self.send_status()
-            else:                                   # подсистема выключена: status.module нет, пульт видит «absent»
-                self.ignored += 1
-                log("module-cmd ignored: module subsystem disabled (--no-module)")
-        elif mtype == "rc" and self.established(writer, mtype):
-            mono = time.monotonic()
-            try:
-                self.control.on_rc(control_wire.check_rc(body), mono)
-            except control_wire.BadRc as e:
-                self.control.on_bad(e.text, mono)
-            self.control_tick(mono)                 # переход — rc-state сразу
-        elif mtype == "ack" and writer is self.hello_writer and mtype in TYPES.get(self.session or "", ()):
-            sent = self.sent.pop(body.get("seq"), None) if isinstance(body.get("seq"), int) else None
-            if sent:
-                rtt = (time.monotonic() - sent[1]) * 1000
-                st = self.stats
-                st["acks"] += 1
-                st["rtt_last_ms"] = round(rtt, 2)
-                st["rtt_avg_ms"] = round(rtt if st["rtt_avg_ms"] is None else st["rtt_avg_ms"] * 0.95 + rtt * 0.05, 2)
-                st["rtt_max_ms"] = round(max(rtt, st["rtt_max_ms"] or 0), 2)
-                if sent[0] == "event":
-                    st["events_acked"] += 1
+            conn.writer.close()
+            self.drop(conn)
+        elif mtype in self.HANDLERS and self.established(conn, mtype):
+            await self.HANDLERS[mtype](self, conn, mtype, body)
         else:
-            # Ничего не исполняется: неизвестные и не предназначенные блоку типы только учитываются.
+            # Ничего не исполняется: неизвестные, не предназначенные блоку и не согласованные этим сеансом типы.
             self.ignored += 1
             if mtype not in TYPES.get(self.proto, ()):
                 log(f"ignored unknown message type {mtype!r}")
+
+    # ---------- приём: обработчики по типу (вызываются только для текущего сеанса после его hello) ----------
+    async def on_hello(self, conn, body):
+        n = negotiate(self.proto, body.get("proto"), body.get("software"), body.get("hardware"))
+        log(f"hello from console proto={body.get('proto')} -> {n.reason}")
+        conn.version = n.session if n.compatible else None
+        if self.peer_desc is not None:              # что сообщил пульт — для проверки версий в sheregesh-health
+            self.peer_desc["hello"] = {k: body.get(k) for k in ("proto", "software", "hardware")}
+        if not n.compatible:
+            await self.send("error", {"code": "PEER-INCOMPAT", "reason": n.reason, "local": self.proto}, conn.writer)
+            conn.writer.close()
+            self.drop(conn)
+            return
+        # выбор транспорта видео (SRTP при 1.5 и объявлении обеих сторон)
+        peer_ip = self.peer_desc.get("addr") if self.peer_desc else conn.addr
+        if self.tls_cfg is not None:                # ADR-0017: пульт — источник времени блока (сеть стенда)
+            self.time_task = asyncio.create_task(self.time_peer(peer_ip))
+        await self.vtx.begin(body, peer_ip, n.session)
+        if self.conn is not conn:
+            await self.vtx.end("control session replaced")   # заменён во время выбора: видео не для него
+
+    async def on_video_select(self, conn, mtype, body):
+        self.select_video(body, conn)
+        if self.established(conn, mtype):
+            await self.vtx.on_select()              # SRTP: новое поколение с новым источником
+
+    async def on_video_session(self, conn, mtype, body):
+        await self.vtx.on_message(mtype, body)
+
+    async def on_module_cmd(self, conn, mtype, body):
+        if self.module is None:                     # подсистема выключена: status.module нет, пульт видит «absent»
+            self.ignored += 1
+            log("module-cmd ignored: module subsystem disabled (--no-module)")
+            return
+        self.module.command(body)
+        if self.conn is conn:                       # итог (или pending) — сразу, не ждать heartbeat
+            await self.send_status()
+
+    async def on_rc(self, conn, mtype, body):
+        mono = time.monotonic()
+        try:
+            self.control.on_rc(control_wire.check_rc(body), mono)
+        except control_wire.BadRc as e:
+            self.control.on_bad(e.text, mono)
+        self.control_tick(mono)                     # переход — rc-state сразу
+
+    async def on_ack(self, conn, mtype, body):
+        sent = self.sent.pop(body.get("seq"), None) if isinstance(body.get("seq"), int) else None
+        if not sent:
+            return
+        rtt = (time.monotonic() - sent[1]) * 1000
+        st = self.stats
+        st["acks"] += 1
+        st["rtt_last_ms"] = round(rtt, 2)
+        st["rtt_avg_ms"] = round(rtt if st["rtt_avg_ms"] is None else st["rtt_avg_ms"] * 0.95 + rtt * 0.05, 2)
+        st["rtt_max_ms"] = round(max(rtt, st["rtt_max_ms"] or 0), 2)
+        if sent[0] == "event":
+            st["events_acked"] += 1
+
+    HANDLERS = {"video-select": on_video_select, "video-key-ack": on_video_session, "video-fallback": on_video_session,
+                "video-renew": on_video_session, "module-cmd": on_module_cmd, "rc": on_rc, "ack": on_ack}
 
     # ---------- органы управления ----------
     def control_tick(self, mono):
@@ -593,15 +598,15 @@ class Agent:
         self.control.tick(mono)
         if self.module is not None:
             self.module.set_control(self.control.state(), *self.control.outputs(), deadline=self.control.deadline())
-        if self.writer is None or self.hello_writer is not self.writer \
-                or "rc-state" not in TYPES.get(self.session or "", ()) or self.now() < self.silent_until:
+        conn = self.conn
+        if conn is None or not conn.established("rc-state") or self.now() < self.silent_until:
             return                                  # нет сеанса, его hello ещё не принят, сессия < 1.4 или silence
         if self.rc_state_task is not None and not self.rc_state_task.done():
             return
         period = RC_STATE_IDLE_S if self.control.state() == "IDLE" else RC_STATE_ACTIVE_S
-        if self.control.transitions != self.rc_state_sent or mono - self.rc_state_at >= period:
-            self.rc_state_at, self.rc_state_sent = mono, self.control.transitions
-            self.rc_state_task = asyncio.ensure_future(self.send("rc-state", self.control.snapshot(mono), self.writer))
+        if self.control.transitions != conn.rc_state_sent or mono - self.rc_state_at >= period:
+            self.rc_state_at, conn.rc_state_sent = mono, self.control.transitions
+            self.rc_state_task = asyncio.ensure_future(self.send("rc-state", self.control.snapshot(mono), conn.writer))
 
     async def control_ticker(self):
         while True:
@@ -625,13 +630,13 @@ class Agent:
                 self.vtx_task = asyncio.ensure_future(self.vtx.tick())
             if self.module is not None:
                 self.module.tick()                    # миллисекунды: события эмулятора и таймеры, без ожиданий
-            if self.args.status_file and (mono >= next_status or (self.writer is not None) != self.written_connected
+            if self.args.status_file and (mono >= next_status or (self.conn is not None) != self.written_connected
                                           or (self.module is not None and self.module.seq != self.module_seq_written)
                                           or self.control.transitions != self.control_written):
                 self.write_status()                   # смена «есть/нет пульта», состояния модуля и команд — сразу,
                 # иначе раз в 2 с
                 next_status = mono + 2.0
-            if self.args.event_interval and self.writer is not None and mono >= self.next_event:
+            if self.args.event_interval and self.conn is not None and mono >= self.next_event:
                 self.event_k += 1
                 await self.send("event", {"code": "EMU-TEST", "detail": str(self.event_k)})
                 self.stats["events_sent"] += 1
@@ -655,15 +660,15 @@ class Agent:
                 await self.send("heartbeat", {"uptime_s": round(t, 1)})
                 await self.send_status()
                 next_hb = time.monotonic() + self.args.heartbeat_interval
-            elif self.module is not None and self.writer is not None and t >= self.silent_until \
+            elif self.module is not None and self.conn is not None and t >= self.silent_until \
                     and self.module_key() != self.module_sent and mono - self.last_status >= MODULE_STATUS_MIN_S:
                 await self.send_status()              # смена состояния модуля или итога команды — внеочередной status
 
     def write_status(self):
         """Состояние канала для sheregesh-health (RuntimeDirectory службы), атомарно."""
         st = {"role": "remote", "time": time.time(), "software": __version__, "proto": self.proto,
-              "tls": self.ctx is not None, "listen": f"{self.args.host}:{self.port}", "connected": self.writer is not None,
-              "session": self.session if self.writer is not None else None, "peer": self.peer_desc, "stats": self.stats,
+              "tls": self.ctx is not None, "listen": f"{self.args.host}:{self.port}", "connected": self.conn is not None,
+              "session": self.conn.version if self.conn is not None else None, "peer": self.peer_desc, "stats": self.stats,
               "own_uri": self.tls_cfg.own_uri if self.tls_cfg else None,
               "video": self.vserver.stats() if self.vserver is not None else None,
               "module": self.module.health() if self.module is not None else None,

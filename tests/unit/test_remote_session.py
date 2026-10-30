@@ -121,7 +121,7 @@ def test_new_connection_without_hello_does_not_control(monkeypatch):
         c2.send("video-select", {"req": 3, "id": "synthetic"})
         await settle()
         assert a.control.state() == "FAILSAFE" and a.control.frames == frames
-        assert a.module.cmd is cmd is None and a.video_select is None
+        assert a.module.cmd is cmd is None and a.conn.video_select is None
         assert "rc-state" not in c2.writer.types() and "status" not in c2.writer.types()
         c2.hello()                                   # свой hello — с этого момента сеанс есть, нумерация с n=1
         c2.rc(1)
@@ -146,7 +146,7 @@ def test_stale_connection_messages_do_not_touch_new_session(monkeypatch):
         await settle()
         c2.hello()
         await settle()
-        assert a.writer is c2.writer and a.control.state() == "FAILSAFE"
+        assert a.conn.writer is c2.writer and a.control.state() == "FAILSAFE"
         # Принятое до обрыва, но обработанное после замены: прежнее соединение не исполняется
         await a.on_message({"type": "rc", "body": {"n": 2, "en": True, "ch": CH, "btn": 5, "dev": DEV}},
                            c1.writer)
@@ -154,8 +154,8 @@ def test_stale_connection_messages_do_not_touch_new_session(monkeypatch):
         await a.on_message({"type": "hello", "body": {"proto": "1.0", "software": "x", "hardware": "y"}},
                            c1.writer)
         await settle()
-        assert a.writer is c2.writer and not c2.writer.closed
-        assert a.control.state() == "FAILSAFE" and a.session is not None and a.hello_writer is c2.writer
+        assert a.conn.writer is c2.writer and not c2.writer.closed
+        assert a.control.state() == "FAILSAFE" and a.conn.version is not None and a.conn.writer is c2.writer
         c2.rc(1)
         await settle()
         assert a.control.state() == "ACTIVE"
@@ -179,7 +179,7 @@ def test_incompatible_hello_gives_no_session(monkeypatch):
         c2.hello(proto="9.0")
         await settle()
         assert "error" in c2.writer.types() and c2.writer.closed
-        assert a.session is None and a.hello_writer is None
+        assert a.conn is None or a.conn.version is None
         assert a.control.state() == "FAILSAFE"
     run(body())
     a.module.close()
@@ -212,11 +212,11 @@ def test_replaced_during_video_begin_ends_stale_video(monkeypatch):
         assert calls[-1] == "begin"                  # handle() перед ним закрывает видео прежнего соединения
         c2 = Conn(a)                                 # замена, пока begin прежнего сеанса не завершён
         await settle()
-        assert a.writer is c2.writer and a.hello_writer is None
+        assert a.conn.writer is c2.writer and a.conn.version is None
         gate.set()
         await settle(40)
         assert "begun" in calls and calls[-1] == "end:control session replaced"   # закрыто после выбора
-        assert a.writer is c2.writer and a.session is None and not c2.writer.closed
+        assert a.conn.writer is c2.writer and a.conn.version is None and not c2.writer.closed
         c2.reader.feed_eof()
         await settle()
     run(body())
