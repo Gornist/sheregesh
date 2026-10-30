@@ -127,6 +127,20 @@ def test_auto_mode_uses_real_device_modes(v4l2):
     assert vi.open_v4l2("534d:2109", **other.scan_kw()).mode == vi.Mode(1280, 720, 30, "MJPG")
 
 
+def test_auto_mode_prefers_720p60_without_decoding(v4l2):
+    # 720p60 сокращает задержку «стекло–стекло» (стенд 2026-10-30: p50 139 → 122 мс): кадры YUYV/UYVY идут в аппаратный
+    # кодер без декодирования. MJPEG 60 к/с программный jpegdec блока не тянет — для MJPEG по-прежнему 720p30.
+    raw60 = [("YUYV", "discrete", [((1920, 1080), [60, 30]), ((1280, 720), [60, 30])]),
+             ("MJPG", "discrete", [((1920, 1080), [60, 30]), ((1280, 720), [60, 30])])]
+    v4l2.add("video0", "uvcvideo", "USB3.0 UHD", 0, ("345f", "2130", "20210623"), formats=raw60)   # MS2130, USB 3.0
+    assert vi.open_v4l2(**v4l2.scan_kw()).mode == vi.Mode(1280, 720, 60, "YUYV")
+    assert vi.open_v4l2(fmt="mjpeg", **v4l2.scan_kw()).mode == vi.Mode(1280, 720, 30, "MJPG")
+    mjpeg_only = FakeV4L2(v4l2.root / "mjpeg")
+    mjpeg_only.add("video0", "uvcvideo", "HDMI Capture", 0, ("534d", "2109", ""),
+                   formats=[("MJPG", "discrete", [((1280, 720), [60, 30])]), ("YUYV", "discrete", [((1280, 720), [10])])])
+    assert vi.open_v4l2(**mjpeg_only.scan_kw()).mode == vi.Mode(1280, 720, 30, "MJPG")       # MS2109: USB 2.0
+
+
 def test_m2m_and_vbi_nodes_are_not_capture(v4l2):
     v4l2.add("video5", "some-m2m", "scaler", 0, caps=vi.V4L2_CAP_VIDEO_M2M | vi.V4L2_CAP_VIDEO_CAPTURE)
     v4l2.add("video6", "em28xx", "em28xx vbi", 0, ("eb1a", "2861", ""), caps=0x10)     # V4L2_CAP_VBI_CAPTURE

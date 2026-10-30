@@ -117,10 +117,13 @@ STANDARDS = {"PAL": (V4L2_STD_625_50, 720, 576, 25, ""), "NTSC": (V4L2_STD_525_6
 # одного семейства). VIDIOC_G_STD для этого не годится: он возвращает умолчание драйвера (usbtv, stk1160 — NTSC),
 # а не стандарт сигнала. Источник NTSC на usbtv задаётся явно: «standard»: «ntsc».
 DEFAULT_STANDARD = "PAL"
-# «mode: auto» — 720p30 раньше 1080p30: MJPEG HDMI-захвата (MS2109 даёт YUYV ≥ 720p только 5–10 к/с) на блоке
+# «mode: auto» — сначала 720p60 без декодирования (YUYV/UYVY прямо в аппаратный кодер): задержка «стекло–стекло» на
+# стенде 139 → 122 мс против 720p30 (docs/acceptance/g2g/REPORT.md). 1080p больше 30 к/с аппаратный кодер Pi 4 не
+# принимает, а 1080p30 медленнее 720p (170 мс). Дальше — как раньше: 720p30 раньше 1080p30: MJPEG HDMI-захвата (MS2109 даёт YUYV ≥ 720p только 5–10 к/с) на блоке
 # декодируется программно (jpegdec, одно ядро Cortex-A72), а 1080p30 — 2,25× пикселей 720p30 и на пределе одного
 # ядра; канал 6 Мбит/с и экран пульта 1280×800 выигрыша от 1080p не показывают. 1080p30 — если 720p30 у устройства
 # нет или он задан явно (docs/hardware/VIDEO_CAPTURE_COMPAT.md §0.3).
+_AUTO_RAW_FIRST = ((1280, 720, 60, ("yuyv", "uyvy")),)       # MJPEG 60 к/с программный jpegdec блока не тянет
 _AUTO_PREFERENCE = ((1280, 720, 30), (1920, 1080, 30), (1280, 720, 60), (1920, 1080, 60), (1280, 720, 25),
                     (1920, 1080, 25), (720, 576, 25), (720, 480, 30), (640, 480, 30))
 
@@ -774,9 +777,15 @@ def select_mode(modes, width, height, fps, fmt="auto"):
 
 
 def auto_mode(modes, fmt="auto"):
-    """«mode: auto»: первый из типичных режимов (_AUTO_PREFERENCE), иначе наибольший размер при ≥ 25 к/с, иначе
-    любой. Только используемые форматы."""
+    """«mode: auto»: 720p60 без декодирования (_AUTO_RAW_FIRST), затем первый из типичных режимов (_AUTO_PREFERENCE),
+    иначе наибольший размер при ≥ 25 к/с, иначе любой. Только используемые форматы."""
     usable = [m for m in modes if m.pixfmt in FORMATS and (fmt == "auto" or FORMATS[m.pixfmt] == fmt)]
+    for w, h, fps, raws in _AUTO_RAW_FIRST:
+        for raw in raws:
+            if fmt in ("auto", raw):
+                m = select_mode(usable, w, h, fps, raw)
+                if m is not None:
+                    return m
     for w, h, fps in _AUTO_PREFERENCE:
         m = select_mode(usable, w, h, fps, fmt)
         if m is not None:
