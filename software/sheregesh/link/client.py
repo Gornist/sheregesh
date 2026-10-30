@@ -23,7 +23,6 @@ import ssl
 import threading
 import time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,7 +32,8 @@ from ..faults import CATALOG
 from ..hal import PeerStatus
 from ..module import wire
 from ..protocol import negotiate
-from . import tls
+from . import discovery, tls
+from .requests import LOST, OFFLINE, QUEUED, UNSUPPORTED, Requests
 from .codec import TYPES, BadMessage, Decoder, encode
 
 BACKOFF_S = (0.5, 1.0, 2.0, 4.0)       # задержка переподключения; не реже раза в 4 с (критерий ≤ 10 с)
@@ -84,7 +84,7 @@ class PeerClient:
             self.hosts = [host]
             self.ctx = None
         else:
-            cache = _read_cache(tls_cfg)
+            cache = discovery.read_cache(tls_cfg)
             self.hosts = list(dict.fromkeys(h for h in [host, *tls_cfg.peer_hosts, cache] if h))
             for h in self.hosts:
                 try:
@@ -113,10 +113,7 @@ class PeerClient:
         self._seq = 0
         self._last_peer_seq = None
         self._outbox = []                   # (тип, тело) от других потоков; отправляет только поток канала
-        self._vsel_req = 0
-        self._vsel = None                   # последний запрос выбора видеоисточника (snapshot()["video_select"])
-        self._mcmd_req = 0
-        self._mcmd = None                   # последняя команда внешнему модулю (snapshot()["module_cmd"])
+        self._req = Requests()              # video-select и module-cmd: номер и состояние последнего (requests.py)
         # Органы управления (протокол 1.4, ADR-0013): только последний кадр, не очередь; номер n — в потоке канала
         # при отправке (новое соединение — с 1), поэтому перезаписанные до отправки кадры не дают пропусков номеров.
         self._rc = None                     # тело последнего кадра rc без n, ещё не отправленное
@@ -167,34 +164,39 @@ class PeerClient:
         if not isinstance(source_id, str) or not VIDEO_SOURCE_ID.fullmatch(source_id):
             raise ValueError(f"bad video source id {source_id!r}")
         with self._lock:
-            self._vsel_req += 1
-            req = self._vsel_req
+            req = self._req.new("video-select")
             if self._st.phase != "connected":
-                state = "offline"
+                state = OFFLINE
             elif "video-select" not in TYPES.get(self._st.session or "", ()):
-                state = "unsupported"
+                state = UNSUPPORTED
             else:
-                state = "queued"
+                state = QUEUED
                 self._outbox.append(("video-select", {"id": source_id, "req": req}))
-            self._vsel = {"req": req, "id": source_id, "state": state}
-        if state == "queued":
+            self._req.open("video-select", req, state, id=source_id)
+        if state == QUEUED:
             self._wake()
-        if state == "offline":
+        if state == OFFLINE:
             return {"ok": False, "error": "not-connected", "detail": "no link to remote unit"}
-        if state == "unsupported":
+        if state == UNSUPPORTED:
             return {"ok": False, "error": "unsupported", "detail": "remote unit does not support video-select (1.1)"}
         deadline = time.monotonic() + max(0.0, wait_s)
         while time.monotonic() < deadline and not self._stop.is_set():
             with self._lock:
                 sel = ((self._st.telemetry or {}).get("video") or {}).get("select")
-                if self._vsel and self._vsel["state"] == "offline":
+                if self._req.state("video-select", req) == OFFLINE:
                     return {"ok": False, "error": "not-connected", "detail": "link lost before sending"}
+                if sel and sel.get("req") == req:
+                    self._req.completed("video-select", req)
             if sel and sel.get("req") == req:
                 if sel["result"] == "ok":
                     return None
                 return {"ok": False, "error": "unknown" if sel["result"] == "unknown-id" else "unavailable",
                         "detail": sel.get("error", "")}
             time.sleep(0.05)
+        # Итога нет: принято (переключение видно по sources[].active); в состоянии — timeout или unknown (обрыв)
+        with self._lock:
+            if wait_s > 0:
+                self._req.timed_out("video-select", req)
         return None
 
     def send_video(self, mtype: str, body: dict) -> bool:
@@ -237,8 +239,7 @@ class PeerClient:
         неверные args — проверка wire.check_command до отправки). Состояние запроса —
         snapshot()["module_cmd"] = {"req", "op", "state": queued|sent|offline|unsupported}."""
         with self._lock:
-            self._mcmd_req += 1
-            req = self._mcmd_req
+            req = self._req.new("module-cmd")
         body = {"req": req, "op": op, "args": dict(args or {})}
         try:
             wire.check_command(body)
@@ -247,21 +248,21 @@ class PeerClient:
         with self._lock:
             st = self._st
             if st.phase != "connected":
-                state = "offline"
+                state = OFFLINE
             elif "module-cmd" not in TYPES.get(st.session or "", ()):
-                state = "unsupported"
+                state = UNSUPPORTED
             elif st.telemetry is not None and "module" not in st.telemetry:
-                state = "unsupported"               # блок 1.3 без подсистемы модуля (--no-module)
+                state = UNSUPPORTED                 # блок 1.3 без подсистемы модуля (--no-module)
             else:
-                state = "queued"
+                state = QUEUED
                 self._outbox.append(("module-cmd", body))
-            self._mcmd = {"req": req, "op": op, "state": state}
+            self._req.open("module-cmd", req, state, op=op)
             connects = self.counters.connects
-        if state == "queued":
+        if state == QUEUED:
             self._wake()
-        if state == "offline":
+        if state == OFFLINE:
             return {"ok": False, "result": "not-connected", "error": "no link to remote unit", "req": req}
-        if state == "unsupported":
+        if state == UNSUPPORTED:
             return {"ok": False, "result": "unsupported", "req": req,
                     "error": "remote unit does not support the external module"
                              + (f" (protocol {st.session})" if st.session and "module-cmd" not in TYPES.get(st.session, ())
@@ -271,9 +272,12 @@ class PeerClient:
         while not self._stop.is_set():
             with self._lock:
                 cmd = ((self._st.telemetry or {}).get("module") or {}).get("cmd")
-                lost = (self._mcmd is not None and self._mcmd["req"] == req and self._mcmd["state"] == "offline") \
+                done = bool(cmd and cmd.get("req") == req and cmd.get("result") != "pending")
+                if done:
+                    self._req.completed("module-cmd", req)
+                lost = self._req.state("module-cmd", req) in LOST \
                     or self.counters.connects != connects or self._st.phase != "connected"
-            if cmd and cmd.get("req") == req and cmd.get("result") != "pending":
+            if done:
                 return {"ok": cmd["result"] == "ok", "result": cmd["result"], "error": cmd.get("error", ""), "req": req}
             if lost:
                 return {"ok": False, "result": "not-connected", "req": req,
@@ -281,6 +285,8 @@ class PeerClient:
             if time.monotonic() >= deadline:
                 break
             time.sleep(0.05)
+        with self._lock:
+            self._req.timed_out("module-cmd", req)
         return {"ok": False, "result": "timeout", "req": req,
                 "error": f"no result in {wait_s:g} s" + (" (still pending)" if cmd and cmd.get("req") == req else "")}
 
@@ -325,8 +331,8 @@ class PeerClient:
                     "host": st.host, "port": self.port, "tls": st.tls, "secure": self.ctx is not None,
                     "lost_s": None if st.lost_at is None else round(time.monotonic() - st.lost_at, 1),
                     "peer_uri": self.tls_cfg.peer_uri if self.tls_cfg else None,
-                    "video_select": dict(self._vsel) if self._vsel else None,
-                    "module_cmd": dict(self._mcmd) if self._mcmd else None,
+                    "video_select": self._req.snapshot("video-select"),
+                    "module_cmd": self._req.snapshot("module-cmd"),
                     "rc_state": self._rc_state_snapshot(), "rc_sent": self._rc_sent_snapshot()}
 
     def _rc_state_snapshot(self):
@@ -418,8 +424,10 @@ class PeerClient:
         self._set(phase="connecting", detail="refused" if refused else "timeout", last_rx=None)
         if self.ctx is not None and self.tls_cfg.discover and time.monotonic() - self._last_discover > DISCOVER_EVERY_S:
             self._last_discover = time.monotonic()
-            h = self._discover()
+            h = discovery.discover(self.tls_cfg.discover, self.port, self._tls)
             if h:
+                self.hosts = list(dict.fromkeys([h, *self.hosts]))
+                discovery.write_cache(self.tls_cfg, h)
                 try:
                     return socket.create_connection((h, self.port), timeout=2.0), h
                 except OSError:
@@ -445,39 +453,6 @@ class PeerClient:
             self._event("LINK-AUTH-FAIL", reason=why)
             return None
         return sock
-
-    def _discover(self):
-        """Поиск второй стороны в подсети eth0 (или discover=CIDR): открытый порт → TLS → URI из конфигурации."""
-        spec = self.tls_cfg.discover
-        nets = [ipaddress.ip_network(spec, strict=False)] if spec and spec != "auto" else \
-            [n.network for n in tls.local_networks() if n.network.prefixlen >= 22]
-        hosts = [str(ip) for net in nets for ip in net.hosts()][:1024]
-        if not hosts:
-            return None
-
-        def probe(h):
-            try:
-                with socket.create_connection((h, self.port), timeout=0.4):
-                    return h
-            except OSError:
-                return None
-        with ThreadPoolExecutor(64) as ex:
-            candidates = [h for h in ex.map(probe, hosts) if h]
-        for h in candidates:
-            try:
-                raw = socket.create_connection((h, self.port), timeout=2.0)
-            except OSError:
-                continue
-            sock = self._tls(raw, h)
-            if sock is not None:
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-                self.hosts = list(dict.fromkeys([h, *self.hosts]))
-                _write_cache(self.tls_cfg, h)
-                return h
-        return None
 
     def _write_status(self, force=False):
         """Состояние канала для sheregesh-health (без ключей), не чаще раза в 2 с."""
@@ -584,11 +559,7 @@ class PeerClient:
         finally:
             self._sock = None
             with self._lock:
-                for mtype, body in self._outbox:          # соединение потеряно до отправки
-                    if mtype == "video-select" and self._vsel and self._vsel["req"] == body["req"]:
-                        self._vsel["state"] = "offline"
-                    if mtype == "module-cmd" and self._mcmd and self._mcmd["req"] == body["req"]:
-                        self._mcmd["state"] = "offline"
+                self._req.lost()                          # неотправленные — offline, отправленные — итог неизвестен
                 self._outbox.clear()
                 self._rc = None                           # неотправленный кадр устарел: в новое соединение не идёт
             try:
@@ -672,14 +643,9 @@ class PeerClient:
             if mtype not in TYPES.get(self._st.session or "", ()):
                 continue
             self._send(sock, mtype, body)                # OSError — обрыв: обрабатывает _session
-            if mtype == "video-select":
+            if mtype in ("video-select", "module-cmd"):
                 with self._lock:
-                    if self._vsel and self._vsel["req"] == body["req"]:
-                        self._vsel["state"] = "sent"
-            elif mtype == "module-cmd":
-                with self._lock:
-                    if self._mcmd and self._mcmd["req"] == body["req"]:
-                        self._mcmd["state"] = "sent"
+                    self._req.sent(mtype, body["req"])
         with self._lock:
             rc, self._rc = self._rc, None
             if rc is None or "rc" not in TYPES.get(self._st.session or "", ()):
@@ -696,20 +662,6 @@ class PeerClient:
                 self._send(self._sock, "ack", {"seq": seq})
             except OSError:
                 pass
-
-
-def _read_cache(cfg):
-    try:
-        return json.loads((cfg.dir / "peer-cache.json").read_text()).get("host")
-    except (OSError, ValueError, AttributeError):
-        return None
-
-
-def _write_cache(cfg, host):
-    try:
-        (cfg.dir / "peer-cache.json").write_text(json.dumps({"host": host, "time": time.time()}))
-    except OSError:
-        pass
 
 
 # Те же наборы, что у пульта (sheregesh_console/videosource.py: INPUTS, SOURCE_STATES)

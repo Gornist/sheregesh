@@ -173,7 +173,7 @@ def test_sources_list_select_persist_and_reload_after_restart(lab, tmp_path):
         res = u.select("rtsp:0")
         assert res["result"] == "ok" and res["id"] == "rtsp:0" and res["error"] == "", res
         assert wait_for(lambda: u.source().get("type") == "rtsp" and u.source().get("state") == "streaming", 10)
-        assert u.active() == ["rtsp:0"] and u.pc.snapshot()["video_select"]["state"] == "sent"
+        assert u.active() == ["rtsp:0"] and u.pc.snapshot()["video_select"]["state"] == "completed"
         saved = json.loads((tmp_path / "video-input.json").read_text())
         assert saved["source"] == "rtsp" and saved["url"].endswith(f":{cam.port}/cam") and len(saved["rtsp_urls"]) == 2
         # неизвестный id: ошибка в телеметрии, источник и файл не меняются

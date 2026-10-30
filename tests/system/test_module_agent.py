@@ -153,7 +153,7 @@ def test_commands_and_lab_scenarios(unit):
     assert m["error"]["code"] == "MOD-IFACE-ERROR" and m["error"]["active"] is False
     assert u.cmd("reset")["result"] == "ok"
     assert u.mod()["cmd"] == {"req": u.pc.snapshot()["module_cmd"]["req"], "op": "reset", "result": "ok", "error": ""}
-    assert u.pc.snapshot()["module_cmd"]["state"] == "sent"
+    assert u.pc.snapshot()["module_cmd"]["state"] == "completed"              # итог получен (requests.py)
     assert u.cmd("lab", {"scenario": "arm"})["result"] == "bad-request"           # отвергнуто до отправки
     assert u.cmd("fly")["result"] == "bad-request"
     assert u.cmd("configure", {"profile": "no-such-module"})["result"] == "invalid"
