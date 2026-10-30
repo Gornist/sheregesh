@@ -96,6 +96,8 @@ class Pattern(Gtk.ApplicationWindow):
 
     def tick(self, _widget, _clock):
         self.canvas.frames += 1
+        if self.canvas.frames % 60 == 0 and not self.is_fullscreen():
+            self.fullscreen()       # MS2130 «отключается», пока блок не захватывает: GNOME снимает выход, окно мельчает
         self.canvas.queue_draw()
         if self.seconds and time.monotonic() - self.t0 > self.seconds:
             self.get_application().quit()

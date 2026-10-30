@@ -111,7 +111,16 @@ def role_timeserver(max_s):
     return 0
 
 
-def role_pi1(server, seconds):
+CAPTURE = ("v4l2src device={device} do-timestamp=true ! "
+           "video/x-raw,format=YUY2,width=1280,height=720,framerate={fps}/1 ! appsink name=s max-buffers=4 drop=true "
+           "sync=false")
+DECODED = (f"unixfdsrc socket-path={FRAMES_SOCK} ! v4l2convert ! video/x-raw,format=RGB ! "
+           "appsink name=s max-buffers=4 drop=true sync=false")
+
+
+def role_pi1(server, seconds, pipeline=DECODED, bpp=3, chan=1):
+    """Кадры с конвейера pipeline: по умолчанию — декодированные на пульте (RGB, зелёный канал); на блоке —
+    сам захват (YUY2: яркость — чётные байты, bpp 2, chan 0) — задержка стороны источника без кодера и сети."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.settimeout(1.0)
     samples = []
@@ -135,8 +144,7 @@ def role_pi1(server, seconds):
     gi.require_version("GstApp", "1.0")                         # без неё у appsink нет try_pull_sample
     from gi.repository import Gst, GstApp  # noqa: F401
     Gst.init(None)
-    pipe = Gst.parse_launch(f"unixfdsrc socket-path={FRAMES_SOCK} ! v4l2convert ! video/x-raw,format=RGB ! "
-                            "appsink name=s max-buffers=4 drop=true sync=false")
+    pipe = Gst.parse_launch(pipeline)
     sink = pipe.get_by_name("s")
     pipe.set_state(Gst.State.PLAYING)
     lat, unread, t_end = [], 0, time.monotonic() + seconds
@@ -156,7 +164,7 @@ def role_pi1(server, seconds):
                 data = bytes(info.data)
             finally:
                 buf.unmap(info)
-            code = decode(data, w, h, len(data) // h, bpp=3, chan=1)
+            code = decode(data, w, h, len(data) // h, bpp=bpp, chan=chan)
             v = latency_ms(recv, offset, code) if code is not None else None
             if v is None:
                 unread += 1
@@ -177,7 +185,13 @@ def remote_cmd(host, args):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--role", choices=("timeserver", "pi1"))
+    ap.add_argument("--role", choices=("timeserver", "pi1", "capture"))
+    ap.add_argument("--device", default="/dev/v4l/by-id/usb-MACROSILICON_USB3.0_UHD_20210623-video-index0")
+    ap.add_argument("--fps", type=int, default=30)
+    ap.add_argument("--at", default="console", choices=("console", "capture"),
+                    help="console — декодированные кадры пульта (полный путь); capture — захват на блоке (--remote), "
+                         "передача видео блока на время замера останавливается")
+    ap.add_argument("--remote", default="192.168.1.173")
     ap.add_argument("--server")
     ap.add_argument("--console", default="192.168.1.94")
     ap.add_argument("--source", default="devbox", help="хост SSH с HDMI-источником")
@@ -189,13 +203,25 @@ def main(argv=None):
         return role_timeserver(a.seconds)
     if a.role == "pi1":
         return role_pi1(a.server, a.seconds)
+    if a.role == "capture":
+        return role_pi1(a.server, a.seconds, CAPTURE.format(device=a.device, fps=a.fps), bpp=2, chan=0)
     srv = subprocess.Popen(remote_cmd(a.source, f"--role timeserver --seconds {a.seconds + 90:.0f}"),
                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         if not srv.stdout.readline().startswith("READY"):
             raise SystemExit("сервер времени на источнике не стартовал")
-        r = subprocess.run(remote_cmd(f"root@{a.console}", f"--role pi1 --server {a.source_ip} --seconds {a.seconds}"),
-                           capture_output=True, text=True, timeout=a.seconds + 120)
+        if a.at == "console":
+            r = subprocess.run(remote_cmd(f"root@{a.console}", f"--role pi1 --server {a.source_ip} --seconds {a.seconds}"),
+                               capture_output=True, text=True, timeout=a.seconds + 120)
+        else:
+            host = f"root@{a.remote}"
+            subprocess.run(["ssh", host, "systemctl stop sheregesh-video-tx"], check=True, timeout=60)
+            try:
+                r = subprocess.run(remote_cmd(host, f"--role capture --server {a.source_ip} --seconds {a.seconds} "
+                                                    f"--device {a.device} --fps {a.fps}"),
+                                   capture_output=True, text=True, timeout=a.seconds + 120)
+            finally:
+                subprocess.run(["ssh", host, "systemctl start sheregesh-video-tx"], timeout=60)
     finally:
         srv.stdin.close()                                       # сервер на источнике выходит по закрытию stdin
         try:
@@ -210,7 +236,8 @@ def main(argv=None):
     if not res.get("frames_read"):
         res["error"] = res.get("error") or f"пульт: код {r.returncode}: {(r.stderr or r.stdout).strip()[-600:]}"
     res.update({"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "console": a.console, "source": a.source,
-                "path": "devbox GTK → HDMI → MS2130 → pi2 UVC/H.264 → SRTP → декодер pi1"})
+                "path": "devbox GTK → HDMI → MS2130 → pi2 UVC/H.264 → SRTP → декодер pi1" if a.at == "console"
+                else f"devbox GTK → HDMI → MS2130 → захват pi2 (YUYV 720p{a.fps}, без кодера и сети)"})
     print(json.dumps(res, ensure_ascii=False, indent=1))
     if a.out:
         a.out.mkdir(parents=True, exist_ok=True)
