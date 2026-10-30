@@ -8,7 +8,7 @@
   python3 tools/deploy/shdeploy.py rollback pi1|pi2          предыдущий выпуск
   python3 tools/deploy/shdeploy.py factory pi1|pi2           заводской код образа (/usr/lib/sheregesh)
   python3 tools/deploy/shdeploy.py build --out DIR           только собрать (и подписать с --sign) пакет
-  python3 tools/deploy/shdeploy.py ota-build --image IMG --build-report JSON --out DIR
+  python3 tools/deploy/shdeploy.py ota-build --image IMG --build-report JSON --out DIR   (только артефакты shbuild PASSED)
   python3 tools/deploy/shdeploy.py ota-status|ota-install|ota-enable|ota-disable|ota-tryboot|ota-confirm|ota-abort pi2
 
 Плата за раз — одна (вторая продолжает работать). Адрес: --host, переменная SHEREGESH_PI1_HOST/SHEREGESH_PI2_HOST,
@@ -30,8 +30,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "software"), str(ROOT / "tools/image"), str(ROOT / "tools/probe")]
+sys.path[:0] = [str(ROOT / "software"), str(ROOT / "tools/image"), str(ROOT / "tools/probe"), str(ROOT / "tools/build")]
 import build_deb  # noqa: E402
+import gate as build_gate  # noqa: E402
 from sheregesh.deploy import bundle, sig  # noqa: E402
 from sheregesh.update import ota  # noqa: E402
 
@@ -357,30 +358,31 @@ def build_ota(image, variant, version, commit, out_dir, key, source="", created=
 
 
 def cmd_ota_build(a):
-    if a.build_report:
-        rep = json.loads(Path(a.build_report).read_text())
-        commit, epoch, variant = rep["commit"], int(rep["source_date_epoch"]), rep["config"]
-        major, minor = build_deb.default_version().split("~")[0].split(".")[:2]
-        version = f"{int(major)}.{int(minor)}.{epoch}"
-        created = datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")   # воспроизводимо
-        art = Path(a.build_report).parent
-        extra = {"image_sha256": rep.get("image_sha256")}
-        debs = sorted(art.glob("sheregesh_*.deb"))
-        if debs:
-            extra["package"] = debs[0].name
-            extra["units"] = deb_units(debs[0])
-        if (art / "verify.json").exists():
-            v = json.loads((art / "verify.json").read_text())
-            checks = v.get("checks", [])
-            extra["image_verify"] = {"sha256": hashlib.sha256((art / "verify.json").read_bytes()).hexdigest(),
-                                     "checks": len(checks), "failed": [c["id"] for c in checks if c["status"] != "PASS"]}
-            if extra["image_verify"]["failed"]:
-                raise CliError(f"проверка структуры образа не пройдена: {extra['image_verify']['failed']}")
-    else:
-        created, extra = None, None
-        if not (a.version and a.commit and a.variant):
-            raise CliError("нужен --build-report или --version, --commit и --variant")
-        version, commit, variant = a.version, a.commit, a.variant
+    # ADR-0018: пакет OTA — только из артефактов задания shbuild с итогом PASSED (загрузочный тест пройден)
+    if not a.build_report:
+        raise CliError("нужен --build-report артефактов shbuild: пакет из произвольного образа не собирается (ADR-0018)")
+    rep = json.loads(Path(a.build_report).read_text())
+    try:
+        build_gate.require_passed(Path(a.build_report).parent, rep.get("commit"))
+    except build_gate.GateError as e:
+        raise CliError(str(e)) from e
+    commit, epoch, variant = rep["commit"], int(rep["source_date_epoch"]), rep["config"]
+    major, minor = build_deb.default_version().split("~")[0].split(".")[:2]
+    version = f"{int(major)}.{int(minor)}.{epoch}"
+    created = datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")   # воспроизводимо
+    art = Path(a.build_report).parent
+    extra = {"image_sha256": rep.get("image_sha256")}
+    debs = sorted(art.glob("sheregesh_*.deb"))
+    if debs:
+        extra["package"] = debs[0].name
+        extra["units"] = deb_units(debs[0])
+    if (art / "verify.json").exists():
+        v = json.loads((art / "verify.json").read_text())
+        checks = v.get("checks", [])
+        extra["image_verify"] = {"sha256": hashlib.sha256((art / "verify.json").read_bytes()).hexdigest(),
+                                 "checks": len(checks), "failed": [c["id"] for c in checks if c["status"] != "PASS"]}
+        if extra["image_verify"]["failed"]:
+            raise CliError(f"проверка структуры образа не пройдена: {extra['image_verify']['failed']}")
     out, m = build_ota(a.image, variant, version, commit, a.out, signing_key(a.key), source=Path(a.image).name,
                        created=created, extra=extra)
     h = hashlib.sha256(out.read_bytes()).hexdigest()
@@ -435,10 +437,7 @@ def main(argv=None):
         p.set_defaults(action=action)
     o = sub.add_parser("ota-build")
     o.add_argument("--image", type=Path, required=True)
-    o.add_argument("--build-report")
-    o.add_argument("--variant")
-    o.add_argument("--version")
-    o.add_argument("--commit")
+    o.add_argument("--build-report", required=True, help="build-report.json артефактов shbuild (рядом — shbuild-report.json PASSED)")
     o.add_argument("--out", type=Path, required=True)
     o.add_argument("--key")
     for name in ("ota-status", "ota-install", "ota-enable", "ota-disable", "ota-tryboot", "ota-confirm", "ota-abort"):

@@ -215,7 +215,7 @@ class Pipeline:
         env = dict(os.environ, SHEREGESH_SRC=str(self.src), SHEREGESH_BUNDLE=str(self.job.dir / "src.bundle"),
                    SOURCE_DATE_EPOCH=str(self.sde), SHEREGESH_BUILD_AS_ROOT="1",
                    SSH_PUBKEY=str(self.root / "keys/dev.pub"), DEPLOY_PUBKEY=str(self.root / "keys/deploy.pub"),
-                   SHEREGESH_CONTAINER_NAME=f"shbuild-{self.job.id}")
+                   SHEREGESH_CONTAINER_NAME=f"shbuild-{self.job.id}", SHBUILD_JOB=self.job.id)
         builder = self.st.get("options", {}).get("builder_image")
         script = (self.src / "os/docker-build.sh").read_text()
         if not builder and "SHEREGESH_BUILDER_IMAGE" in script:     # старые коммиты сборщик не умеют — как раньше

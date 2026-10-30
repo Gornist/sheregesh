@@ -6,6 +6,8 @@
   python3 tools/image/flash_sd.py ОБРАЗ.img.zst --disk disk4     записать на disk4 (с подтверждением)
 
 Порядок:
+0. Образ «Шерегеша» — только артефакты задания shbuild с итогом PASSED (shbuild-report.json рядом; ADR-0018).
+   Посторонние карты стенда (pi3 — Raspberry Pi OS, tools/lab-video/pi3) правилу не подлежат.
 1. SHA-256 файла .img.zst сверяется с SHA256SUMS рядом с ним (из артефакта CI или os/build.sh). Не сошлось — стоп.
 2. Кандидаты — только внешние физические целые диски (не Internal) размером не меньше образа и не больше
    --max-gb (по умолчанию 256 ГБ). Без --disk скрипт только показывает их и выходит.
@@ -26,6 +28,9 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "build"))
+import gate as build_gate  # noqa: E402
 
 SYSTEM_VOLUMES = {"bootfs", "rootfs", "boot", "bootconfig", "system", "persistent"}
 CHUNK = 4 * 1024 * 1024
@@ -161,6 +166,13 @@ def main(argv=None):
         raise SystemExit("нужен zstd: brew install zstd")
 
     want, raw = expected_sums(a.image)
+    report = a.image.with_name("build-report.json")
+    rep = json.loads(report.read_text()) if report.exists() else None
+    if build_gate.is_sheregesh_image(a.image, rep):           # ADR-0018: на карту — только артефакты shbuild PASSED
+        try:
+            build_gate.require_passed(a.image.parent, (rep or {}).get("commit"))
+        except build_gate.GateError as e:
+            raise SystemExit(f"отказ: {e}")
     print(f"Проверка {a.image.name} …", flush=True)
     got = sha256_file(a.image)
     if got != want:

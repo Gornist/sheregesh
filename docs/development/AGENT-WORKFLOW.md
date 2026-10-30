@@ -47,8 +47,36 @@ QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software .venv/bin/python -m pytest -
 ## Аппаратура и сборка
 
 [STAND-WORKFLOW.md](STAND-WORKFLOW.md) описывает владельца стенда, ограниченные прогоны и восстановление.
-Образы собираются на devbox, не на Mac; крупные передачи — напрямую между узлами LAN.
 Изменение Python/QML обычно идёт через подписанный DEV deploy, изменение ro-установщика, пакетов и unit — через новый образ.
+
+### Сборка образа и раскатка
+
+Единственный путь (решение владельца 2026-10-30, [ADR-0018](../adr/ADR-0018-build-service.md)); другие пути
+заблокированы в коде (`os/docker-build.sh`, `shdeploy ota-build`, `tools/image/flash_sd.py`, `tools/build/gate.py`).
+
+1. Закоммить изменение (сборка — из коммита, не из рабочего дерева). С Mac:
+   `python3 tools/build/shbuild.py submit [РЕВИЗИЯ]` → id задания. Сервис на devbox (`~/shbuild`) ставит его в
+   очередь (одна сборка за раз) и проходит этапы preflight → checkout → tests → build → gates → boot.
+2. Ждать: `python3 tools/build/shbuild.py wait ID` (одна строка итога; код 0 — PASSED) или `status ID`;
+   журнал этапа — `logs ID [этап]`. Итог всегда явный: PASSED, FAILED, ERROR, CANCELLED, TIMEOUT. Отслеживая
+   задание монитором, лови все конечные состояния, а не только успех.
+3. FAILED — дефект кода или образа: исправь, новый коммит, новое задание. Гейт не ослабляй и в обход не собирай;
+   изменить сам гейт (owners-эталон, `ALLOW_FAILED` загрузочного теста) — только осознанно, с причиной, отдельным
+   коммитом.
+4. На железо — только PASSED и только с согласия владельца на конкретную раскатку. Артефакты на Mac —
+   `shbuild.py fetch ID` (нужны для подписи пакета OTA и записи карты), после раскатки удалить.
+5. OTA (одна плата за раз, пульт первым; аренда — `tools/dev/stand_lease.py`): `shdeploy ota-build` дважды и `cmp`;
+   L3 — `tools/deploy/ota-check/run.py --base-remote <образ плат на devbox>` (без `--agent-rev`, если код агента
+   на платах совпадает с кандидатом); `slot_guard.py snap` до; `ota-install --sha256` → `compare --mode install`;
+   `ota-enable` → `ota-tryboot`; в пробной загрузке — `compare --mode trial`, имя, время, `check_link`,
+   `check_video_link`; только затем `ota-confirm` → `ota-disable` → контрольная перезагрузка. Пример с
+   доказательствами — [hostname-root](../acceptance/hostname-root/REPORT.md).
+6. Сервис ставится и обновляется с Mac: `python3 tools/build/shbuild.py install`.
+
+Загрузочный тест (QEMU virt, ядро Debian arm64) проверяет systemd образа, имя, DHCP, время, root, `/var`;
+не проверяет ядро Pi, прошивку, tryboot, VideoCore, дисплей, GPIO/UART — это остаётся за платами.
+На платах DEV-образа есть root по SSH только по ключу: если ограничение доступа мешает работе — скажи владельцу
+сразу, не обходи молча.
 Проверяй весь жизненный цикл служб роли, включая video-tx/rx; цель current сама по себе не доказывает версию процесса.
 Не выполняй устаревший workaround из памяти, если он уже заменён в установленном образе.
 

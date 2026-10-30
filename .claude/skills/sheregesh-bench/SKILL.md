@@ -15,3 +15,5 @@ description: Use when running an authorized Sheregesh hardware acceptance or ben
 После завершения всех дочерних операций освободи аренду: `python3 tools/dev/stand_lease.py release --run-id <id>`.
 Аренда advisory и только для одного POSIX-хоста: прямой SSH её не проверяет; несколько хостов требуют общего координатора.
 Обычный DEV-пакет не обновляет ro-установщик и обёртки. Проверяй выпуск фактических процессов.
+Новый образ — только через shbuild (`python3 tools/build/shbuild.py submit|wait|fetch`, ADR-0018); на плату
+(OTA или карта) — только артефакты задания PASSED. Порядок OTA — `docs/development/AGENT-WORKFLOW.md`.

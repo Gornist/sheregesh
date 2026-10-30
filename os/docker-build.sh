@@ -17,6 +17,12 @@
 # clone(CLONE_NEWUSER) (podman unshare → «cannot clone: Invalid argument»), поэтому там SHEREGESH_BUILD_AS_ROOT=1:
 # rpi-image-gen работает от root одноразового привилегированного контейнера, bin/ns исполняет команды без unshare.
 set -euo pipefail
+# ADR-0018: образы собирает только сервис shbuild на devbox (очередь, гейты, загрузочный тест) — он задаёт SHBUILD_JOB.
+# Ручной запуск, запуск на Mac и любой другой путь — отказ: образ без отчёта shbuild не попадёт ни на карту, ни в OTA.
+if [[ -z "${SHBUILD_JOB:-}" ]]; then
+  echo "отказ: образ собирается только через сервис сборки: python3 tools/build/shbuild.py submit [РЕВИЗИЯ] (ADR-0018)" >&2
+  exit 2
+fi
 ROOT="$(cd "${SHEREGESH_SRC:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd)"
 CFG="${1:-sheregesh-lab-pi4}"
 KEYARGS=()
