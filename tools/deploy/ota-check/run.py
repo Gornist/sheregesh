@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Испытание системного обновления на файловом образе диска (S3.2-OTA, L3). С Mac владельца; без плат Pi.
 
-  python3 tools/deploy/ota-check/run.py --base IMG.img.zst --payload P.shota [--docker-host devbox-lan] [--log F]
+  python3 tools/deploy/ota-check/run.py --base IMG.img.zst|--base-remote ПУТЬ --payload P.shota [--docker-host devbox-lan] [--log F]
 
 Готовит на Mac: allowed_signers (открытый ключ ~/.ssh/sheregesh-deploy.pub), подпись манифеста посторонним ключом,
 разрешение переключения для ТЕСТОВОГО серийного номера (к платам неприменимо) — подписано ключом владельца на Mac,
@@ -13,6 +13,7 @@
 import argparse
 import hashlib
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -29,7 +30,9 @@ SERIAL = "TESTSERIAL00ota"
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--base", type=Path, required=True, help="образ плат .img.zst (до обновления)")
+    base = ap.add_mutually_exclusive_group(required=True)
+    base.add_argument("--base", type=Path, help="образ плат .img.zst (до обновления)")
+    base.add_argument("--base-remote", help="тот же образ, уже лежащий на --docker-host (не возить через Mac)")
     ap.add_argument("--payload", type=Path, required=True)
     ap.add_argument("--key", type=Path, default=Path("~/.ssh/sheregesh-deploy").expanduser())
     ap.add_argument("--docker-host", default="devbox-lan")
@@ -65,7 +68,10 @@ def main(argv=None):
         h = a.docker_host
         subprocess.run(["ssh", h, f"rm -rf {a.remote} && mkdir -p {a.remote}"], check=True)
         subprocess.run(["scp", "-q", "-r", f"{ctx}/.", f"{h}:{a.remote}/"], check=True)
-        subprocess.run(["scp", "-q", str(a.base), f"{h}:{a.remote}/base.img.zst"], check=True)
+        if a.base_remote:
+            subprocess.run(["ssh", h, f"cp {shlex.quote(a.base_remote)} {a.remote}/base.img.zst"], check=True)
+        else:
+            subprocess.run(["scp", "-q", str(a.base), f"{h}:{a.remote}/base.img.zst"], check=True)
         subprocess.run(["scp", "-q", str(a.payload), f"{h}:{a.remote}/payload.shota"], check=True)
     script = (f"cd {a.remote} && nice -n 19 docker run --rm --privileged -v /dev:/dev -v {a.remote}:/work "
               f"{a.image} python3 -I /work/check.py; rc=$?; cat {a.remote}/result.json > /tmp/sheregesh-ota-result.json "
@@ -77,7 +83,7 @@ def main(argv=None):
     res = subprocess.run(["ssh", h, "cat /tmp/sheregesh-ota-result.json; rm -f /tmp/sheregesh-ota-result.json"],
                          capture_output=True, text=True).stdout
     meta = {"payload": a.payload.name, "payload_sha256": hashlib.sha256(a.payload.read_bytes()).hexdigest(),
-            "base": a.base.name, "agent": a.agent_rev or "repository"}
+            "base": a.base.name if a.base else a.base_remote, "agent": a.agent_rev or "repository"}
     if a.log:
         a.log.write_text(json.dumps(meta, ensure_ascii=False) + "\n" + out)
     if a.result and res.strip():
