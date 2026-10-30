@@ -9,7 +9,8 @@
 
   sheregesh-time role          — по роли платы и peer_hosts из link.json:
                                  пульт: пул Debian (если интернет есть), local stratum 10 (если нет), allow peer_hosts;
-                                 блок: источник — только пульт (peer_hosts), без пула: часы плат согласованы между собой
+                                 блок: источник — только пульт (peer_hosts), без пула: часы плат согласованы между собой;
+                                 без роли (свежая плата до pair): пул — иначе сертификат стенда «ещё не действителен»
   sheregesh-time peer АДРЕС    — адрес второй платы текущего сеанса (DHCP может отличаться от peer_hosts):
                                  пульт: allow АДРЕС; блок: источник АДРЕС (файл session.sources заменяется)
   sheregesh-time peer none     — блок: сеансового источника нет; пульт: ничего
@@ -86,6 +87,8 @@ def role_plan(r, hosts):
                                          + [["reload", "sources"]])
     if r == "remote":
         return [" ".join(["server", h, "iburst", *POLL]) for h in hosts], [["reload", "sources"]]
+    if r == "fresh":
+        return [f"pool {POOL} iburst"], [["reload", "sources"]]
     return None, []
 
 
@@ -164,6 +167,8 @@ def main(argv=None, runner=run_chronyc, config=CONFIG, sources=SOURCES, drift=DR
             return 2
         addr = None if a is None else a.compressed
     r = role(config)
+    if r is None and argv[0] == "role" and not any((config / f"{x}.role").exists() for x in ("console", "remote")):
+        r = "fresh"         # свежая плата до pair: пул, иначе часы на дате образа и сертификат «not yet valid»
     if r is None:
         print("sheregesh-time: роль платы не задана — chrony без источников сеанса")
         return 0
