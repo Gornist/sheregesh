@@ -97,7 +97,13 @@ class HostnameTest(unittest.TestCase):
         self.assertIn("CAP_DAC_READ_SEARCH", cp["Service"]["CapabilityBoundingSet"].split())
         self.assertEqual(cp["Service"]["RuntimeDirectory"], "sheregesh-hostname")
         self.assertEqual(cp["Service"]["RuntimeDirectoryPreserve"], "yes")
-        self.assertIn("sheregesh-hostname", (ROOT / "os/layer/sheregesh-lab.yaml").read_text())
+        layer = (ROOT / "os/layer/sheregesh-lab.yaml").read_text()
+        self.assertIn("sheregesh-hostname", layer)
+        # rpi-image-gen пишет /etc/hostname последним хуком — через ссылку: каталог цели в корне сборки обязателен
+        # (сборка 47361c4 на devbox: «cannot create …/etc/hostname: Directory nonexistent»)
+        self.assertIn("ln -sfn /run/sheregesh-hostname/hostname $1/etc/hostname", layer)
+        self.assertIn("mkdir -p $1/usr/share/sheregesh $1/run/sheregesh-hostname", layer)
+        self.assertIn("$IGconf_device_hostname", layer)
         files = {"/usr/lib/systemd/system/sheregesh-hostname.service": text,
                  "/usr/bin/sheregesh-hostname": "exec /usr/bin/python3 -I /usr/lib/sheregesh/tools/image/bin/x",
                  "/usr/lib/sheregesh/tools/image/bin/sheregesh-hostname": "x",
