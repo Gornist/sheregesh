@@ -103,8 +103,16 @@ class TimeHelperTest(unittest.TestCase):
                      ["peer", ""], ["peer", "a" * 60], ["peer", "None"]):
             self.assertEqual(self.run_main(*argv), (2, []), argv)
 
-    def test_no_role_does_nothing(self):
-        self.assertEqual(self.run_main("role"), (0, []))
+    def test_fresh_board_without_role_takes_pool(self):
+        # свежая плата до pair: без источника часы стоят на дате образа, сертификат «not yet valid» — pair
+        # невозможен (pi1/pi2 2026-10-30). Пул — как у пульта, но без local stratum и allow (сервером она не служит).
+        rc, calls = self.run_main("role")
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.file("role.sources"), ["pool 2.debian.pool.ntp.org iburst"])
+        self.assertEqual(calls, [["reload", "sources"]])
+        self.assertEqual(self.run_main("peer", "192.168.1.92"), (0, []))       # сеанса без роли нет
+
+    def test_both_roles_do_nothing(self):
         (self.cfg / "console.role").write_text("x")
         (self.cfg / "remote.role").write_text("x")                                  # обе роли — не угадываем
         self.assertEqual(self.run_main("peer", "192.168.1.92"), (0, []))

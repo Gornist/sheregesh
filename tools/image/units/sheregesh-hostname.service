@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Имя системы по роли платы (пульт — pi1, блок — pi2) до запуска сети: DHCP уходит уже с ним (SendHostname networkd
-# по умолчанию). Маркер роли — в /home (общий /persistent), поэтому после local-fs. Временное имя ядра: корень
-# только для чтения, /etc/hostname образа не меняется.
+# по умолчанию). Маркер роли — в /home (общий /persistent), поэтому после local-fs. Корень только для чтения:
+# /etc/hostname образа — ссылка на /run/sheregesh-hostname/hostname, юнит пишет туда имя до systemd-hostnamed (иначе
+# тот при DHCP возвращал имя образа, pi1/pi2 2026-10-30). CAP_DAC_READ_SEARCH — пройти в /home/sheregesh-ui (0700).
 [Unit]
 Description=Sheregesh: system hostname by board role (console pi1, remote pi2)
 DefaultDependencies=no
 After=local-fs.target
-Before=systemd-networkd.service network-pre.target sysinit.target
+Before=systemd-networkd.service systemd-hostnamed.service network-pre.target sysinit.target
 Wants=network-pre.target
 
 [Service]
@@ -20,7 +21,10 @@ ProtectHome=read-only
 PrivateTmp=yes
 PrivateNetwork=yes
 NoNewPrivileges=yes
-CapabilityBoundingSet=CAP_SYS_ADMIN
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_READ_SEARCH
+RuntimeDirectory=sheregesh-hostname
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
 RestrictAddressFamilies=AF_UNIX
 Environment=PYTHONDONTWRITEBYTECODE=1
 

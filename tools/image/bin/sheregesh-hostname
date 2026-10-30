@@ -5,16 +5,20 @@
 sheregesh-dev; физические платы путались). Запускается от root юнитом sheregesh-hostname.service при загрузке до
 systemd-networkd: имя уходит в DHCP и видно в сети, приглашении shell и журнале.
 
-Корень только для чтения: имя ставится в ядро как временное (/proc/sys/kernel/hostname), /etc/hostname не меняется.
-Источник имени: ~/.config/sheregesh/hostname (строго [a-z0-9-], 1–63 символа, не с дефиса), иначе по маркеру роли
-console.role → pi1, remote.role → pi2; нет роли (или обе) — имя образа остаётся. Коды: 0 — применено или нечего
-применять, 1 — запись не удалась, 2 — недопустимое имя в файле (имя образа остаётся)."""
+Корень только для чтения: /etc/hostname образа — ссылка на /run/sheregesh-hostname/hostname (RuntimeDirectory юнита),
+сюда пишется статическое имя; иначе systemd-hostnamed, которого запускает networkd при DHCP, возвращает имя образа
+(найдено на pi1/pi2 2026-10-30). Имя ставится и в ядро (/proc/sys/kernel/hostname) — сразу, до сети.
+Имя образа (запасное) — /usr/share/sheregesh/hostname.default. Источник имени: ~/.config/sheregesh/hostname (строго [a-z0-9-], 1–63 символа, не с дефиса), иначе по маркеру роли
+console.role → pi1, remote.role → pi2; нет роли (или обе) — имя образа. Коды: 0 — применено, 1 — каталог настроек
+не прочитан или запись не удалась, 2 — недопустимое имя в файле (в обоих случаях — имя образа)."""
 import re
 import sys
 from pathlib import Path
 
 CONFIG = Path("/home/sheregesh-ui/.config/sheregesh")
 KERNEL = Path("/proc/sys/kernel/hostname")
+RUNTIME = Path("/run/sheregesh-hostname/hostname")         # цель ссылки /etc/hostname
+DEFAULT = Path("/usr/share/sheregesh/hostname.default")    # /etc/hostname образа до замены ссылкой
 BY_ROLE = {"console": "pi1", "remote": "pi2"}
 NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
@@ -22,7 +26,12 @@ NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 def choose(config=CONFIG):
     """(имя или None, пояснение) по файлу hostname или роли платы."""
     override = config / "hostname"
-    if override.exists():
+    try:
+        has_override = override.exists()
+        roles = [r for r in BY_ROLE if (config / f"{r}.role").exists()]
+    except OSError as e:
+        raise PermissionError(f"{config} не прочитан: {type(e).__name__}") from e
+    if has_override:
         try:
             name = override.read_text().strip()
         except OSError as e:
@@ -30,28 +39,47 @@ def choose(config=CONFIG):
         if not NAME.fullmatch(name):
             raise ValueError(f"недопустимое имя в {override}: {name[:64]!r}")
         return name, f"из {override}"
-    roles = [r for r in BY_ROLE if (config / f"{r}.role").exists()]
     if len(roles) != 1:
         return None, "роль платы не задана" if not roles else "заданы обе роли"
     return BY_ROLE[roles[0]], f"роль {roles[0]}"
 
 
-def main(argv=None, config=CONFIG, kernel=KERNEL):
+def image_name(default=DEFAULT):
+    try:
+        name = default.read_text().strip()
+    except OSError:
+        return "sheregesh-dev"
+    return name if NAME.fullmatch(name) else "sheregesh-dev"
+
+
+def write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
+def main(argv=None, config=CONFIG, kernel=KERNEL, runtime=RUNTIME, default=DEFAULT):
+    code, name = 0, None
     try:
         name, why = choose(config)
+    except PermissionError as e:
+        print(f"sheregesh-hostname: {e}", file=sys.stderr)
+        code = 1
     except ValueError as e:
         print(f"sheregesh-hostname: отказ: {e}", file=sys.stderr)
-        return 2
+        code = 2
     if name is None:
-        print(f"sheregesh-hostname: имя образа остаётся ({why})")
-        return 0
+        name, why = image_name(default), (why if code == 0 else "") + ", имя образа"
     try:
+        write(runtime, name + "\n")          # статическое имя для /etc/hostname → systemd-hostnamed
         kernel.write_text(name)
     except OSError as e:
         print(f"sheregesh-hostname: имя {name} не записано: {type(e).__name__}", file=sys.stderr)
         return 1
-    print(f"sheregesh-hostname: {name} ({why})")
-    return 0
+    if code == 0:
+        print(f"sheregesh-hostname: {name} ({why})")
+    return code
 
 
 if __name__ == "__main__":

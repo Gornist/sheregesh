@@ -145,6 +145,11 @@ class Ext4:
     def ls(self, path):
         return [x for x in self.run(f"ls -p {path}").splitlines() if x.startswith("/")]
 
+    def readlink(self, path):
+        """Цель символьной ссылки (debugfs stat: «Fast link dest: "…"»); None — не ссылка или нет файла."""
+        m = re.search(r'^Fast link dest: "(.*)"$', self.run(f"stat {path}"), re.M)
+        return m.group(1) if m else None
+
     def mtime(self, path):
         """mtime (секунды) по debugfs stat: «mtime: 0x6a1b2c3d:…» или «mtime: 0x6a1b2c3d -- …»; None — нет файла."""
         m = re.search(r"^\s*mtime:\s*0x([0-9a-f]+)", self.run(f"stat {path}"), re.M)
@@ -395,6 +400,10 @@ def hostname_checks(rep, root):
             and "python3 -I " in root.cat("/usr/bin/sheregesh-hostname")
             and root.exists("/usr/lib/sheregesh/tools/image/bin/sheregesh-hostname")
             and "sheregesh-hostname.service" in " ".join(root.ls("/etc/systemd/system/sysinit.target.wants")))
+    target, default = root.readlink("/etc/hostname"), root.cat("/usr/share/sheregesh/hostname.default").strip()
+    rep.add("hostname.static", "/etc/hostname — ссылка на имя, записанное юнитом (иначе systemd-hostnamed возвращает "
+            "имя образа после DHCP); имя образа сохранено", target == "../run/sheregesh-hostname/hostname" and bool(default),
+            f"{target} ; default {default!r}")
 
 
 def verify(img, variant, out):
@@ -500,8 +509,13 @@ def verify(img, variant, out):
                     " ".join(hostkeys))
             if dev:
                 conf = root.cat("/etc/ssh/sshd_config.d/00-sheregesh-dev.conf")
-                rep.add("ssh.dev", "dev: sshd только по ключу, без root", sshd and "PasswordAuthentication no" in conf
-                        and "PermitRootLogin no" in conf)
+                rep.add("ssh.dev", "dev: sshd только по ключу, root — тоже только по ключу",
+                        sshd and "PasswordAuthentication no" in conf and "PermitRootLogin prohibit-password" in conf)
+                rkeys = root.cat("/root/.ssh/authorized_keys")
+                rep.add("ssh.root", "dev: ключ root — ключ входа sheregesh-ui, закрытых ключей нет",
+                        rkeys.startswith(("ssh-", "ecdsa-")) and "PRIVATE KEY" not in rkeys
+                        and rkeys.split()[:2] == data.cat("/home/sheregesh-ui/.ssh/authorized_keys").split()[:2],
+                        rkeys.split(" ")[0])
                 keys = data.cat("/home/sheregesh-ui/.ssh/authorized_keys")
                 rep.add("ssh.key", "dev: открытый ключ sheregesh-ui установлен, закрытых ключей нет",
                         keys.startswith(("ssh-", "ecdsa-")) and "PRIVATE KEY" not in keys, keys.split(" ")[0])
