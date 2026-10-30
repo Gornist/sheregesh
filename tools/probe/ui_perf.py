@@ -14,6 +14,7 @@ import json
 import shlex
 import subprocess
 import sys
+from pathlib import Path
 import time
 
 REMOTE = r'''
@@ -67,12 +68,15 @@ print(json.dumps({"seconds": round(dt, 1), "pids": P, "cpu_pct_core": cpu,
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--host", default="192.168.1.92")
+    ap.add_argument("--host", default="auto")
     ap.add_argument("--user", default="sheregesh-ui")
     ap.add_argument("--seconds", type=int, default=60)
     ap.add_argument("--label", default="")
     ap.add_argument("--out")
     a = ap.parse_args()
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # tools/: адреса плат по серийному номеру
+    from stand import boards
+    boards.resolve_args(a, {'host': 'pi1'})
     code = REMOTE.replace("SECONDS", str(a.seconds))
     r = subprocess.run(["ssh", "-o", "ConnectTimeout=8", f"{a.user}@{a.host}", "python3 -c " + shlex.quote(code)],
                        capture_output=True, text=True, timeout=a.seconds + 60)

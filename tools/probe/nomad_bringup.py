@@ -35,6 +35,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 import time
 
 HERE = os.path.abspath(__file__) if "__file__" in globals() else None
@@ -457,7 +458,7 @@ def main(argv=None, prompt=input):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", help="pi2: шаги 1–3 по SSH (sheregesh-ui); без --host и с --local — на этой плате")
     ap.add_argument("--local", action="store_true", help="выполнять шаги на этой плате (pi2)")
-    ap.add_argument("--console", default="192.168.1.92", help="pi1 для шага 4 (modulectl через пульт)")
+    ap.add_argument("--console", default="auto", help="pi1 для шага 4 (modulectl через пульт)")
     ap.add_argument("--steps", default="1,2,3", help="через запятую из 1,2,3 (шаг 4 — только --switch-backend)")
     ap.add_argument("--step", type=int, help=argparse.SUPPRESS)          # один шаг на плате (запуск по SSH)
     ap.add_argument("--switch-backend", action="store_true",
@@ -467,6 +468,9 @@ def main(argv=None, prompt=input):
     ap.add_argument("--yes", action="store_true", help="не спрашивать подтверждений (антенны, шаг 4)")
     ap.add_argument("--out", help="файл JSON с итогами шагов")
     a = ap.parse_args(argv)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # tools/: адреса плат по серийному номеру
+    from stand import boards
+    boards.resolve_args(a, {'console': 'pi1'})
     if a.step is not None:
         if a.step not in STEPS:
             ap.error("--step: 1, 2 или 3")

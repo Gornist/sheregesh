@@ -638,7 +638,7 @@ def plan(a):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--remote", default="192.168.1.171")
+    ap.add_argument("--remote", default="auto")
     ap.add_argument("--name", help="имя каталога hw/<имя> (по умолчанию VID-PID-драйвер)")
     ap.add_argument("--out", help="каталог итога вместо docs/acceptance/s5-video/hw/<имя>")
     ap.add_argument("--plug", action="store_true", help="снимок «до», подсказка подключить адаптер, снимок «после»")
@@ -656,6 +656,9 @@ def main(argv=None):
     if a.plan:
         print(plan(a))
         return 0
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # tools/: адреса плат по серийному номеру
+    from stand import boards
+    boards.resolve_args(a, {'remote': 'pi2'})
     if a.fake is not None:
         if not a.out:
             ap.error("--fake: нужен --out (в docs/ подделка не пишется)")

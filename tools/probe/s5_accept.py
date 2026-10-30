@@ -386,8 +386,8 @@ def plan(a):
 
 def main(argv=None, prompt=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--console", default="192.168.1.92")
-    ap.add_argument("--remote", default="192.168.1.171")
+    ap.add_argument("--console", default="auto")
+    ap.add_argument("--remote", default="auto")
     ap.add_argument("--out", type=Path)
     ap.add_argument("--source", default="v4l2", help="v4l2:<id> из status.video.sources блока или v4l2 (единственный)")
     ap.add_argument("--standard", default="auto", choices=("auto", "pal", "ntsc"))
@@ -406,6 +406,9 @@ def main(argv=None, prompt=None):
     if a.plan:
         print(plan(a))
         return 0
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # tools/: адреса плат по серийному номеру
+    from stand import boards
+    boards.resolve_args(a, {'console': 'pi1', 'remote': 'pi2'})
     if not a.out:
         ap.error("--out обязателен")
     a.out.mkdir(parents=True, exist_ok=True)

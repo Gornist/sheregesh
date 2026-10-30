@@ -18,6 +18,7 @@ import os
 import shlex
 import subprocess
 import sys
+from pathlib import Path
 
 HARNESS = r'''
 import json, os, resource, sys, tempfile, time
@@ -166,7 +167,7 @@ app.exec()
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--host", default="192.168.1.92")
+    ap.add_argument("--host", default="auto")
     ap.add_argument("--user", default="sheregesh-ui")
     ap.add_argument("--layout", choices=("minimal", "classic"), default="minimal")
     ap.add_argument("--page", default="video", help="classic: страница (dashboard, video, …)")
@@ -185,6 +186,9 @@ def main():
     ap.add_argument("--rtsp", default="", help="видео — RTSP камеры напрямую на pi1 (rtsp://…), а не локальная синтетика")
     ap.add_argument("--grab", metavar="DIR", help="в конце снять окно с каждым разделом (PNG с GPU платы) в DIR")
     a = ap.parse_args()
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # tools/: адреса плат по серийному номеру
+    from stand import boards
+    boards.resolve_args(a, {'host': 'pi1'})
     pages = ["dashboard", "video", "diagnostics", "power", "logs", "settings", "about", "module", "sticks"]
     code = (HARNESS.replace("LAYOUT", repr(a.layout)).replace("PAGE", str(pages.index(a.page)))
             .replace("NAVIGATE", str(a.navigate)).replace("DO_PROFILE", str(a.profile)).replace("GRAB_DIR", "os.getcwd()" if a.grab else "''").replace("RTSP_URL", repr(a.rtsp)).replace("__FRAME_SIZE__", repr(tuple(int(x) for x in a.frame.split("x"))))

@@ -1053,8 +1053,8 @@ def parse_emu_axes(text):
 def main(argv=None):
     global LOG
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--console", default="192.168.1.92")
-    ap.add_argument("--remote", default="192.168.1.171")
+    ap.add_argument("--console", default="auto")
+    ap.add_argument("--remote", default="auto")
     ap.add_argument("--out", type=Path)
     ap.add_argument("--only", help="через запятую: CR-01…CR-09 (CR-10 «до/после» выполняется всегда; CR-01 — "
                                    "предусловие CR-02…CR-08 и выполняется, если запрошен любой из них)")
@@ -1067,6 +1067,9 @@ def main(argv=None):
     if a.plan:
         print(plan(a))
         return 0
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # tools/: адреса плат по серийному номеру
+    from stand import boards
+    boards.resolve_args(a, {'console': 'pi1', 'remote': 'pi2'})
     if not a.out:
         ap.error("--out обязателен")
     only = set(STEPS) if not a.only else set(a.only.split(",")) & set(STEPS)

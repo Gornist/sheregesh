@@ -191,9 +191,9 @@ def main(argv=None):
     ap.add_argument("--at", default="console", choices=("console", "capture"),
                     help="console — декодированные кадры пульта (полный путь); capture — захват на блоке (--remote), "
                          "передача видео блока на время замера останавливается")
-    ap.add_argument("--remote", default="192.168.1.173")
+    ap.add_argument("--remote", default="auto")
     ap.add_argument("--server")
-    ap.add_argument("--console", default="192.168.1.94")
+    ap.add_argument("--console", default="auto")
     ap.add_argument("--source", default="devbox", help="хост SSH с HDMI-источником")
     ap.add_argument("--source-ip", default="192.168.1.141", help="его адрес для UDP с пульта")
     ap.add_argument("--seconds", type=float, default=30.0)
@@ -205,6 +205,9 @@ def main(argv=None):
         return role_pi1(a.server, a.seconds)
     if a.role == "capture":
         return role_pi1(a.server, a.seconds, CAPTURE.format(device=a.device, fps=a.fps), bpp=2, chan=0)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # tools/: адреса плат по серийному номеру
+    from stand import boards
+    boards.resolve_args(a, {'remote': 'pi2', 'console': 'pi1'})
     srv = subprocess.Popen(remote_cmd(a.source, f"--role timeserver --seconds {a.seconds + 90:.0f}"),
                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:

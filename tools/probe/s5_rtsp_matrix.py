@@ -438,8 +438,8 @@ def plan(a):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--console", default="192.168.1.92")
-    ap.add_argument("--remote", default="192.168.1.171")
+    ap.add_argument("--console", default="auto")
+    ap.add_argument("--remote", default="auto")
     ap.add_argument("--out", type=Path)
     ap.add_argument("--gui", action="store_true", help="S5-06: снимки GUI pi1 по всем ячейкам (пульт стоит ≈ 3 мин)")
     ap.add_argument("--outage", type=float, default=6.0)
@@ -447,6 +447,9 @@ def main(argv=None):
     ap.add_argument("--only", default=",".join(STEPS))
     ap.add_argument("--plan", action="store_true")
     a = ap.parse_args(argv)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # tools/: адреса плат по серийному номеру
+    from stand import boards
+    boards.resolve_args(a, {'console': 'pi1', 'remote': 'pi2'})
     a.rtsp_url = a.rtsp_codec = a.source_cmd = None                  # для S4.Stand
     if a.plan:
         print(plan(a))

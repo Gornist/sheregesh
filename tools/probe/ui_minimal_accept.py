@@ -44,11 +44,14 @@ def ui_cmd(host, req):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--console", default="192.168.1.92")
-    ap.add_argument("--remote", default="192.168.1.171")
+    ap.add_argument("--console", default="auto")
+    ap.add_argument("--remote", default="auto")
     ap.add_argument("--freeze", type=float, default=8.0)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # tools/: адреса плат по серийному номеру
+    from stand import boards
+    boards.resolve_args(a, {'console': 'pi1', 'remote': 'pi2'})
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     rows, res = [], {}

@@ -30,14 +30,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "software"), str(ROOT / "tools/image"), str(ROOT / "tools/probe"), str(ROOT / "tools/build")]
+sys.path[:0] = [str(ROOT / "software"), str(ROOT / "tools/image"), str(ROOT / "tools/probe"), str(ROOT / "tools/build"),
+                str(ROOT / "tools")]
 import build_deb  # noqa: E402
 import gate as build_gate  # noqa: E402
+from stand import boards  # noqa: E402
 from sheregesh.deploy import bundle, sig  # noqa: E402
 from sheregesh.update import ota  # noqa: E402
 
-BOARDS = {"pi1": {"serial": "10000000568152de", "mac": "d8:3a:dd:69:0e:90", "role": "пульт"},
-          "pi2": {"serial": "100000009d497e91", "mac": "d8:3a:dd:69:0f:6e", "role": "удалённый блок"}}
+BOARDS = boards.BOARDS                             # серийные номера и MAC — единый источник tools/stand/boards.py
 USER = "sheregesh-ui"
 INCOMING = ".cache/sheregesh-deploy/incoming"
 STATE = "/var/lib/sheregesh-deploy/state.json"
@@ -129,39 +130,17 @@ class Remote:
         return p.returncode, last
 
 
-def _cache():
-    try:
-        return json.loads(CACHE.read_text())
-    except (OSError, ValueError):
-        return {}
-
-
 def resolve(board, host=None, remote_cls=None, finder=None):
-    """Адрес платы + проверка серийного номера. Возвращает Remote."""
-    if board not in BOARDS:
-        raise CliError(f"неизвестная плата {board!r}: pi1 или pi2")
-    want = BOARDS[board]["serial"]
-    candidates = [h for h in (host, os.environ.get(f"SHEREGESH_{board.upper()}_HOST"), _cache().get(board)) if h]
-    if not candidates:
-        if finder is None:
-            import collect_boot
-            finder = collect_boot.find
-        net = os.environ.get("SHEREGESH_LAN", "192.168.1.0/24")
-        print(f"{board}: поиск по MAC {BOARDS[board]['mac']} в {net}…", file=sys.stderr)
-        found = finder(BOARDS[board]["mac"], net)
-        candidates = [found] if found else []
-    for h in candidates:
-        r = (remote_cls or Remote)(h)
-        rc, out, _ = r.run("tr -d '\\0' < /proc/device-tree/serial-number", timeout=30)
-        if rc == 0 and out.strip() == want:
-            c = _cache()
-            c[board] = h
-            CACHE.parent.mkdir(parents=True, exist_ok=True)
-            CACHE.write_text(json.dumps(c, indent=1))
-            return r
-        if rc == 0:
-            print(f"{board}: {h} — другая плата (серийный {out.strip()}), пропуск", file=sys.stderr)
-    raise CliError(f"{board} не найдена (серийный {want}); укажите --host")
+    """Адрес платы + проверка серийного номера (tools/stand/boards.resolve). Возвращает Remote."""
+    cls = remote_cls or Remote
+
+    def run(h, cmd):
+        rc, out, _ = cls(h).run(cmd, timeout=30)
+        return rc, out
+    try:
+        return cls(boards.resolve(board, host, run=run, finder=finder, cache=CACHE))
+    except boards.BoardNotFound as e:
+        raise CliError(f"{e}; укажите --host") from None
 
 
 def show_state(text):

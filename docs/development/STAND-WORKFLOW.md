@@ -24,6 +24,10 @@ Worktree изолирует файлы, но не pi1/pi2, камеру и ап�
 
 ## Инструменты координации
 
+Адреса плат не зашиваются: `tools/stand/boards.py` — адрес по серийному номеру (явный — проверяется; `auto` —
+`SHEREGESH_PI1_HOST`/`SHEREGESH_PI2_HOST`, кэш `~/.cache/sheregesh/boards.json`, поиск по MAC) и единый `ssh()`.
+Новый скрипт стенда — `boards.add_args(ap)` и `boards.resolve_args(a)`, а не адрес по умолчанию.
+
 `python3 tools/dev/worktree_audit.py --base v2` печатает JSON без удаления и разблокировки.
 `python3 tools/dev/stand_lease.py status` показывает аренды в общем git-каталоге всех worktrees.
 `python3 tools/dev/stand_lease.py acquire --run-id <id> --resource pi1 --resource pi2 --ttl 3600`
