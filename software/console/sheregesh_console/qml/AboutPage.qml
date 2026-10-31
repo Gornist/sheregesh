@@ -34,9 +34,9 @@ Item {
                 Label { text: qsTr("Software"); color: win.p.muted }
                 Label { objectName: "aboutSoftware"; text: page.a.software; Layout.fillWidth: true }
                 Label { text: qsTr("Build"); color: win.p.muted }
-                Label { text: page.a.build; Layout.fillWidth: true }
+                Label { objectName: "aboutBuild"; text: page.a.build; Layout.fillWidth: true; wrapMode: Text.Wrap }   // образ · выпуск — длинная строка
                 Label { text: qsTr("Hardware"); color: win.p.muted }
-                Label { objectName: "aboutHardware"; text: page.a.hardware; Layout.fillWidth: true; elide: Text.ElideRight }
+                Label { objectName: "aboutHardware"; text: page.a.hardware; Layout.fillWidth: true; wrapMode: Text.Wrap }
                 Label { text: qsTr("Serial number"); color: win.p.muted }
                 Label { objectName: "aboutSerial"; text: page.a.serial; Layout.fillWidth: true }
                 Label { text: qsTr("Protocol"); color: win.p.muted }
@@ -44,9 +44,9 @@ Item {
                 Label { text: qsTr("Configuration"); color: win.p.muted }
                 Label { text: qsTr("schema %1, revision %2").arg(page.a.schema).arg(page.a.revision); Layout.fillWidth: true }
                 Label { text: qsTr("Platform"); color: win.p.muted }
-                Label { text: page.a.platform; Layout.fillWidth: true; elide: Text.ElideRight }
+                Label { text: page.a.platform; Layout.fillWidth: true; wrapMode: Text.Wrap }
                 Label { text: qsTr("Libraries"); color: win.p.muted }
-                Label { text: page.a.qt + ", GStreamer " + page.a.gstreamer; Layout.fillWidth: true; elide: Text.ElideRight }
+                Label { text: page.a.qt + ", GStreamer " + page.a.gstreamer; Layout.fillWidth: true; wrapMode: Text.Wrap }
                 Label { text: qsTr("Video codec"); color: win.p.muted }
                 Label { text: page.a.videoCodec; Layout.fillWidth: true }
             }
