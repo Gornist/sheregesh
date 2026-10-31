@@ -85,6 +85,7 @@ class Agent:
         self.power = PowerEmulator(percent=92.0, source="battery", discharge_pct_h=8.0)
         self.thermal = ThermalEmulator(FanEmulator(), ambient=25.0, heat_w=4.5, start_c=40.0, k0=0.15, kf=0.0)
         self.thermal.fan.set_duty(0)
+        self.sensors = None                         # датчики платы в сетевом профиле (sheregesh.board), иначе эмуляторы
         self.silent_until = 0.0
         self.hb_delay = 0.0
         self.video_off_until = 0.0
@@ -111,6 +112,9 @@ class Agent:
         self.video_codec = video.choose_codec(args.video_codec) if args.video and uvc_ok else None
         self.video_port = args.video_port
         self.tls_cfg = getattr(args, "tls_cfg", None)
+        if self.tls_cfg is not None:                # на плате — настоящая температура SoC, питания без модуля нет
+            from sheregesh import board
+            self.sensors = board.sensors()
         self.time_task = None                       # sheregesh-time-peer@ адреса пульта (ADR-0017)
         self.ctx = tls.make_context(self.tls_cfg, server=True) if self.tls_cfg else None
         # Сетевой профиль: видео — только SRTP через службу sheregesh-video-tx (ADR-0016), без UDP-отправителя.
@@ -316,10 +320,11 @@ class Agent:
             self.conn = None
 
     def status_body(self):
-        p = self.power.read()
+        temps, power = self.sensors or (self.thermal, self.power)
+        p = power.read()
         body = {"state": "alert" if self.alerts else "normal", "uptime_s": round(self.now(), 1),
-                "temperatures": self.thermal.read(),
-                "power": {"source": p.source, "percent": p.percent, "low_battery": p.low_battery},
+                "temperatures": temps.read(),
+                "power": {"source": p.source, "percent": p.percent, "low_battery": p.low_battery} if p else None,
                 "video": self.video_status(),
                 "active_events": list(self.alerts),
                 "link": {k: v for k, v in self.stats.items() if isinstance(v, (int, float))}}

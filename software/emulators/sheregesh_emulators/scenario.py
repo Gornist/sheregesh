@@ -14,12 +14,17 @@ TICK_S = 0.5
 class Bench:
     """Эмулированный стенд пульта: все провайдеры + монитор на модельных часах."""
 
-    def __init__(self, diagnostics: dict, link: dict, peer_factory=None, services=None):
-        """peer_factory(clock) → внешний Peer (например, RemotePeer к процессу удалённого блока); по умолчанию — эмулятор."""
+    def __init__(self, diagnostics: dict, link: dict, peer_factory=None, services=None, sensors=None):
+        """peer_factory(clock) → внешний Peer (например, RemotePeer к процессу удалённого блока); по умолчанию — эмулятор.
+        sensors — (температуры, питание) платы (sheregesh.board.sensors) вместо эмуляторов; вентилятор — эмулятор
+        (вентилятора на стенде нет, REQ-P-005 — после выбора железа)."""
         self.clock = SimClock()
-        self.power = PowerEmulator()
         self.fan = FanEmulator()
-        self.thermal = ThermalEmulator(self.fan)
+        if sensors is not None:
+            self.thermal, self.power = sensors
+        else:
+            self.power = PowerEmulator()
+            self.thermal = ThermalEmulator(self.fan)
         self.peer = peer_factory(self.clock) if peer_factory else PeerEmulator(self.clock)
         self.indicator = IndicatorEmulator(self.clock)
         self.monitor = SystemMonitor(self.clock, self.power, self.thermal, self.fan, self.peer, self.indicator,

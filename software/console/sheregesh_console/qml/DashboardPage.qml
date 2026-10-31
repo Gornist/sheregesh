@@ -147,7 +147,7 @@ Item {
                 maximumLineCount: 2; elide: Text.ElideRight
                 // 1280×800 + несовпадение версий протокола и др.: убирается, а не выталкивает heartbeat за рамку
                 visible: st.remoteAvailable && st.peerState === "connected" && tileLink.optionalFits
-                text: qsTr("SoC %1\u00a0°C · power %2\u00a0% · uptime %3\u00a0s").arg(win.num(st.remoteTempSoc, 1)).arg(win.num(st.remotePowerPercent, 0)).arg(win.num(st.remoteUptime, 0))
+                text: qsTr("SoC %1\u00a0°C · power %2\u00a0% · uptime %3\u00a0s").arg(win.num(st.remoteTempSoc, 1)).arg(st.remotePowerPercent >= 0 ? win.num(st.remotePowerPercent, 0) : "—").arg(win.num(st.remoteUptime, 0))
                 color: win.p.muted
             }
             Label {
@@ -233,7 +233,7 @@ Item {
                 minimumPixelSize: 18 * win.s
                 elide: Text.ElideRight
             }
-            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: st.tempAvailable; text: qsTr("Board %1\u00a0°C").arg(win.num(st.tempBoard, 1)); color: win.p.muted }
+            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: st.tempAvailable && st.tempBoard >= 0; text: qsTr("Board %1\u00a0°C").arg(win.num(st.tempBoard, 1)); color: win.p.muted }
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap;
                 objectName: "fanValue"
                 text: st.fanRpm >= 0 ? qsTr("Fan %1\u00a0% · %2 rpm").arg(st.fanDuty).arg(st.fanRpm) : qsTr("Fan %1\u00a0% · no speed signal").arg(st.fanDuty)
