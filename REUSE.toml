@@ -1,0 +1,26 @@
+version = 1
+SPDX-PackageName = "Sheregesh"
+SPDX-PackageDownloadLocation = "https://github.com/Gornist/sheregesh"
+
+# Лицензирование проекта (ADR-0001, REQ-DOC-001): ПО — GPL-3.0-or-later, документация — CC-BY-SA-4.0, CAD и аппаратная
+# документация — CERN-OHL-S-2.0. Заголовок SPDX в самом файле имеет приоритет (precedence = "closest"); записи ниже
+# покрывают файлы без заголовка (данные, документы) и файлы, которые reuse 6 ошибочно считает двоичными (определение
+# кодировки по фрагменту фиксированной длины разрезает двухбайтовую кириллическую букву).
+
+[[annotations]]
+path = ["software/**", "tools/**", "tests/**", "os/**", ".github/**", ".gitignore", "*.toml", "*.cfg", "*.txt"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Sheregesh contributors"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = ["docs/**", "*.md"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Sheregesh contributors"
+SPDX-License-Identifier = "CC-BY-SA-4.0"
+
+[[annotations]]
+path = ["hardware/**"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Sheregesh contributors"
+SPDX-License-Identifier = "CERN-OHL-S-2.0"

@@ -40,6 +40,11 @@ jobs:
           retention-days: 7
       - name: Модульные тесты инструментов
         run: python3 -m unittest discover -s tests/tools -p 'test_*.py' -v
+      - name: Лицензирование REUSE (REQ-DOC-001)
+        run: |
+          python3 -m venv /tmp/reuse
+          /tmp/reuse/bin/pip install --quiet 'reuse[charset-normalizer]==6.3.0'
+          /tmp/reuse/bin/reuse lint
 
   software:
     name: ПО на эмуляторах (L2/L3)
