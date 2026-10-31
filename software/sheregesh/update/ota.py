@@ -15,8 +15,13 @@
   confirm  — на пробной загрузке: все обязательные критерии confirm.py (слот, версия, persistent, те же ключи и роль,
              службы роли без перезапусков, health PASS, mTLS, видео стенда) → autoboot [all] на новый слот (mark-good);
   abort    — отказ: с пробной загрузки — обычная перезагрузка (прошивка вернёт прежний слот), иначе сброс в IDLE.
+  dev-arm / dev-disarm — разовый режим разработчика (REQ-UPD-005/006): разрешает установить ОДИН собственный образ без
+             подписи проекта. Взводится только службой самого устройства — GUI пульта (sheregesh-console, после
+             подтверждения оператора) или агентом блока (sheregesh-remote-net, по подтверждению на пульте); по SSH —
+             отказ. Разрешение живёт DEV_GRANT_S и снимается первой же установкой (успех или отказ); следующий
+             неподписанный образ отвергается. Пробная загрузка, подтверждение и откат такого образа — тот же A/B.
 tryboot и confirm ВЫКЛЮЧЕНЫ, пока на плату не внесено разрешение, подписанное владельцем для серийного номера
-этой платы (enable; пространство sheregesh-ota-enable). Автоматического подтверждения нет: confirm — только
+этой платы (enable; пространство sheregesh-ota-enable), — кроме образа, записанного в разовом режиме разработчика. Автоматического подтверждения нет: confirm — только
 по явной команде. Модель состояний и инварианты — model.py.
 """
 import fcntl
@@ -40,6 +45,8 @@ LAYOUT = "image-rota-gpt-ab-1"
 PARTS = ("boot", "system")
 MAX_MANIFEST = 64 * 1024
 SOCKET = "/run/sheregesh-ota.sock"
+ARM_UNITS = ("sheregesh-console.service", "sheregesh-remote-net.service")   # кто может взвести режим разработчика
+DEV_GRANT_S = 15 * 60
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -98,12 +105,19 @@ def _read_block(stream, limit):
 class Payload:
     """Поток обновления: подпись манифеста проверяется ДО чтения образов; образы — далее из stream."""
 
-    def __init__(self, stream, signers, compatible):
+    def __init__(self, stream, signers, compatible, allow_unsigned=False):
+        """allow_unsigned — разовый режим разработчика: подпись проекта не обязательна (dev — образ без неё)."""
         if _read_exact(stream, len(MAGIC)) != MAGIC:
             raise PayloadError("это не поток обновления SHRGOTA1")
         self.raw_manifest = _read_block(stream, MAX_MANIFEST)
         signature = _read_block(stream, sig.MAX_SIG)
-        self.signer = sig.verify(self.raw_manifest, signature, signers, sig.NS_OTA)
+        self.dev = False
+        try:
+            self.signer = sig.verify(self.raw_manifest, signature, signers, sig.NS_OTA)
+        except sig.SignatureError:
+            if not allow_unsigned:
+                raise
+            self.signer, self.dev = None, True
         try:
             self.manifest = validate_manifest(json.loads(self.raw_manifest), compatible)
         except ValueError as e:
@@ -167,6 +181,50 @@ class Policy:
                 pass
 
 
+class DevGrant:
+    """Разовое разрешение режима разработчика: файл в state_dir с временем взвода, сроком и службой-инициатором."""
+
+    def __init__(self, state_dir: Path, clock=None):
+        import time
+        self.path, self.clock = Path(state_dir) / "dev-grant.json", clock or time.time
+
+    def arm(self, by: str):
+        now = self.clock()
+        info = {"armed": round(now, 3), "expires": round(now + DEV_GRANT_S, 3), "by": by}
+        self.path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(info))
+        os.replace(tmp, self.path)
+        return info
+
+    def current(self):
+        """Действующее разрешение или None (нет, просрочено, повреждено)."""
+        try:
+            info = json.loads(self.path.read_text())
+            return info if self.clock() < float(info["expires"]) else None
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def consume(self):
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def caller_unit(sock) -> str:
+    """Служба systemd процесса на другом конце сокета (SO_PEERCRED → /proc/PID/cgroup); «» — не определена."""
+    import struct
+    try:
+        pid = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, getattr(socket, "SO_PEERCRED", 17),
+                                                  struct.calcsize("3i")))[0]
+        text = Path(f"/proc/{pid}/cgroup").read_text()
+    except (OSError, ValueError, struct.error):
+        return ""
+    path = text.strip().splitlines()[-1].rpartition(":")[2] if text.strip() else ""
+    return next((p for p in reversed(path.split("/")) if p.endswith(".service")), "")
+
+
 @dataclass
 class AgentConfig:
     paths: slots.Paths = field(default_factory=slots.Paths)
@@ -207,6 +265,9 @@ class Agent:
     def policy(self):
         return Policy(self.cfg.state_dir, self.cfg.signers, self.serial())
 
+    def dev_grant(self):
+        return DevGrant(self.cfg.state_dir)
+
     def updater(self, layout, backend=None):
         state_path = Path(self.cfg.state_dir) / "state.json"
         Path(self.cfg.state_dir).mkdir(mode=0o755, parents=True, exist_ok=True)
@@ -244,15 +305,27 @@ class Agent:
         except (OSError, UpdateError) as e:
             out["autoboot_error"] = str(e)
         out["switching"] = self.policy().allowed()[1]
+        out["dev_mode"] = self.dev_grant().current()
         return out
 
     # ---------- действия ----------
-    def handle(self, request, stream, emit):
+    def handle(self, request, stream, emit, caller=""):
+        """caller — служба systemd клиента сокета (caller_unit): режим разработчика взводит только служба устройства."""
         action = request.get("action")
         if action == "status":
             return {"result": "OK", **self.status()}
-        if action not in ("install", "enable", "disable", "tryboot", "confirm", "abort"):
+        if action not in ("install", "enable", "disable", "tryboot", "confirm", "abort", "dev-arm", "dev-disarm"):
             return {"result": "REJECTED", "reason": f"неизвестное действие {action!r}"}
+        if action == "dev-arm":
+            if caller not in ARM_UNITS:
+                return {"result": "REFUSED", "reason": f"режим разработчика включается только на устройстве "
+                                                       f"(GUI пульта или по подтверждению на пульте), не {caller or 'извне'}"}
+            info = self.dev_grant().arm(caller)
+            return {"result": "OK", "reason": f"разрешена установка одного собственного образа до "
+                                              f"{int(info['expires'] - info['armed'])} с", "dev_mode": info}
+        if action == "dev-disarm":
+            self.dev_grant().consume()
+            return {"result": "OK", "reason": "режим разработчика выключен"}
         if action == "disable":
             self.policy().disable()
             return {"result": "OK", "reason": "переключение слотов запрещено"}
@@ -275,7 +348,7 @@ class Agent:
         if action == "abort":
             return self._abort(layout, u)
         allowed, why = self.policy().allowed()
-        if not allowed:
+        if not allowed and not (u.s.dev_image and u.s.state in ("INSTALLED", "TRYBOOT", "HEALTH_PENDING")):
             return {"result": "REFUSED", "reason": why}
         if action == "tryboot":
             return self._tryboot(layout, u)
@@ -284,18 +357,23 @@ class Agent:
     def _install(self, layout, u, stream, emit):
         if u.s.state in ("TRYBOOT", "HEALTH_PENDING", "INSTALLING"):
             return {"result": "REJECTED", "reason": f"идёт обновление: {u.s.state}; сначала abort"}
+        grant = self.dev_grant()
+        armed = grant.current() is not None
+        if armed:
+            grant.consume()                          # одна установка в режиме разработчика — успешная или нет
         try:
-            payload = Payload(stream, self.cfg.signers, self.compatible())
+            payload = Payload(stream, self.cfg.signers, self.compatible(), allow_unsigned=armed)
         except (PayloadError, sig.SignatureError) as e:
             return {"result": "REJECTED", "reason": str(e)}
         m = payload.manifest
-        emit({"msg": f"подпись принята; версия {m['version']} (коммит {str(m.get('commit'))[:12]}) → слот "
-                     f"{layout.other.name.upper()}"})
+        emit({"msg": f"{'собственный образ без подписи проекта (режим разработчика)' if payload.dev else 'подпись принята'}; "
+                     f"версия {m['version']} (коммит {str(m.get('commit'))[:12]}) → слот {layout.other.name.upper()}"})
         if u.s.state in ("VERIFIED", "INSTALLED"):
             u.reset(layout.active.name.upper(), u.s.version_active, "замена ранее записанного обновления")
         u.b = slots.BlockSlots(layout, self.cfg.paths, payload, seeder=self.seeder,
                                progress=lambda part, w, t: emit({"msg": f"{part}: {w * 100 // t}%"}))
         u.verify({"version": m["version"], "compatible": m["compatible"], "signature_ok": True})
+        u.s.dev_image = payload.dev
         if u.s.state == "VERIFIED":                          # отпечатки рабочего слота для критериев подтверждения
             u.s.expect = confirm.expect_from_board(self.cfg.root)
             u.save()
@@ -366,7 +444,7 @@ class Agent:
 # ---------------------------------------------------------------- сокет
 
 
-def serve(agent, rfile, wfile):
+def serve(agent, rfile, wfile, caller=""):
     def emit(obj):
         try:
             wfile.write((json.dumps(obj, ensure_ascii=False) + "\n").encode())
@@ -389,7 +467,7 @@ def serve(agent, rfile, wfile):
             emit({"result": "BUSY", "reason": "агент занят другим действием"})
             return 1
         try:
-            result = agent.handle(request, rfile, emit)
+            result = agent.handle(request, rfile, emit, caller=caller)
         except (UpdateError, OSError) as e:
             result = {"result": "FAILED", "reason": str(e)}
     emit(result)
@@ -423,8 +501,10 @@ def client(action, stdin, stdout, path=SOCKET):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    if argv[:1] == ["serve"]:
-        return serve(Agent(), sys.stdin.buffer, sys.stdout.buffer)
+    if argv[:1] == ["serve"]:                    # systemd Accept=yes: соединение — stdin/stdout
+        with socket.socket(fileno=os.dup(0)) as conn:
+            caller = caller_unit(conn)
+        return serve(Agent(), sys.stdin.buffer, sys.stdout.buffer, caller=caller)
     if argv[:1] == ["on-boot"]:
         return on_boot_main(Agent())
     print("использование: sheregesh-ota-agent serve | on-boot", file=sys.stderr)
@@ -449,7 +529,7 @@ def on_boot_main(agent):
 
 def client_main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    actions = ("status", "install", "enable", "disable", "tryboot", "confirm", "abort")
+    actions = ("status", "install", "enable", "disable", "tryboot", "confirm", "abort", "dev-arm", "dev-disarm")
     if len(argv) != 1 or argv[0] not in actions:
         print(f"использование: sheregesh-ota-client {{{'|'.join(actions)}}}", file=sys.stderr)
         return 2

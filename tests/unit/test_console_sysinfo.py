@@ -16,7 +16,10 @@ def test_summarize_fields_and_missing_commands():
     assert s == {"available": True, "otaState": "COMMITTED", "slotActive": "B", "slotOther": "A", "tryboot": False,
                  "imageVersion": "0.1.1792924537", "imageCommit": "b1d95a29d5b5", "consistent": True,
                  "switching": "переключение слотов не разрешено", "release": "0.1.0~dev0+g7b1cca302359",
-                 "previous": "0.1.0~dev0+gfac5d7e096cc", "role": "console"}
+                 "previous": "0.1.0~dev0+gfac5d7e096cc", "role": "console", "devMode": False, "devExpires": 0.0}
+    armed = sysinfo.summarize({**OTA, "dev_mode": {"armed": 100.0, "expires": 1000.0, "by": "sheregesh-console.service"}},
+                              DEPLOY)
+    assert armed["devMode"] is True and armed["devExpires"] == 1000.0
     empty = sysinfo.summarize(None, None)
     assert empty["available"] is False and empty["otaState"] == "" and empty["consistent"] is None
 

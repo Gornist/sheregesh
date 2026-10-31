@@ -28,6 +28,13 @@ ColumnLayout {
         value: panel.si.slotActive !== "" ? qsTr("active %1 · other %2").arg(panel.si.slotActive).arg(panel.si.slotOther) : "—"
     }
     MiniRow { label: qsTr("System image"); value: panel.si.imageVersion !== "" ? panel.si.imageVersion + " · " + panel.si.imageCommit : "—" }
+    MiniRow {
+        objectName: "miniSysDevMode"
+        visible: panel.si.devMode === true
+        label: qsTr("Developer mode")
+        value: qsTr("one own image allowed")
+        valueColor: win.p.warning
+    }
     MiniRow { label: qsTr("Display"); value: "%1×%2 · %3 %4 %".arg(win.width).arg(win.height).arg(qsTr("scale")).arg(backend.uiScale) }
     MiniRow { label: qsTr("Language · theme"); value: backend.language.toUpperCase() + " · " + backend.theme }
     Label {

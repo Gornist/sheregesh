@@ -44,6 +44,7 @@ class UpdateState:
     reason: str = ""
     history: list = field(default_factory=list)
     expect: dict = field(default_factory=dict)  # отпечатки до переключения (роль, ключи, machine-id) — confirm.py
+    dev_image: bool = False              # цель — собственный образ по разовому режиму разработчика (REQ-UPD-005)
 
     def other(self, slot=None):
         return {"A": "B", "B": "A"}[slot or self.active]
@@ -104,6 +105,8 @@ class Updater:
             d = asdict(self.s)
             if not d["expect"]:     # агент 57e8fe4 (образ pi1/pi2 до S3.2) не знает поля expect и упал бы на нём
                 del d["expect"]
+            if not d["dev_image"]:  # то же для агентов до режима разработчика (REQ-UPD-005)
+                del d["dev_image"]
             tmp = Path(self.path).with_suffix(".tmp")
             tmp.write_text(json.dumps(d, ensure_ascii=False))
             tmp.replace(self.path)
@@ -184,6 +187,7 @@ class Updater:
         self.s.target = self.s.version_target = None
         self.s.boot_attempts = 0
         self.s.expect = {}
+        self.s.dev_image = False
         self._go("IDLE", reason)
 
     def abort_trial(self, reason):

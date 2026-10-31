@@ -6,7 +6,8 @@
   applyForm, restore                    — конфигурация (новая ревизия, восстановление из копии);
   selectVideoSource                     — источник видео на блоке;
   sticks.setEnabled(true)               — включение передачи управления;
-  module: requestReinit, requestReset, setEnabled, setAutoInit, configure, setBackend, runLabScenario.
+  module: requestReinit, requestReset, setEnabled, setAutoInit, configure, setBackend, runLabScenario;
+  systemInfo.armDevImage                — разовый режим разработчика (REQ-UPD-005).
 Исключение по безопасности: выключение передачи (sticks.setEnabled(false, …)) — сразу и без подтверждения.
 Не изменяют устройство: backup и exportLogs (файл копии или журнала), validateForm, reload, refresh.
 
@@ -28,7 +29,7 @@ from sheregesh_console.qtwait import pump, wait_until
 
 QQuickStyle.setStyle("Fusion")
 ACTIONS = ("applyForm", "restore", "selectVideoSource", "setEnabled", "requestReinit", "requestReset", "setAutoInit",
-           "configure", "setBackend", "runLabScenario")
+           "configure", "setBackend", "runLabScenario", "armDevImage")
 READ_ONLY = ("AboutPage.qml", "DiagnosticsPage.qml", "LogsPage.qml", "DashboardPage.qml", "PowerPage.qml",
              "MiniDiagPanel.qml", "MiniSystemPanel.qml")
 CALL = re.compile(r"\b(" + "|".join(ACTIONS) + r")\(")
@@ -120,8 +121,11 @@ def test_every_catalog_method_refuses_without_confirmation(ui):
     assert mv.setEnabled(True, False) is False and mv.setAutoInit(False, False) is False
     assert mv.configure({}, False) is False and mv.setBackend("lab-emulator", False) is False
     assert mv.runLabScenario("detach", False) is False
+    ran = []
+    ui.system_info._run = lambda argv: ran.append(argv)
+    assert ui.system_info.armDevImage(False) is False
     pump(200)
-    assert b.revision == rev and b.language == "ru"
+    assert b.revision == rev and b.language == "ru" and ran == []
 
 
 @pytest.mark.test_id("TEST-SYS-009")
@@ -137,3 +141,33 @@ def test_cancelled_confirmation_keeps_active_revision(ui):
     dlg.reject()
     pump(300)
     assert b.revision == rev and not b.configBusy
+
+
+@pytest.mark.test_id("TEST-UPD-005")
+def test_dev_mode_dialog_arms_only_after_confirmation(ui):
+    """Режим разработчика: кнопка открывает диалог (по умолчанию — «Отмена»); отмена ничего не запускает, «ОК» —
+    одна команда dev-arm агента OTA, затем сведения перечитываются."""
+    ran = []
+    si = ui.system_info
+
+    def run(argv):
+        ran.append(argv[1])
+        return {"result": "OK", "reason": "разрешена установка одного собственного образа"} if argv[1] == "dev-arm" \
+            else {"dev_mode": {"armed": 1, "expires": 901, "by": "sheregesh-console.service"}}
+    si._run = run
+    si._info = {**si._info, "available": True}
+    si.changed.emit()
+    ui.window.setProperty("currentIndex", PAGE_NAMES.index("settings"))
+    pump(300)
+    items = {o.objectName(): o for o in ui.window.findChildren(QObject) if o.objectName()}
+    dlg = items["devDialog"]
+    dlg.open()
+    pump(200)
+    dlg.reject()
+    pump(200)
+    assert ran == []
+    dlg.open()
+    pump(200)
+    dlg.accept()
+    assert wait_until(lambda: "dev-arm" in ran and si.info.get("devMode") is True, 3), ran
+    assert ran.count("dev-arm") == 1

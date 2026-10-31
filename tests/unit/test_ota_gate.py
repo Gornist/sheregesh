@@ -99,9 +99,11 @@ def _git_show(rev, path):
 
 
 def test_b_agent_install_and_abort_logic_is_the_tested_code():
-    """Выводы ниже о поведении агента слота B pi2 относятся к a7f1b74: ota.py и slots.py с тех пор не менялись."""
-    for f in ("software/sheregesh/update/ota.py", "software/sheregesh/update/slots.py"):
-        assert _git_show(OLD_B, f) == (ROOT / f).read_bytes(), f"{f} изменился после {OLD_B}: пересмотреть выводы"
+    """Выводы ниже о поведении агента слота B pi2 относятся к a7f1b74: slots.py с тех пор не менялся. ota.py изменён
+    2026-10-31 (разовый режим разработчика, REQ-UPD-005): ветви TRYBOOT/HEALTH_PENDING в install, confirm и abort
+    прежние — выводы пересмотрены и проверяются тестами ниже на текущем коде."""
+    f = "software/sheregesh/update/slots.py"
+    assert _git_show(OLD_B, f) == (ROOT / f).read_bytes(), f"{f} изменился после {OLD_B}: пересмотреть выводы"
 
 
 def test_pi2_on_trial_b_cannot_take_new_package_without_returning_to_a(tmp_path):

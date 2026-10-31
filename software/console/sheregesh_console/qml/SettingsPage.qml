@@ -159,6 +159,37 @@ Item {
                 Layout.fillWidth: true
             }
 
+            Label { text: qsTr("Developer mode"); font.bold: true }
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    objectName: "devModeLabel"
+                    text: systemInfo.info.devMode ? qsTr("one own image may be installed (until the next installation)")
+                                                  : qsTr("off: only images signed by the project are installed")
+                    color: systemInfo.info.devMode ? win.p.warning : win.p.muted
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+                Button {
+                    objectName: "devModeButton"
+                    text: qsTr("Allow one own image…")
+                    enabled: systemInfo.info.available && !systemInfo.busy && !systemInfo.info.devMode
+                    onClicked: devDialog.open()
+                }
+            }
+            Label {
+                id: devResultLabel
+                objectName: "devResultLabel"
+                visible: text !== ""
+                color: win.p.muted
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Connections {
+                    target: systemInfo
+                    function onDevResult(ok, reason) { devResultLabel.text = reason }
+                }
+            }
+
             Label { text: qsTr("Revision history"); font.bold: true }
             Repeater {
                 model: backend.history
@@ -193,6 +224,25 @@ Item {
             width: confirm.availableWidth
         }
         onAccepted: backend.applyForm(page.form(), true)
+    }
+
+    Dialog {
+        id: devDialog
+        height: 340 * win.s          // явная высота: иначе цикл привязок implicitHeight в Fusion Dialog
+        onOpened: standardButton(Dialog.Cancel).forceActiveFocus()   // опасное действие: по умолчанию — отказ
+        objectName: "devDialog"
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: qsTr("Allow one own system image?")
+        width: 720 * win.s
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        Label {
+            objectName: "devQuestion"
+            text: qsTr("The next system update may be an image not signed by the project (your own build). Only one installation is allowed within 15 minutes; then the mode turns off. A faulty image rolls back to the current one as usual.")
+            wrapMode: Text.WordWrap
+            width: devDialog.availableWidth
+        }
+        onAccepted: systemInfo.armDevImage(true)
     }
 
     Dialog {

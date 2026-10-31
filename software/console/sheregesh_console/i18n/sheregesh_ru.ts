@@ -1325,6 +1325,16 @@
         <source>About</source>
         <translation>О системе</translation>
     </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="34" />
+        <source>Developer mode</source>
+        <translation>Режим разработчика</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="35" />
+        <source>one own image allowed</source>
+        <translation>разрешён один собственный образ</translation>
+    </message>
 </context>
 <context>
     <name>MiniVideoPanel</name>
@@ -2730,6 +2740,36 @@
         <location filename="../qml/SettingsPage.qml" line="117" />
         <source>UVC video mode</source>
         <translation>Режим UVC</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="162" />
+        <source>Developer mode</source>
+        <translation>Режим разработчика</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="167" />
+        <source>one own image may be installed (until the next installation)</source>
+        <translation>можно установить один собственный образ (до следующей установки)</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="168" />
+        <source>off: only images signed by the project are installed</source>
+        <translation>выключен: устанавливаются только образы с подписью проекта</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="175" />
+        <source>Allow one own image…</source>
+        <translation>Разрешить один собственный образ…</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="236" />
+        <source>Allow one own system image?</source>
+        <translation>Разрешить один собственный образ системы?</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="241" />
+        <source>The next system update may be an image not signed by the project (your own build). Only one installation is allowed within 15 minutes; then the mode turns off. A faulty image rolls back to the current one as usual.</source>
+        <translation>Следующим обновлением системы можно установить образ без подписи проекта (собственную сборку). Разрешена одна установка в течение 15 минут, затем режим выключается. Неисправный образ, как обычно, откатится к текущему.</translation>
     </message>
 </context>
 <context>
