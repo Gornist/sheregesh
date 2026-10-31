@@ -767,6 +767,10 @@ def _sanitize_status(body):
     m = wire.sanitize_module(body.get("module"))
     if m is not None:                             # внешний модуль блока (протокол 1.3, ADR-0012): необязательное поле
         out["module"] = m
+    from .. import services as svc
+    s = svc.sanitize(body.get("services"))
+    if s is not None:                             # обязательные службы блока (REQ-SW-001): необязательное поле
+        out["services"] = s
     ev = body.get("active_events")
     out["active_events"] = [str(c)[:32] for c in ev if isinstance(c, str)][:20] if isinstance(ev, list) else []
     if isinstance(body.get("uptime_s"), (int, float)):

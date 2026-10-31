@@ -1080,6 +1080,21 @@
         <translation>ПО пульта</translation>
     </message>
     <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="55" />
+        <source>Console service: %1</source>
+        <translation>Служба пульта: %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="55" />
+        <source>Remote unit service: %1</source>
+        <translation>Служба блока: %1</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="56" />
+        <source>%1 · restarts %2</source>
+        <translation>%1 · перезапусков %2</translation>
+    </message>
+    <message>
         <location filename="../qml/MiniDiagPanel.qml" line="39" />
         <source>protocol</source>
         <translation>протокол</translation>

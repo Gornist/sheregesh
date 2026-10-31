@@ -47,6 +47,16 @@ ColumnLayout {
     }
     MiniRow { label: qsTr("Remote unit software"); value: panel.st.peerSoftware !== "" ? panel.st.peerSoftware : "—" }
     MiniRow { label: qsTr("Console software"); value: "%1 · %2 %3".arg(panel.st.software).arg(qsTr("protocol")).arg(panel.st.localProtocol) }
+    Repeater {                              // REQ-SW-001: обязательные службы пульта и блока (блок — через status)
+        model: panel.st.services || []
+        MiniRow {
+            required property var modelData
+            objectName: "miniSvc_" + modelData.name
+            label: (modelData.side === "console" ? qsTr("Console service: %1") : qsTr("Remote unit service: %1")).arg(modelData.name)
+            value: qsTr("%1 · restarts %2").arg(modelData.state).arg(modelData.restarts)
+            valueColor: modelData.state === "active" ? win.p.ok : win.p.fault
+        }
+    }
     Button {
         objectName: "miniExportLogs"
         text: qsTr("Export logs")

@@ -14,7 +14,7 @@ TICK_S = 0.5
 class Bench:
     """Эмулированный стенд пульта: все провайдеры + монитор на модельных часах."""
 
-    def __init__(self, diagnostics: dict, link: dict, peer_factory=None):
+    def __init__(self, diagnostics: dict, link: dict, peer_factory=None, services=None):
         """peer_factory(clock) → внешний Peer (например, RemotePeer к процессу удалённого блока); по умолчанию — эмулятор."""
         self.clock = SimClock()
         self.power = PowerEmulator()
@@ -23,7 +23,7 @@ class Bench:
         self.peer = peer_factory(self.clock) if peer_factory else PeerEmulator(self.clock)
         self.indicator = IndicatorEmulator(self.clock)
         self.monitor = SystemMonitor(self.clock, self.power, self.thermal, self.fan, self.peer, self.indicator,
-                                     diagnostics, link)
+                                     diagnostics, link, services=services)
         self.events = EventGenerator(self.monitor.log, self.clock)
         self.snapshot = self.monitor.tick()
 

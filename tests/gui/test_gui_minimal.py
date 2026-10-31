@@ -328,3 +328,17 @@ def test_gui12_navigation_does_not_degrade_video(ui):
     idle = shown(3.0, False)
     nav = shown(3.0, True)
     assert idle > 15 and nav >= 0.85 * idle, (idle, nav)
+
+
+@pytest.mark.test_id("TEST-SW-001")
+def test_gui_diagnostics_lists_mandatory_services_of_both_devices(ui):
+    """Состояние каждой обязательной службы видно в диагностике пульта (для блока — через status)."""
+    rows = [{"side": "console", "name": "video-rx", "state": "active", "restarts": 0},
+            {"side": "remote", "name": "video-tx", "state": "failed", "restarts": 2}]
+    ui.backend._status["services"] = rows
+    ui.backend.statusChanged.emit()
+    tap(ui, "nav_diagnostics")
+    assert wait_until(lambda: find_opt(ui, "miniSvc_video-tx") is not None, 3)
+    rx, tx = find(ui, "miniSvc_video-rx"), find(ui, "miniSvc_video-tx")
+    assert rx.property("label") == "Служба пульта: video-rx" and rx.property("value") == "active · перезапусков 0"
+    assert tx.property("label") == "Служба блока: video-tx" and tx.property("value") == "failed · перезапусков 2"

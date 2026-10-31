@@ -9,6 +9,7 @@
 from dataclasses import dataclass, field
 
 from . import PROTOCOL_VERSION
+from . import services as svc
 from .faults import CATALOG, ERROR, SEVERITY_ORDER, WARNING
 from .hal import PeerStatus, PowerReading
 from .protocol import negotiate
@@ -83,12 +84,15 @@ class Snapshot:
     overall: str                 # normal | warning | fault
     active: list = field(default_factory=list)
     shutdown_requested: str | None = None
+    services: dict = field(default_factory=dict)   # {"console"|"remote": снимок sheregesh.services} (REQ-SW-001)
 
 
 class SystemMonitor:
-    def __init__(self, clock, power, temperatures, fan, peer, indicator, diagnostics: dict, link: dict):
+    def __init__(self, clock, power, temperatures, fan, peer, indicator, diagnostics: dict, link: dict, services=None):
         self.clock, self.power, self.temps, self.fan, self.peer, self.indicator = \
             clock, power, temperatures, fan, peer, indicator
+        self.services = services                  # callable → снимок служб пульта (sheregesh.services.Cached) или None
+        self._watch = {"console": svc.Watch(), "remote": svc.Watch()}
         self.log = EventLog()
         self.set_thresholds(diagnostics, link)
         self._last_source = None
@@ -212,6 +216,23 @@ class SystemMonitor:
         self.log.resolve(t, "PEER-INCOMPAT")
         return "connected"
 
+    def _services(self, t, peer: PeerStatus):
+        """REQ-SW-001: перезапуск обязательной службы — событие SVC-RESTART; служба не active — SVC-DOWN до возврата.
+        Снимок блока — из телеметрии (поле services), только пока связь есть."""
+        snaps = {"console": self.services() if self.services else {},
+                 "remote": (peer.telemetry or {}).get("services") or {} if peer.link_up else {}}
+        down = []
+        for side, snap in snaps.items():
+            restarted, side_down = self._watch[side].update(snap)
+            for name, restarts in restarted:
+                self.log.raise_(t, "SVC-RESTART", service=svc.short(name), restarts=restarts)
+            down += [f"{svc.short(n)} ({state})" for n, state in side_down]
+        if down:
+            self.log.raise_(t, "SVC-DOWN", services=", ".join(down))
+        else:
+            self.log.resolve(t, "SVC-DOWN")
+        return snaps
+
     def tick(self) -> Snapshot:
         t = self.clock()
         temps = self.temps.read()
@@ -220,9 +241,10 @@ class SystemMonitor:
         self._power(t, reading)
         peer = self.peer.status()
         peer_state = self._peer(t, peer)
+        services = self._services(t, peer)
         active = self.log.active()
         worst = max((SEVERITY_ORDER[e.severity] for e in active), default=0)
         overall = "fault" if worst >= SEVERITY_ORDER[ERROR] else "warning" if worst >= SEVERITY_ORDER[WARNING] else "normal"
         self.indicator.set_state(overall)
         return Snapshot(t, reading, temps, self._duty, rpm, self.fan.nominal_rpm, peer, peer_state,
-                        overall, overall, active, self._shutdown)
+                        overall, overall, active, self._shutdown, services)

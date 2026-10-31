@@ -191,8 +191,10 @@ class Backend(QObject):
             self.client = PeerClient(None, link_cfg.port, heartbeat_timeout_s=data["link.yaml"]["heartbeat_timeout_s"],
                                      tls_cfg=link_cfg, status_file=link_status_file,
                                      video_session=self._videorx).start()
+            from sheregesh import services as svc
             self.bench = Bench(data["diagnostics.yaml"], data["link.yaml"],
-                               peer_factory=lambda clock: RemotePeer(self.client, clock))
+                               peer_factory=lambda clock: RemotePeer(self.client, clock),
+                               services=svc.Cached("console"))       # REQ-SW-001: службы пульта на плате
         elif peer is not None:
             host, port = peer
             self.client = PeerClient(host, port, heartbeat_timeout_s=data["link.yaml"]["heartbeat_timeout_s"],
@@ -340,6 +342,9 @@ class Backend(QObject):
             "tempSoc": s.temperatures["soc"] if s.temperatures else -1,
             "tempBoard": s.temperatures["board"] if s.temperatures else -1,
             "fanDuty": round(s.fan_duty), "fanRpm": -1 if s.fan_rpm is None else s.fan_rpm,
+            "services": [{"side": side, "name": n.removeprefix("sheregesh-").removesuffix(".service"),
+                          "state": st.get("active", ""), "restarts": st.get("restarts", 0)}
+                         for side in ("console", "remote") for n, st in sorted((s.services or {}).get(side, {}).items())],
             "peerState": s.peer_state, "peerProtocol": s.peer.protocol or "", "peerDevice": s.peer.device_id or "",
             "peerSoftware": semver_or_raw(s.peer.software), "peerHeartbeatAge": -1 if peer_age is None else peer_age,
             "localProtocol": PROTOCOL_VERSION, "software": __semver__,

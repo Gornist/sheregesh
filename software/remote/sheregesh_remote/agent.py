@@ -48,7 +48,7 @@ import sys
 import time
 from pathlib import Path
 
-from sheregesh import PROTOCOL_VERSION, __version__, info, sdnotify, timepeer, video, videoinput, videosources
+from sheregesh import PROTOCOL_VERSION, __version__, info, sdnotify, services, timepeer, video, videoinput, videosources
 from sheregesh.videoingest import Ingest
 from .session import ConsoleSession
 from .videotx import VideoTx
@@ -117,6 +117,8 @@ class Agent:
         self.net_video = self.tls_cfg is not None and self.tls_cfg.video and not args.no_video
         self.ingest = None
         # Видеосеанс SRTP (ADR-0016): агент — клиент службы sheregesh-video-tx (videotx.py)
+        self.services_src = services.Cached("remote")   # обязательные службы блока для status (REQ-SW-001)
+        self.services_snap = {}
         self.vtx = VideoTx(send=self.send, log=lambda s: log(s), spec_fn=lambda: self.video_spec,
                            profile_fn=self.video_profile, enabled=not args.no_video,
                            source_fn=lambda: self.ingest.status().get("state") if self.ingest is not None else None)
@@ -322,10 +324,16 @@ class Agent:
                 "link": {k: v for k, v in self.stats.items() if isinstance(v, (int, float))}}
         if self.module is not None and self.conn is not None and self.conn.established("module-cmd"):
             body["module"] = self.module.status()     # только сессия ≥ 1.3: старый пульт модуль не видит
+        if self.services_snap:
+            body["services"] = self.services_snap     # REQ-SW-001: необязательное поле, старый пульт его отбрасывает
         return body
 
     async def send_status(self):
         self.last_status = time.monotonic()
+        try:                                          # systemctl — в потоке, цикл не ждёт
+            self.services_snap = await asyncio.to_thread(self.services_src)
+        except Exception:                             # noqa: BLE001 — диагностика, не управление
+            self.services_snap = {}
         if self.module is not None:
             self.module_sent = self.module_key()
         await self.send("status", self.status_body())
