@@ -440,6 +440,7 @@ def _set_every_packet(ext) -> bool:
 
 NTP_UNIX_OFFSET_S = 2208988800.0   # секунд между эпохой NTP (1900) и Unix (1970)
 LATENCY_WINDOW = 600               # кадров в окне оценки задержки
+OFFSET_RESET_S = 0.001             # смещение часов изменилось больше — прежние отсчёты задержки сбрасываются
 
 
 def ntp_ns_to_unix(ts: int) -> float:
@@ -588,10 +589,15 @@ class SrtpRx(_Base):
         self._ntp_caps = None
 
     def set_clock_offset(self, offset_s: Optional[float]) -> None:
-        """Смещение часов приёмника относительно передатчика; прежние отсчёты задержки сбрасываются."""
+        """Смещение часов приёмника относительно передатчика. Пульт повторяет его каждые 5 с: прежние отсчёты
+        задержки сбрасываются, только если смещение изменилось больше OFFSET_RESET_S (иначе окно обнулялось бы
+        каждые 5 с и число отсчётов зависело бы от момента чтения)."""
+        new = None if offset_s is None else float(offset_s)
         with self._lat_lock:
-            self.clock_offset_s = None if offset_s is None else float(offset_s)
-            self._lat.clear()
+            old = self.clock_offset_s
+            self.clock_offset_s = new
+            if new is None or old is None or abs(new - old) > OFFSET_RESET_S:
+                self._lat.clear()
 
     def request_keyframe(self) -> bool:
         """Запросить ключевой кадр у передатчика: GstForceKeyUnit вверх от depay, rtpbin превращает его в PLI."""

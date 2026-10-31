@@ -357,3 +357,22 @@ def test_frame_latency_uses_offset_block_minus_console(offset_s):
     from sheregesh.videosvc.pipelines import frame_latency_ms
     t = 1793300000.0
     assert frame_latency_ms(t + 0.050, t + offset_s, offset_s) == pytest.approx(50.0, abs=1e-3)
+
+
+def test_repeated_clock_offset_keeps_latency_samples():
+    """Пульт повторяет set-clock-offset каждые 5 с: то же смещение (в пределах OFFSET_RESET_S) отсчёты задержки не
+    сбрасывает — иначе окно обнулялось каждые 5 с и проба стенда получала от 0 до ~300 отсчётов (2026-10-31)."""
+    import collections
+    import threading
+    from sheregesh.videosvc import pipelines as P
+    rx = object.__new__(P.SrtpRx)
+    rx._lat, rx._lat_lock, rx.clock_offset_s = collections.deque(maxlen=P.LATENCY_WINDOW), threading.Lock(), None
+    rx.set_clock_offset(0.0123)
+    rx._lat.extend([40.0] * 100)
+    rx.set_clock_offset(0.0123 + P.OFFSET_RESET_S / 2)
+    assert len(rx._lat) == 100 and rx.clock_offset_s == 0.0123 + P.OFFSET_RESET_S / 2
+    rx.set_clock_offset(0.0123 + 3 * P.OFFSET_RESET_S)          # смещение действительно изменилось
+    assert len(rx._lat) == 0
+    rx._lat.extend([40.0] * 5)
+    rx.set_clock_offset(None)
+    assert len(rx._lat) == 0 and rx.clock_offset_s is None
