@@ -212,10 +212,10 @@ def test_logs_page_and_export_without_secrets(make_ui):
 
 @pytest.mark.test_id("TEST-SYS-007")
 def test_about_page_shows_passport(make_ui):
-    from sheregesh import __version__
+    from sheregesh import __semver__
     u = make_ui()
     show(u, "about")
-    assert obj(u, "aboutSoftware").property("text") == __version__
+    assert obj(u, "aboutSoftware").property("text") == __semver__ == "0.1.0-dev.0"
     assert obj(u, "aboutDevice").property("text") == "Шерегеш-пульт"
     from sheregesh import info
     assert wait_until(lambda: obj(u, "aboutHardware").property("text") == info.hardware(), 5)   # фоновый сбор

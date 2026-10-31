@@ -11,7 +11,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import PROTOCOL_VERSION, __version__
+from . import PROTOCOL_VERSION, __semver__, __version__
 
 HW_REVISION = "HW-1.0 Rev A"            # аппаратная спецификация (docs/hardware/SHEREGESH-HARDWARE-1.0.md)
 BUILD_JSON = Path("/usr/share/sheregesh/build.json")
@@ -72,7 +72,7 @@ def role():
 def collect(role_name=None, *, dt=DT, build_json=BUILD_JSON, deploy_current=DEPLOY_CURRENT):
     b = board(dt)
     r = role() if role_name is None else role_name
-    return {"role": r, "software": __version__, "protocol": PROTOCOL_VERSION, "image": image(build_json),
+    return {"role": r, "software": __semver__, "package": __version__, "protocol": PROTOCOL_VERSION, "image": image(build_json),
             "release": release(deploy_current), "hardware": hardware(b), "serial": b["serial"],
             "device_id": device_id(r or "device", b)}
 

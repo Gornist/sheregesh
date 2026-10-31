@@ -13,7 +13,7 @@ import yaml
 from PySide6 import __version__ as PYSIDE_VERSION
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot, qVersion
 
-from sheregesh import PROTOCOL_VERSION, __version__, timepeer
+from sheregesh import PROTOCOL_VERSION, __semver__, __version__, semver_or_raw, timepeer
 from sheregesh import video as gst
 from sheregesh.config import BackupError, ConfigStore, Schema, console_defaults
 from sheregesh.faults import CATALOG, render
@@ -341,8 +341,8 @@ class Backend(QObject):
             "tempBoard": s.temperatures["board"] if s.temperatures else -1,
             "fanDuty": round(s.fan_duty), "fanRpm": -1 if s.fan_rpm is None else s.fan_rpm,
             "peerState": s.peer_state, "peerProtocol": s.peer.protocol or "", "peerDevice": s.peer.device_id or "",
-            "peerSoftware": s.peer.software or "", "peerHeartbeatAge": -1 if peer_age is None else peer_age,
-            "localProtocol": PROTOCOL_VERSION, "software": __version__,
+            "peerSoftware": semver_or_raw(s.peer.software), "peerHeartbeatAge": -1 if peer_age is None else peer_age,
+            "localProtocol": PROTOCOL_VERSION, "software": __semver__,
             "shutdownRequested": s.shutdown_requested or "",
             "scenario": DEMO.name if self.demo else "",
             "scenarioLabel": self._label(self._scenario_label),
@@ -551,7 +551,7 @@ class Backend(QObject):
         """Сведения для страницы «О системе». Команды (git, gst-launch, проба кодека) выполнены заранее в фоне:
         чтение свойства их не запускает (QML читает его на каждое поле)."""
         st = self._about_static
-        return {"software": __version__, "protocol": PROTOCOL_VERSION, "build": st["build"],
+        return {"software": __semver__, "protocol": PROTOCOL_VERSION, "build": st["build"],
                 "schema": self.schema.version, "revision": self._rev.id,
                 "device": self._rev.data["system.yaml"]["device_name"],
                 "hardware": st.get("hardware", "…"), "serial": st.get("serial", "…"),
