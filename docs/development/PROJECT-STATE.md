@@ -52,6 +52,7 @@ TEST-UPD-004 — откат на pi2 и pi1, «OTA: ROLLED_BACK» в разде�
 PASS L4: TEST-SW-005 — [stage-a-2](../acceptance/stage-a-2/REPORT.md); паспорт устройства (SYS-007) на платах
 совпадает с образом и между сторонами; SemVer снаружи — sheregesh.semver; TEST-SYS-007 — PASS (DEV gdc74aa8 на обеих платах).
 PASS: TEST-CFG-001 (CHG-018), TEST-DOC-001 (REUSE 572/572, reuse lint в CI, лицензии зависимостей).
+PASS: TEST-SW-001 — службы в диагностике пульта, kill -9 → SVC-RESTART за 4,7–6,8 с — [stage-a-3](../acceptance/stage-a-3/REPORT.md).
 
 ## Известные особенности разработки
 
