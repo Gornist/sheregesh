@@ -79,3 +79,15 @@ def test_потеря_пакетов_ведёт_к_pli_и_новому_ключ�
     assert r["rx"]["pli_sent"] >= 2
     assert r["idr_total"] >= 3                    # key-int-max огромный: IDR кодер выдаёт только по запросу
     assert r["rx"]["last_frame_age_s"] is not None and r["rx"]["last_frame_age_s"] < 1.0
+
+
+@pytest.mark.parametrize("loss,reorder,dup", [(0.01, 0.05, 0.0), (0.03, 0.10, 0.02)])
+def test_случайные_потери_перестановка_и_повторы_не_рвут_поток(loss, reorder, dup):
+    """Искажения канала (прокси selftest impair): поток не прерывается, на потерю приходит PLI, повторы отбрасывает
+    защита от повтора SRTP без ошибок конвейера. Кадров декодер выдаёт столько же (маскирует порчу до IDR по PLI)."""
+    r = _run("impair", f"--loss={loss}", f"--reorder={reorder}", f"--dup={dup}", "--seconds=8")
+    assert r["proxy"]["dropped"] > 0 and r["proxy"]["reordered"] > 0
+    assert r["fps_after_first"] >= 27 and r["max_frame_gap_s"] < 0.5, r
+    assert r["rx"]["lost"] > 0 and r["rx"]["pli_sent"] >= 2 and r["tx"]["pli_received"] >= 2
+    assert r["rx"]["last_frame_age_s"] is not None and r["rx"]["last_frame_age_s"] < 0.5
+    assert not r["errors"]

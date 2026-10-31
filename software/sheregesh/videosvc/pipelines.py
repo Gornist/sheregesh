@@ -758,7 +758,8 @@ _BOARD_MEDIA = ("videotestsrc is-live=true pattern=ball ! video/x-raw,format=YUY
                 "video/x-h264,stream-format=byte-stream,alignment=au")
 
 
-def _selftest_pair(tx_key, rx_key, tx_ssrc, rx_ssrc, base_port, cipher="aes-128-gcm", kimax=300, via_port=None):
+def _selftest_pair(tx_key, rx_key, tx_ssrc, rx_ssrc, base_port, cipher="aes-128-gcm", kimax=300, via_port=None,
+                   jitter_latency_ms=None):
     ke = KEY_LENGTHS[cipher]
     tx = SrtpTx(TxConfig(stream="main", ssrc=tx_ssrc, peer_ip="127.0.0.1", peer_port=via_port or base_port,
                          rtcp_local_port=base_port + 3, rtcp_peer_port=base_port + 2,
@@ -766,7 +767,8 @@ def _selftest_pair(tx_key, rx_key, tx_ssrc, rx_ssrc, base_port, cipher="aes-128-
     rx = SrtpRx(RxConfig(stream="main", ssrc=rx_ssrc, peer_ip="127.0.0.1", local_port=base_port,
                          rtcp_local_port=base_port + 2, rtcp_peer_port=base_port + 3,
                          decoder=os.environ.get("SHEREGESH_SELFTEST_DECODER", "avdec_h264"),
-                         sink="fakesink sync=false", srtp=SrtpParams(cipher, rx_key[:ke].ljust(ke, b"\0"))))
+                         sink="fakesink sync=false", srtp=SrtpParams(cipher, rx_key[:ke].ljust(ke, b"\0")),
+                         **({} if jitter_latency_ms is None else {"jitter_latency_ms": jitter_latency_ms})))
     return tx, rx
 
 
@@ -824,6 +826,93 @@ def _udp_lossy_proxy(listen_port, fwd_port, drop_after_s, drop_for_s, stop):
     return dropped
 
 
+def _udp_impair_proxy(listen_port, fwd_port, loss, reorder, dup, seed, stop, cnt):
+    """UDP 127.0.0.1:listen -> fwd с искажениями канала (только selftest): потеря с вероятностью loss, перестановка
+    с соседним пакетом — reorder, повтор — dup. Счётчики — в cnt."""
+    import random
+    import socket
+    rnd = random.Random(seed)
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(("127.0.0.1", listen_port))
+    s.settimeout(0.1)
+    o = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    held = None
+    while not stop.is_set():
+        try:
+            data, _ = s.recvfrom(65535)
+        except socket.timeout:
+            if held is not None:                     # тишина — отложенный пакет не держать
+                o.sendto(held, ("127.0.0.1", fwd_port))
+                held = None
+            continue
+        cnt["in"] += 1
+        if rnd.random() < loss:
+            cnt["dropped"] += 1
+            continue
+        if held is None and rnd.random() < reorder:
+            held = data                              # уйдёт после следующего пакета
+            cnt["reordered"] += 1
+            continue
+        o.sendto(data, ("127.0.0.1", fwd_port))
+        if held is not None:
+            o.sendto(held, ("127.0.0.1", fwd_port))
+            held = None
+        if rnd.random() < dup:
+            o.sendto(data, ("127.0.0.1", fwd_port))
+            cnt["duplicated"] += 1
+    s.close()
+    o.close()
+
+
+def _impair(key, ssrc, base, cipher, args):
+    """Сценарий impair: поток TX -> RX seconds секунд через искажающий прокси (--via=proxy, по умолчанию) или напрямую
+    (--via=direct: искажения задаёт снаружи tc netem на lo); --jb — задержка джиттер-буфера rx, мс. Итог — кадры, частота после первого кадра, наибольший
+    разрыв между кадрами, PLI, потери rtpbin, счётчики прокси."""
+    opt = {"loss": 0.01, "reorder": 0.05, "dup": 0.0, "seconds": 12.0, "seed": 1, "jb": 20}
+    via = "proxy"
+    for a in args:
+        k, _, v = a.removeprefix("--").partition("=")
+        if k in opt:
+            opt[k] = float(v)
+        elif k == "via":
+            via = v
+    stop = threading.Event()
+    cnt = {"in": 0, "dropped": 0, "reordered": 0, "duplicated": 0}
+    tx, rx = _selftest_pair(key, key, ssrc, ssrc, base, cipher, kimax=3000,
+                            via_port=base + 1 if via == "proxy" else None, jitter_latency_ms=int(opt["jb"]))
+    if via != "proxy":                               # искажения задаёт tc netem снаружи — параметры прокси не действуют
+        opt.update(loss=None, reorder=None, dup=None, seed=None)
+    if via == "proxy":
+        threading.Thread(target=_udp_impair_proxy, args=(base + 1, base, opt["loss"], opt["reorder"], opt["dup"],
+                                                         int(opt["seed"]), stop, cnt), daemon=True).start()
+    events = []
+    tx.on_event = lambda k, d: events.append(("tx", k))
+    rx.on_event = lambda k, d: events.append(("rx", k))
+    rx.start()
+    tx.start()
+    t0 = time.monotonic()
+    first, max_gap, last_n, last_t = None, 0.0, 0, None
+    while time.monotonic() - t0 < opt["seconds"]:
+        time.sleep(0.02)
+        now, n = time.monotonic(), rx.frames
+        if n and first is None:
+            first, last_t, last_n = now - t0, now, n
+        elif first is not None:
+            if n != last_n:
+                last_n, last_t = n, now
+            max_gap = max(max_gap, now - last_t)
+    stop.set()
+    st_rx, st_tx = rx.stats(), tx.stats()
+    span = opt["seconds"] - first if first is not None else None
+    res = {"via": via, **opt, "frames": rx.frames, "first_frame_s": first,
+           "fps_after_first": round(rx.frames / span, 2) if span else None, "max_frame_gap_s": round(max_gap, 3),
+           "rx": st_rx, "tx": st_tx, "proxy": cnt if via == "proxy" else None, "events": events,
+           "errors": rx.errors + tx.errors}
+    tx.stop()
+    rx.stop()
+    return res
+
+
 def selftest(name: str) -> dict:
     import secrets
     cipher = "aes-128-gcm"
@@ -877,6 +966,8 @@ def selftest(name: str) -> dict:
         res.update(frames=rx.frames, idr_total=cnt["idr"], rx=rx.stats(), tx=tx.stats(), events=ev,
                    errors=rx.errors + tx.errors)
         tx.stop(); rx.stop()
+    elif name == "impair":
+        res.update(_impair(key, ssrc, base, cipher, sys.argv[3:]))
     else:
         res["error"] = f"неизвестный сценарий {name}"
     return res
@@ -891,7 +982,8 @@ def main(argv=None) -> int:
             out = {"scenario": argv[1], "error": f"{type(e).__name__}: {e}"}
         print(json.dumps(out, default=str), flush=True)
         return 0
-    print("использование: python3 -m sheregesh.videosvc.pipelines selftest <loopback|wrongkey|wrongssrc|stop|pli>",
+    print("использование: python3 -m sheregesh.videosvc.pipelines selftest <loopback|wrongkey|wrongssrc|stop|pli|impair>"
+          " [--loss=P --reorder=P --dup=P --seconds=S --jb=MS --via=proxy|direct]",
           file=sys.stderr)
     return 2
 
