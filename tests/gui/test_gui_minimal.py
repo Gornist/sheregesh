@@ -16,6 +16,8 @@ import time
 from pathlib import Path
 
 import pytest
+
+from sheregesh import PROTOCOL_VERSION
 from PySide6.QtCore import QObject, QPointF, Qt
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtTest import QTest
@@ -248,6 +250,19 @@ def test_gui08_ethernet_loss_shown_as_no_link(ui, out_dir):
     assert status(ui, "link") == "нет связи · переподключение" and status(ui, "video") == "нет видео"
     assert status(ui, "control").startswith("нет связи")
     shot(ui, out_dir, "gui08-link-lost")
+
+
+@pytest.mark.test_id("TEST-SYS-008")
+def test_gui08b_incompatible_unit_shows_versions_not_link_loss(ui):
+    """Несовместимая версия блока — не «нет связи»: заголовок и версии протокола обеих сторон (стенд 2026-10-31:
+    Minimal показывал «НЕТ СВЯЗИ С БЛОКОМ» при peerState incompatible)."""
+    ui.backend.video.stop()
+    feed(ui, status={**RECONNECTING, "peerLink": "INCOMPATIBLE", "linkView": "ERROR", "peerState": "incompatible",
+                     "peerDetail": "major", "peerProtocol": "2.0"}, rc=None)
+    assert wait_until(lambda: find(ui, "videoMessage").property("visible"), 3)
+    assert find(ui, "videoMessageTitle").property("text") == "НЕСОВМЕСТИМАЯ ВЕРСИЯ БЛОКА"
+    text = find(ui, "videoMessageText").property("text")
+    assert f"пульт {PROTOCOL_VERSION}" in text and "блок 2.0" in text and "(major)" in text, text
 
 
 @pytest.mark.test_id("TEST-UI-002")

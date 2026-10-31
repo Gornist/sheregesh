@@ -801,6 +801,16 @@
         <translation>НЕТ СВЯЗИ С БЛОКОМ</translation>
     </message>
     <message>
+        <location filename="../qml/MainMinimal.qml" line="190" />
+        <source>INCOMPATIBLE REMOTE UNIT VERSION</source>
+        <translation>НЕСОВМЕСТИМАЯ ВЕРСИЯ БЛОКА</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="200" />
+        <source>Protocol: console %1, remote unit %2 (%3). The exchange does not start until the versions are compatible.</source>
+        <translation>Протокол: пульт %1, блок %2 (%3). Обмен не начнётся, пока версии несовместимы.</translation>
+    </message>
+    <message>
         <location filename="../qml/MainMinimal.qml" line="174" />
         <source>The link to the remote unit is lost; reconnecting automatically.</source>
         <translation>Связь с удалённым блоком потеряна; переподключение автоматически.</translation>

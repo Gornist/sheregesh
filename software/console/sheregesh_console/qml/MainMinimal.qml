@@ -26,10 +26,13 @@ ConsoleWindow {
         {key: "system", label: qsTr("System")}]
     readonly property bool outputLive: bar.output === "live"
     readonly property bool linkDown: bar.origin === "remote" && bar.link !== "CONNECTED"
+    // Несовместимая версия блока — не «нет связи»: связь есть, обмен не начат (REQ-SYS-008, сообщение с версиями)
+    readonly property bool incompatible: linkDown && bar.pstate === "incompatible"
 
     function collect() {
         var sv = backend.sticks, mv = backend.module, vs = backend.videoSource, st = backend.status
         return {link: st.linkView, peerLink: st.peerLink, overall: st.overall, active: st.activeCount,
+                pstate: st.peerState, pproto: st.peerProtocol, lproto: st.localProtocol, pdetail: st.peerDetail,
                 ctl: sv.support, rstate: sv.remoteState, reason: sv.remoteReason, enabled: sv.enabled,
                 present: sv.present, device: sv.deviceName,
                 msup: mv.support, mstate: mv.state, profile: mv.profileName, mbackend: mv.backendSetting,
@@ -184,7 +187,8 @@ ConsoleWindow {
                 spacing: 6 * win.k
                 Label {
                     objectName: "videoMessageTitle"
-                    text: win.linkDown ? qsTr("NO LINK TO THE REMOTE UNIT") : messages.title()
+                    text: win.incompatible ? qsTr("INCOMPATIBLE REMOTE UNIT VERSION")
+                          : win.linkDown ? qsTr("NO LINK TO THE REMOTE UNIT") : messages.title()
                     color: "#e8eaed"
                     font.pixelSize: 22 * win.k
                     font.bold: true
@@ -192,7 +196,10 @@ ConsoleWindow {
                 }
                 Label {
                     objectName: "videoMessageText"
-                    text: win.linkDown ? qsTr("The link to the remote unit is lost; reconnecting automatically.") : messages.reason()
+                    text: win.incompatible
+                          ? qsTr("Protocol: console %1, remote unit %2 (%3). The exchange does not start until the versions are compatible.")
+                            .arg(win.bar.lproto).arg(win.bar.pproto || "?").arg(win.bar.pdetail)
+                          : win.linkDown ? qsTr("The link to the remote unit is lost; reconnecting automatically.") : messages.reason()
                     color: "#b5bec6"
                     font.pixelSize: 13 * win.k
                     wrapMode: Text.WordWrap
