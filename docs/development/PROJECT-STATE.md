@@ -32,6 +32,9 @@
 - 2026-10-31: DEV `g678453b` на обеих платах (поверх `c0c509c`): без входа блок не выдаёт поколений (25 → 2 за
   2 мин без MS2130), пауза 2–30 с, контракт v13; джиттер-буфер rx на задержку не влияет (20…2 мс — p50 43,5 мс),
   оставлен 20 мс — [video-gen-storm](../acceptance/video-gen-storm/REPORT.md).
+- 2026-10-31: обе платы на образе `44f5c21` через OTA, слот B COMMITTED, `ota-disable` (слот A — `c0c509c`), DEV-выпуска
+  нет; связь 10/10, видео 9/9, p50 42,9 мс; health 15/15 и 14/14 (`storage.persistent` PASS) —
+  [ota-44f5c21](../acceptance/ota-44f5c21/REPORT.md).
 - Сборка образов — только сервис shbuild на devbox (ADR-0018): очередь, гейты, загрузочный тест в QEMU; другие пути
   заблокированы в коде.
 - Три физических отключения Ethernet: восстановление ≥25 fps за 4,4 / 2,6 / 7,8 с после возврата связи.
@@ -48,7 +51,7 @@ ctl-loss «нет видео ≤ 3 с» на границе (2,7–3,2 с): пр
 Релизная готовность определяется текущим `reqgen.py gate`, не этой страницей. С 2026-10-31 (D8, CHG-016) — 64 REQ,
 42 Must (было 86 / 78); гейт NO-GO. PASS L4: TEST-REL-001, TEST-UPD-001 — [req-l4](../acceptance/req-l4/REPORT.md).
 PASS L4: TEST-SW-004, TEST-UPD-002, TEST-SYS-008, TEST-SW-003 — [stage-a-1](../acceptance/stage-a-1/REPORT.md);
-TEST-UPD-004 — откат на pi2 и pi1, «OTA: ROLLED_BACK» в разделе «Система». Слоты B обеих плат — `c0c509c`.
+TEST-UPD-004 — откат на pi2 и pi1, «OTA: ROLLED_BACK» в разделе «Система». Слоты B обеих плат тогда — `c0c509c`.
 PASS L4: TEST-SW-005 — [stage-a-2](../acceptance/stage-a-2/REPORT.md); паспорт устройства (SYS-007) на платах
 совпадает с образом и между сторонами; SemVer снаружи — sheregesh.semver; TEST-SYS-007 — PASS (DEV gdc74aa8 на обеих платах).
 PASS: TEST-CFG-001 (CHG-018), TEST-DOC-001 (REUSE 572/572, reuse lint в CI, лицензии зависимостей).
