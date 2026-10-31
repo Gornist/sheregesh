@@ -90,8 +90,13 @@ echo "== артефакты"
 zstd -q -T0 -10 -f "$IMG" -o "$OUT/$NAME.img.zst"
 cp "$PKGS"/sheregesh_*_all.deb "$OUT/"
 # SBOM и манифест rpi-image-gen — дополнительно к собственному манифесту пакетов.
+# SBOM образа (rpi-image-gen, syft) и пакета sheregesh (SPDX 2.3, REQ-DOC-006); обязательность — гейт shbuild.
 cp "$DEPLOY"/filesystem-*.sbom.zst "$OUT/$NAME.sbom.zst" 2>/dev/null || true
-(cd "$OUT" && sha256sum "$NAME.img.zst" sheregesh_*_all.deb "$NAME.packages.tsv" verify.json $(ls "$NAME.sbom.zst" 2>/dev/null) > SHA256SUMS)
+for deb in "$OUT"/sheregesh_*_all.deb; do
+  python3 -I "$ROOT/tools/release/release.py" sbom-package --deb "$deb" --out "$deb.spdx.json" --epoch "$SOURCE_DATE_EPOCH" >/dev/null
+done
+(cd "$OUT" && sha256sum "$NAME.img.zst" sheregesh_*_all.deb sheregesh_*_all.deb.spdx.json "$NAME.packages.tsv" verify.json \
+  $(ls "$NAME.sbom.zst" 2>/dev/null) > SHA256SUMS)
 python3 -I - "$OUT" "$CFG" "$NAME" "$RIG_REF" "$START" "$VERIFY" "$IMG" "$ROOT" <<'EOF'
 import json, os, platform, subprocess, sys, hashlib
 out, cfg, name, ref, start, verify, img, root = sys.argv[1:]

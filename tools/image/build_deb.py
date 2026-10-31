@@ -220,9 +220,9 @@ def build(out_dir: Path, version: str) -> Path:
         (ctrl / "control").write_text(
             f"Package: {PKG}\nVersion: {version}\nArchitecture: all\nMaintainer: Sheregesh contributors\n"
             f"Installed-Size: {size_kb}\nDepends: {', '.join(DEPENDS)}\nSection: misc\nPriority: optional\n"
-            "Description: Sheregesh 1.0 laboratory console and remote unit emulator\n"
-            " Laboratory prototype: synthetic data only, loopback-only link (ADR-0007).\n"
-            " Not a means of controlling aircraft or any physical device.\n")
+            "Description: Sheregesh open console and remote unit platform\n"
+            " Console and remote unit for robots, rovers and laboratory platforms:\n"
+            " secure control link, SRTP video, CRSF (ELRS) control output.\n")
         (ctrl / "md5sums").write_text("".join(f"{hashlib.md5(p.read_bytes()).hexdigest()}  "
                                               f"{p.relative_to(stage)}\n" for p in files))
         for name, text in (("postinst", POSTINST), ("prerm", PRERM)):

@@ -57,6 +57,26 @@ class ShbuildTest(unittest.TestCase):
         p = Fake(self.root, j)
         return p, p.run(), j.load()
 
+    def test_sbom_gate_requires_image_and_package_sbom_and_runs_checker(self):
+        p = sb.Pipeline(self.root, self.job())
+        calls = []
+        p.sh = lambda stage, cmd, **kw: calls.append((stage, cmd))
+        p.sbom_gate()                                                # ревизия без tools/release — правило не действует
+        self.assertEqual(calls, [])
+        tool = p.src / "tools/release/release.py"
+        tool.parent.mkdir(parents=True)
+        tool.write_text("")
+        p.art.mkdir(parents=True)
+        (p.art / "img.sbom.zst").write_text("x")
+        with self.assertRaises(sb.Fail) as e:
+            p.sbom_gate()
+        self.assertIn("пакета", str(e.exception))
+        (p.art / "sheregesh_1_all.deb.spdx.json").write_text("{}")
+        p.sbom_gate()
+        stage, cmd = calls[0]
+        self.assertEqual((stage, cmd[3]), ("gates", "sbom-check"))
+        self.assertEqual([Path(c).name for c in cmd[4:]], ["img.sbom.zst", "sheregesh_1_all.deb.spdx.json"])
+
     def test_queue_and_passed(self):
         j = self.job()
         self.assertEqual([q.id for q in sb.queued(self.root)], [j.id])

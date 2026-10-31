@@ -253,6 +253,7 @@ class Pipeline:
         if rep.get("commit") != self.commit:
             raise Fail(f"build-report: коммит {rep.get('commit')} ≠ {self.commit}")
         self.sh("gates", ["shasum" if platform.system() == "Darwin" else "sha256sum", "-c", "SHA256SUMS"], cwd=self.art)
+        self.sbom_gate()
         img = next(self.art.glob("*.img.zst"))
         owners = self.art / "owners.txt"
         with open(owners, "w") as f:
@@ -267,6 +268,18 @@ class Pipeline:
         if diff.returncode != 0:
             raise Fail("владельцы файлов системного раздела отличаются от эталона (owners_check)")
         self.sh("gates", ["bash", self.bin / "order_check.sh", img, "8"])
+
+    def sbom_gate(self):
+        """REQ-DOC-006: SBOM образа (*.sbom.zst) и пакета (*.deb.spdx.json) есть и это SPDX 2.3 — проверяет инструмент
+        выпуска собираемой ревизии; у ревизий без него (до tools/release) правило не действует."""
+        tool = self.src / "tools/release/release.py"
+        if not tool.exists():
+            return
+        image = sorted(self.art.glob("*.sbom.zst"))
+        package = sorted(self.art.glob("*.deb.spdx.json"))
+        if not image or not package:
+            raise Fail("нет SBOM " + " и ".join(n for n, f in (("образа", image), ("пакета", package)) if not f))
+        self.sh("gates", ["python3", "-I", str(tool), "sbom-check", *map(str, image + package)])
 
     # 5
     def boot(self):

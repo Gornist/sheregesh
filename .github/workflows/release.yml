@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Релизный конвейер (заготовка S1). Гейт REQ-REL-001 БЛОКИРУЮЩИЙ: обходить его нельзя.
+# Релизный конвейер. Гейт REQ-REL-001 БЛОКИРУЮЩИЙ: обходить его нельзя. Здесь — проверки исходников (версия тега,
+# секреты по всей истории, REUSE); комплект выпуска (образ shbuild, SBOM, отчёт) собирает tools/release/release.py
+# prepare, публикует владелец (docs/development/RELEASE.md).
 # Подписи и публикации здесь пока нет — они добавляются на этапе S5 по ADR-0005
 # (отдельный job в Environment `release` с ручным одобрением владельца).
 name: release
@@ -23,10 +25,24 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+          fetch-depth: 0                      # REQ-REL-011: история всех публикуемых веток
+      - name: Версия тега = SemVer исходников (REQ-REL-010)
+        run: python3 -I tools/release/release.py versions --tag "$GITHUB_REF_NAME"
       - name: Проверка реестра
         run: python3 -I tools/reqs/reqgen.py validate && python3 -I tools/reqs/reqgen.py generate --check
-      - name: Секреты
+      - name: Секреты (REQ-REL-011)
         run: python3 -I tools/security/scan.py secrets
+      - name: Секреты во всей истории публикуемых веток (REQ-REL-011)
+        run: |
+          git fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*'
+          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin | grep -v -e '^origin$' -e '/HEAD$'); do
+            python3 -I tools/security/scan.py history "$ref"
+          done
+      - name: Лицензии REUSE (REQ-REL-011, REQ-DOC-006)
+        run: |
+          python3 -m venv /tmp/reuse
+          /tmp/reuse/bin/pip install --quiet 'reuse[charset-normalizer]==6.3.0'
+          /tmp/reuse/bin/reuse lint
       - name: Гейт REQ-REL-001 — все Must PASS на требуемом уровне
         # Без `|| true`: любой Must без PASS останавливает релиз.
         run: python3 -I tools/reqs/reqgen.py gate
