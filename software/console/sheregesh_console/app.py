@@ -391,7 +391,12 @@ def main(argv=None):
                     "videoSource": backend.videoSource,  # вход/состояние источника и решение для кадра (display, live)
                     "module": module_ui_state(ui),       # страница «Модуль» (ADR-0012, S6)
                     "sticks": sticks_ui_state(ui),       # страница «Управление» (ADR-0013, S7)
-                    "perf": ui.perf()}                   # отрисовка окна и разделы Minimal (замер нагрузки)
+                    "perf": ui.perf(),                   # отрисовка окна и разделы Minimal (замер нагрузки)
+                    # события монитора, как на экране «События» (REQ-SW-001/UI-003): последние 30, время — часы стенда
+                    "events": [{"id": e.id, "code": e.code, "active": e.active, "t": round(e.t, 2),
+                                "params": {k: str(v)[:64] for k, v in e.params.items()}}
+                               for e in backend.bench.monitor.log.events[-30:]],
+                    "monitorTime": round(backend.bench.monitor.clock(), 2)}
             try:
                 tmp = Path(ui_state + ".tmp")
                 tmp.write_text(json.dumps(data, ensure_ascii=False))
