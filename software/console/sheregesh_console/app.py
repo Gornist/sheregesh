@@ -396,7 +396,8 @@ def main(argv=None):
                     "events": [{"id": e.id, "code": e.code, "active": e.active, "t": round(e.t, 2),
                                 "params": {k: str(v)[:64] for k, v in e.params.items()}}
                                for e in backend.bench.monitor.log.events[-30:]],
-                    "monitorTime": round(backend.bench.monitor.clock(), 2)}
+                    "monitorTime": round(backend.bench.monitor.clock(), 2),
+                    "services": st.get("services", [])}  # строки служб раздела «Диагностика» (REQ-SW-001)
             try:
                 tmp = Path(ui_state + ".tmp")
                 tmp.write_text(json.dumps(data, ensure_ascii=False))
