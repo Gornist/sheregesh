@@ -118,7 +118,8 @@ class Agent:
         self.ingest = None
         # Видеосеанс SRTP (ADR-0016): агент — клиент службы sheregesh-video-tx (videotx.py)
         self.vtx = VideoTx(send=self.send, log=lambda s: log(s), spec_fn=lambda: self.video_spec,
-                           profile_fn=self.video_profile, enabled=not args.no_video)
+                           profile_fn=self.video_profile, enabled=not args.no_video,
+                           source_fn=lambda: self.ingest.status().get("state") if self.ingest is not None else None)
         self.vtx_task = None                         # опрос службы tx раз в секунду, не задерживает основной цикл
         self.vtx_end_task = None
         self.handshakes = None                       # asyncio.Semaphore: не более 4 рукопожатий одновременно

@@ -34,8 +34,8 @@ RUNTIME_ENV = "SHEREGESH_VIDEO_RUNTIME"
 DEFAULT_RUNTIME = "/run/sheregesh-video"
 SYSTEMCTL_ENV = "SHEREGESH_SYSTEMCTL"                 # испытания: подменная команда вместо systemctl
 MIN_GEN_INTERVAL_S = 2.0                              # новое поколение не чаще
-MAX_FAILS = 5                                         # подряд неудач до паузы
-PAUSE_S = 30.0
+MAX_GAP_S = 30.0                                      # предел нарастающей паузы между неудачными поколениями
+SOURCE_ABSENT = frozenset({"no-device"})              # состояние входа (status.video.source), при котором поколений нет
 ACK_TIMEOUT_S = 10.0                                  # пульт не ответил на video-key — поколение считается неудачным
 PROBE_TIMEOUT_S = 1.5
 
@@ -57,6 +57,11 @@ def systemctl_allow(target: str) -> None:
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def retry_gap(fails: int) -> float:
+    """Пауза перед следующим поколением после `fails` неудач подряд: 2, 4, 8, 16, 30, 30… с."""
+    return min(MIN_GEN_INTERVAL_S * 2 ** max(fails - 1, 0), MAX_GAP_S)
+
+
 def choose_transport(session: str | None, peer_hello, srtp_ok: bool) -> str:
     """SRTP — только в сеансе ≥ 1.5, если пульт объявил srtp и порт приёма, а у агента SRTP доступен; иначе видео нет
     («none» — с причиной в журнале и status)."""
@@ -73,9 +78,10 @@ class VideoTx:
     """Видеосеанс блока. Режимы: none (нет сеанса / до hello), srtp, off (сеанс управления без видео)."""
 
     def __init__(self, *, send, log, spec_fn, profile_fn=None, ctl=None, allow=None, clock=time.monotonic,
-                 enabled=True):
+                 enabled=True, source_fn=None):
         self._send, self._log = send, log             # send(mtype, body) — сопрограмма; log(str)
         self._spec_fn = spec_fn                       # текущий spec источника агента
+        self._source_fn = source_fn or (lambda: None)  # состояние входа (status.video.source.state) или None
         self._profile_fn = profile_fn or (lambda: dict(DEFAULT_PROFILE))
         self._ctl = ctl if ctl is not None else CtlClient(ctl_path(), timeout=PROBE_TIMEOUT_S)
         self._allow = allow or systemctl_allow
@@ -97,7 +103,8 @@ class VideoTx:
         self.offer_at = 0.0
         self.last_gen_at = -1e9
         self.fails = 0
-        self.pause_until = 0.0
+        self.next_gen_at = 0.0                        # раньше — новое поколение не выдаётся (нарастающая пауза)
+        self.waiting = ""                             # состояние входа, пока ждём источник (поколения нет)
         self.error = ""
         self.allow_error = ""
         self.svc: dict = {}                           # последнее состояние потока из status службы
@@ -150,13 +157,15 @@ class VideoTx:
             self.mode, self.peer_ip, self.rx_port = "srtp", peer_ip, peer_hello["video_rx_port"]
             self.tx.new_control_session()
             self._log(f"video: transport srtp -> {peer_ip}:{self.rx_port}")
-            await self._offer("session start")
+            if not await self._wait_source():
+                await self._offer("session start")
             return "srtp"
 
     async def _offer(self, why: str) -> None:
         offer = self.tx.begin(STREAM, CIPHER)
         self.offer, self.acked, self.started = offer, False, False
         self.offer_at = self.last_gen_at = self._clock()
+        self.next_gen_at = self.last_gen_at + retry_gap(self.fails)
         self.svc = {}
         body = offer.body(profile=self._profile_fn(), rtcp_port=RTCP_PORT)
         self._log(f"video: video-key gen {offer.gen} ({why}): {mask(body)}")
@@ -170,12 +179,18 @@ class VideoTx:
                 await self._on_ack(body)
             elif mtype == "video-renew":
                 if self.tx.renew_matches(body):
+                    # Под той же нарастающей паузой, что и собственные повторы блока: иначе пульт раз в 10 с
+                    # выводил бы блок из паузы (стенд 2026-10-31: 126 поколений за 10 мин без устройства)
+                    if await self._wait_source():
+                        return
                     now = self._clock()
-                    if now - self.last_gen_at >= MIN_GEN_INTERVAL_S:
+                    if now >= self.next_gen_at:
                         self._log(f"video: video-renew: {mask(body)}")
+                        self.fails += 1
                         await self._offer(f"renew: {body.get('reason', '')}"[:64])
                     else:
-                        self._log("video: video-renew too soon after the last generation — ignored")
+                        self._log(f"video: video-renew within the retry pause ({self.next_gen_at - now:.0f} s)"
+                                  " — ignored")
                 else:
                     self._log("video: video-renew of another generation ignored")
             elif mtype == "video-fallback":
@@ -249,13 +264,23 @@ class VideoTx:
         """video-select сменил источник: новое поколение (новый ключ и SSRC), `start` с новым spec — после ack."""
         async with self.lock:
             if self.mode == "srtp" and self.offer is not None:
+                self.fails = 0
                 await self._offer("source changed")
 
     async def tick(self) -> None:
         """Раз в секунду: состояние потока службы; при need-new-gen/stuck, провале start или молчании пульта —
-        новое поколение не чаще раза в 2 с, после 5 подряд неудач — пауза 30 с."""
+        новое поколение после нарастающей паузы (2, 4, 8, 16, 30 с). Нет входа (no-device) — поколений нет,
+        источник вернулся — одно новое поколение."""
         async with self.lock:
-            if self.mode != "srtp" or self.offer is None:
+            if self.mode != "srtp":
+                return
+            if self.waiting:
+                if not await self._wait_source():
+                    self._log(f"video: source back ({self._source_state() or 'unknown'}) — new generation")
+                    self.fails, self.error = 0, ""
+                    await self._offer("source back")
+                return
+            if self.offer is None:
                 return
             now = self._clock()
             trouble = ""
@@ -278,24 +303,59 @@ class VideoTx:
                     elif isinstance(st, dict) and st.get("gen") == self.offer.gen:
                         self.svc = st
                         if st.get("state") == "streaming":
+                            if self.fails:                       # поток пошёл: пауза снова минимальная
+                                self.next_gen_at = self.last_gen_at + MIN_GEN_INTERVAL_S
                             self.fails, self.error = 0, ""
                         elif st.get("state") == "stuck" or (st.get("state") == "error"
                                                             and "need-new-gen" in str(st.get("error", ""))):
                             trouble = f"tx {st.get('state')}"
                             self.error = f"{trouble}: {st.get('error', '')}"[:120]
             if trouble:
+                if await self._wait_source():
+                    return
                 await self._retry(now, trouble)
 
     async def _retry(self, now: float, why: str) -> None:
-        if now < self.pause_until or now - self.last_gen_at < MIN_GEN_INTERVAL_S:
-            return
-        if self.fails >= MAX_FAILS:
-            self.pause_until, self.fails = now + PAUSE_S, 0
-            self.error = f"video failed {MAX_FAILS} times in a row: {why}"[:120]
-            self._log(f"video: {self.error}; pause {PAUSE_S:.0f} s")
+        if now < self.next_gen_at:
             return
         self.fails += 1
+        if self.fails > 1:
+            self.error = f"video failed {self.fails} times in a row: {why}"[:120]
         await self._offer(why)
+        self._log(f"video: next retry not before {retry_gap(self.fails):.0f} s")
+
+    def _source_state(self) -> str:
+        try:
+            st = self._source_fn()
+        except Exception:                                                # noqa: BLE001 — наблюдение, не управление
+            return ""
+        return st if isinstance(st, str) else ""
+
+    async def _wait_source(self) -> bool:
+        """Входа нет (no-device): текущее поколение закрыто (stop службе, video-stop пульту), новых нет, пока вход
+        не вернётся. Без устройства конвейер не запустится, а каждое поколение — новый ключ, обмен по каналу
+        управления и перезапуск служб обеих плат. True — ждём источник."""
+        state = self._source_state()
+        if state not in SOURCE_ABSENT:
+            if self.waiting:
+                self.waiting = ""
+            return False
+        if self.waiting:
+            return True
+        self.waiting = state
+        self.error = f"waiting for source: {state}"
+        self._log(f"video: {self.error} — no new generations until it is back")
+        offer, self.offer, self.acked, self.started = self.offer, None, False, False
+        self.svc = {}
+        if offer is not None:
+            await self._stop_service("source unavailable")
+            try:
+                body = self.tx.stop(STREAM, f"source unavailable: {state}")
+                self._log(f"video: video-stop: {mask(body)}")
+                await self._send("video-stop", body)
+            except (ValueError, OSError) as e:
+                self._log(f"video: video-stop not sent: {type(e).__name__}")
+        return True
 
     async def end(self, reason: str) -> None:
         """Конец сеанса управления: `stop` службе, `video-stop` пульту (если канал жив), `allow@none`."""
@@ -325,6 +385,10 @@ class VideoTx:
             return {"active": False, "srtp": {"state": "off", "error": self.error}}
         if self.mode != "srtp":
             return None
+        if self.waiting:
+            return {"transport": "srtp", "active": False,
+                    "srtp": {"state": "waiting-source", "gen": 0, "error": self.error,
+                             "peer": f"{self.peer_ip}:{self.rx_port}"}}
         st = self.svc or {}
         rtcp = st.get("rtcp") if isinstance(st.get("rtcp"), dict) else {}
         svc_state = st.get("state") if st.get("gen") == getattr(self.offer, "gen", None) else None

@@ -470,33 +470,171 @@ def test_tick_new_generation_on_need_new_gen_or_stuck(state, extra):
     asyncio.run(scenario())
 
 
-def test_five_failures_then_pause_thirty_seconds():
-    """5 подряд неудач → 6-й тик ставит паузу (ошибка в status), новые поколения не шлются 30 с."""
+def test_retry_gap_grows_two_four_eight_sixteen_then_thirty():
+    """Нарастающая пауза после неудач подряд: 2, 4, 8, 16, 30, 30 с (прежние «5 раз по 2 с, затем 30 с» —
+    видео-renew пульта обходил паузу, стенд 2026-10-31)."""
+    from sheregesh_remote.videotx import retry_gap
+    assert [retry_gap(n) for n in range(0, 8)] == [2.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0]
+
+
+def test_failures_in_a_row_back_off_and_streaming_resets():
+    """stuck подряд: каждое следующее поколение — не раньше растущей паузы; streaming сбрасывает её до 2 с."""
     async def scenario():
         rig = Rig()
         body = await start_srtp(rig)
         await ack(rig, body)
-        for _ in range(5):
+        for gap in (2.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0):
             set_status(rig, "stuck", body["gen"])
-            rig.advance(2.1)
+            n = len(rig.video_keys())
+            rig.advance(gap - 0.2)
+            await rig.vtx.tick()
+            assert len(rig.video_keys()) == n, f"раньше паузы {gap} с"
+            rig.advance(0.3)
+            await rig.vtx.tick()
+            assert len(rig.video_keys()) == n + 1, f"после паузы {gap} с"
+            error = rig.vtx.status()["srtp"]["error"]
+            body = rig.video_keys()[-1]
+            await ack(rig, body)
+        assert error.startswith("video failed 7 times in a row")
+
+        set_status(rig, "streaming", body["gen"])
+        await rig.vtx.tick()
+        assert rig.vtx.fails == 0
+        rig.advance(30.1)                                 # пауза за последнюю неудачу истекла
+        set_status(rig, "stuck", body["gen"])
+        await rig.vtx.tick()
+        n = len(rig.video_keys())
+        body = rig.video_keys()[-1]
+        await ack(rig, body)
+        set_status(rig, "stuck", body["gen"])
+        rig.advance(2.1)                                  # после сброса — снова 2 с
+        await rig.vtx.tick()
+        assert len(rig.video_keys()) == n + 1
+    asyncio.run(scenario())
+
+
+def test_renew_obeys_the_same_retry_pause():
+    """video-renew не выводит блок из паузы: пока она не истекла — игнорируется."""
+    async def scenario():
+        rig = Rig()
+        body = await start_srtp(rig)
+        await ack(rig, body)
+        for _ in range(3):                                # три неудачи: следующая пауза 8 с
+            set_status(rig, "stuck", body["gen"])
+            rig.advance(16.1)
             await rig.vtx.tick()
             body = rig.video_keys()[-1]
             await ack(rig, body)
-        assert [b["gen"] for b in rig.video_keys()] == [1, 2, 3, 4, 5, 6]
+        n = len(rig.video_keys())
+        renew = {"stream": STREAM, "session": body["session"], "gen": body["gen"], "reason": "no first frame"}
+        rig.advance(5)
+        await rig.vtx.on_message("video-renew", renew)
+        assert len(rig.video_keys()) == n
+        assert any("within the retry pause" in line for line in rig.log_lines)
+        rig.advance(3.1)
+        await rig.vtx.on_message("video-renew", renew)
+        assert len(rig.video_keys()) == n + 1
+    asyncio.run(scenario())
 
-        set_status(rig, "stuck", body["gen"])            # поколение 6 тоже stuck
-        rig.advance(2.1)
-        await rig.vtx.tick()                              # 6-й тик: пауза, новое поколение не шлётся
-        assert len(rig.video_keys()) == 6
-        assert rig.vtx.status()["srtp"]["error"].startswith("video failed 5 times")
 
-        rig.advance(29)
+class Source:
+    """Состояние входа для source_fn (status.video.source.state)."""
+
+    def __init__(self, state: str = "starting") -> None:
+        self.state = state
+
+    def __call__(self):
+        return self.state
+
+
+def _rig_with_source(state: str) -> tuple[Rig, Source]:
+    rig = Rig()
+    src = Source(state)
+    rig.vtx._source_fn = src
+    return rig, src
+
+
+def test_no_device_at_session_start_issues_no_generation_until_source_is_back():
+    """Входа нет при начале сеанса: video-key не шлётся, тики и renew поколений не дают; вход вернулся — одно."""
+    async def scenario():
+        rig, src = _rig_with_source("no-device")
+        assert await rig.vtx.probe() is True
+        assert await rig.vtx.begin(HELLO, PEER, "1.5") == "srtp"
+        assert rig.video_keys() == []
+        st = rig.vtx.status()
+        assert st["active"] is False and st["srtp"]["state"] == "waiting-source"
+        assert st["srtp"]["error"] == "waiting for source: no-device"
+        for _ in range(120):                              # 2 минуты без устройства
+            rig.advance(1)
+            await rig.vtx.tick()
+        assert rig.video_keys() == []
+        src.state = "starting"
+        rig.advance(1)
         await rig.vtx.tick()
-        assert len(rig.video_keys()) == 6
-
-        rig.advance(1.1)                                  # 30.1 с после паузы
+        keys = rig.video_keys()
+        assert len(keys) == 1 and keys[0]["gen"] == 1
+        assert rig.vtx.status()["srtp"]["state"] == "negotiating"
+        rig.advance(1)
         await rig.vtx.tick()
-        assert len(rig.video_keys()) == 7
+        assert len(rig.video_keys()) == 1
+    asyncio.run(scenario())
+
+
+def test_device_lost_while_streaming_stops_generation_and_waits():
+    """Устройство пропало во время потока (need-new-gen): stop службе, video-stop пульту, новых поколений нет,
+    renew игнорируется; вернулось — новое поколение, пауза сброшена."""
+    async def scenario():
+        rig, src = _rig_with_source("starting")
+        body = await start_srtp(rig)
+        await ack(rig, body)
+        set_status(rig, "streaming", body["gen"])
+        await rig.vtx.tick()
+        src.state = "no-device"
+        set_status(rig, "error", body["gen"], error="need-new-gen")
+        rig.advance(1)
+        await rig.vtx.tick()
+        stops = rig.bodies("video-stop")
+        assert len(stops) == 1 and stops[0]["gen"] == body["gen"]
+        assert stops[0]["reason"] == "source unavailable: no-device"
+        assert [a for a in rig.ctl_args("stop")][-1]["reason"] == "source unavailable"
+        renew = {"stream": STREAM, "session": body["session"], "gen": body["gen"], "reason": "no frames (error)"}
+        for _ in range(60):
+            rig.advance(1)
+            await rig.vtx.tick()
+            await rig.vtx.on_message("video-renew", renew)
+        assert len(rig.video_keys()) == 1
+        src.state = "starting"
+        rig.advance(1)
+        await rig.vtx.tick()
+        assert len(rig.video_keys()) == 2 and rig.vtx.fails == 0
+    asyncio.run(scenario())
+
+
+def test_failed_start_with_device_gone_waits_instead_of_retrying():
+    """start отказал, вход пропал: агент ждёт источник, а не перебирает поколения (стенд: 126 за 10 мин)."""
+    async def scenario():
+        rig, src = _rig_with_source("starting")
+        rig.ctl.start_exc = CtlError("pipeline")
+        body = await start_srtp(rig)
+        await ack(rig, body)
+        src.state = "no-device"
+        for _ in range(600):
+            rig.advance(1)
+            await rig.vtx.tick()
+        assert len(rig.video_keys()) == 1
+        assert len(rig.bodies("video-stop")) == 1
+    asyncio.run(scenario())
+
+
+def test_source_fn_failure_is_treated_as_unknown():
+    """Сбой наблюдения за входом не останавливает видео: состояние неизвестно — как без source_fn."""
+    async def scenario():
+        rig = Rig()
+        def boom():
+            raise RuntimeError("ingest")
+        rig.vtx._source_fn = boom
+        await start_srtp(rig)
+        assert len(rig.video_keys()) == 1
     asyncio.run(scenario())
 
 
