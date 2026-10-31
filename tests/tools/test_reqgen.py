@@ -84,7 +84,8 @@ class RegistryTest(unittest.TestCase):
 
     def test_pass_without_evidence_fields_is_invalid(self):
         doc = self.doc_copy()
-        doc["tests"][0]["status"] = "PASS"
+        t = next(t for t in doc["tests"] if t["status"] == "NOT TESTED")   # без полей доказательства
+        t["status"] = "PASS"
         self.assertTrue(any("PASS без поля" in e for e in reqgen.validate(doc)))
 
     def test_silent_priority_change_is_rejected(self):
