@@ -27,14 +27,25 @@
 сумма архива — автотест `tests/gui/test_video_and_pages.py::test_logs_page_and_export_without_secrets`.
 `secrets.md` обновлён после D8 (ключ владельца, ключ устройства, ключи SRTP только в памяти, ключи хоста SSH).
 
-## TEST-SYS-007 — паспорт устройства: исправлено в коде, на платах — после раскатки
+## TEST-SYS-007 — паспорт устройства: всё, кроме формата SemVer
 
 Найдено на платах: «О системе» показывал «HW-1.0 Rev A (эмулятор, x86)» и сборку «—» (git на плате нет); блок
 представлялся `remote-emu-01` с `HW-1.0 Rev A (emulator)`, команды `sheregesh-info` не было. Исправление (`0c8c88e`,
 `732e299`): `sheregesh.info` — один источник для `sheregesh-info`, экрана «О системе» (новая строка «Серийный номер») и
 hello канала управления: `HW-1.0 Rev A (<модель из device-tree>)`, `<роль>-<серийный номер>`, сборка образа из
 `build.json`, DEV-выпуск. Команда `/usr/bin/sheregesh-info` — с новым образом (до него `python3 -m sheregesh.info`).
-Приёмка на платах — после DEV deploy.
+На платах (DEV `gde3e4fb`):
+
+| Источник | pi1 (пульт) | pi2 (блок) |
+|---|---|---|
+| `sheregesh-info` (`python3 -m sheregesh.info`) | ПО 0.1.0.dev0, протокол 1.5, образ `c0c509c0b716` / 0.1.1793394197, выпуск `gde3e4fb`, HW-1.0 Rev A (Raspberry Pi 4 Model B Rev 1.5), серийный `10000000568152de`, `console-10000000568152de` | то же, серийный `100000009d497e91`, `remote-100000009d497e91` |
+| манифест образа `build.json` и агент OTA | `c0c509c0b716`, 0.1.1793394197, серийный совпадает | `c0c509c0b716`, 0.1.1793394197, серийный совпадает |
+| «О системе» реального GUI (`gui_system_panel.py --details AboutPage`, `about.png`) | Сборка «0.1.1793394197 c0c509c0b716 · 0.1.0~dev0+gde3e4fbcea49», Аппаратура «HW-1.0 Rev A (Raspberry Pi 4 Model B Rev 1.5)», Серийный номер «10000000568152de», Протокол 1.5 | — |
+| данные блока на пульте (`link-status.json` → плитка «Удалённый блок») | `remote-100000009d497e91`, HW-1.0 Rev A (Raspberry Pi 4 Model B Rev 1.5), ПО 0.1.0.dev0, протокол 1.5 — совпадает с `sheregesh-info` блока | — |
+
+Данные — из локальных файлов (device-tree, `build.json`, ссылка выпуска): без сети. **Не выполнено:** «версия ПО
+(SemVer)» — `0.1.0.dev0` в формате PEP 440, не SemVer; решается вместе с TEST-REL-010 (схема версий).
+Доказательства: `~/archive/acceptance/stage-a-2/sys007-evidence.tar.gz`, SHA-256 `d6bd66ad4eb1fc6b4d367fddac57795b86dc3972f9a284ccc1713a2784530341`.
 
 ## Доказательства
 

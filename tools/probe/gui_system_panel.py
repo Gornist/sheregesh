@@ -30,6 +30,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--timeout", type=float, default=30.0)
+    ap.add_argument("--details", default="", help="затем открыть страницу «Подробно» (AboutPage — «О системе»)")
     a = ap.parse_args(argv)
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     os.environ["QT_QUICK_BACKEND"] = "software"
@@ -61,13 +62,30 @@ def main(argv=None):
         time.sleep(0.3)
         qapp.processEvents()
         ui.window.grabWindow().save(str(a.out / "system.png"))
+        about = {}
+        if a.details:
+            QMetaObject.invokeMethod(ui.window, "showDetails", Q_ARG("QVariant", a.details))
+            t1 = time.monotonic()
+            while time.monotonic() - t1 < a.timeout:              # сведения сборки собираются в фоне
+                qapp.processEvents()
+                hw = next((i for i in walk(ui.window.contentItem()) if i.objectName() == "aboutHardware"), None)
+                if hw is not None and hw.property("text") not in (None, "", "…"):
+                    break
+                time.sleep(0.05)
+            qapp.processEvents()
+            tile = next((i for i in walk(ui.window.contentItem()) if i.objectName() == "tileAboutConsole"), None)
+            texts = [i.property("text") for i in walk(tile)] if tile is not None else []
+            about = {"labels": [t for t in texts if isinstance(t, str) and t],
+                     **{n: next((i.property("text") for i in walk(ui.window.contentItem()) if i.objectName() == n), None)
+                        for n in ("aboutSoftware", "aboutHardware", "aboutSerial", "aboutDevice")}}
+            ui.window.grabWindow().save(str(a.out / "about.png"))
         rows = {}
         for o in walk(ui.window.contentItem()):
             label = o.property("label") if o.metaObject().indexOfProperty("label") >= 0 else None
             value = o.property("value") if o.metaObject().indexOfProperty("value") >= 0 else None
             if isinstance(label, str) and isinstance(value, str) and label:
                 rows[label] = value
-        out = {"ota_row": row.property("value") if row is not None else None, "rows": rows,
+        out = {"ota_row": row.property("value") if row is not None else None, "rows": rows, "about": about,
                "system_info": dict(ui.system_info.info), "elapsed_s": round(time.monotonic() - t0, 2)}
         (a.out / "system.json").write_text(json.dumps(out, ensure_ascii=False, indent=1))
         print(json.dumps(out, ensure_ascii=False))
