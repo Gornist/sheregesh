@@ -147,6 +147,8 @@ class Media:
     fragment: str                 # описание от источника до video/x-h264,byte-stream,au
     passthrough: bool             # сквозной H.264 без кодера (ключевой кадр по PLI не гарантирован)
     info: dict = field(default_factory=dict)   # краткое описание источника для state.json (без учётных данных)
+    src: object = None            # источник (VideoSource) — для памяти режимов службы tx
+    auto: bool = False            # режим выбран по «mode: auto» (перебор кандидатов, videoinput.ModeMemory)
 
 
 def _check_profile(profile) -> tuple[int, int, int, int]:
@@ -195,11 +197,12 @@ def _source_info(src, encoder: str) -> dict:
     return info
 
 
-def open_media(spec, profile, *, opener=None, pair=None) -> Media:
+def open_media(spec, profile, *, opener=None, pair=None, memory=None) -> Media:
     """Открыть источник по `spec` агента (videoinput.open_source) и собрать фрагмент.
 
     Нет устройства (или RTSP-сервер недоступен) -> MediaError("no-device"); неверное описание -> bad-request;
     режим не поддержан -> unsupported. Синтетический источник строится под профиль (video.synthetic).
+    memory — videoinput.ModeMemory службы: при «mode: auto» пропускает режимы, не давшие кадров.
     """
     from .. import videoinput
     if not isinstance(spec, dict):
@@ -212,7 +215,7 @@ def open_media(spec, profile, *, opener=None, pair=None) -> Media:
         from .. import video
 
         def opener(s):
-            return videoinput.open_source(s, synthetic=lambda: video.synthetic(w, h, fps))
+            return videoinput.open_source(s, synthetic=lambda: video.synthetic(w, h, fps), memory=memory)
     src = opener(spec)
     if not getattr(src, "available", False):
         code = "no-device" if getattr(src, "missing", False) else "unsupported"
@@ -220,7 +223,10 @@ def open_media(spec, profile, *, opener=None, pair=None) -> Media:
     ok, why = src.present()
     if not ok:
         raise MediaError("no-device", str(why)[:200])
-    return build_media(src, profile, pair)
+    med = build_media(src, profile, pair)
+    med.src = src
+    med.auto = kind in ("v4l2", "uvc") and str(spec.get("mode") or "auto") == "auto" and src.mode is not None
+    return med
 
 
 # --- проверка аргументов команд ---

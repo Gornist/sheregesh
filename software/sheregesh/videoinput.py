@@ -776,28 +776,76 @@ def select_mode(modes, width, height, fps, fmt="auto"):
     return None
 
 
-def auto_mode(modes, fmt="auto"):
-    """«mode: auto»: 720p60 без декодирования (_AUTO_RAW_FIRST), затем первый из типичных режимов (_AUTO_PREFERENCE),
-    иначе наибольший размер при ≥ 25 к/с, иначе любой. Только используемые форматы."""
+def auto_modes(modes, fmt="auto"):
+    """«mode: auto» — кандидаты по порядку: 720p60 без декодирования (_AUTO_RAW_FIRST), типичные режимы
+    (_AUTO_PREFERENCE), затем остальные: наибольший размер, частота, дешёвый формат (≥ 25 к/с раньше прочих).
+    Только используемые форматы. Первый — выбор по умолчанию; следующие — если он не дал кадров (ModeMemory)."""
     usable = [m for m in modes if m.pixfmt in FORMATS and (fmt == "auto" or FORMATS[m.pixfmt] == fmt)]
+    out = []
+
+    def add(m):
+        if m is not None and m not in out:
+            out.append(m)
     for w, h, fps, raws in _AUTO_RAW_FIRST:
         for raw in raws:
             if fmt in ("auto", raw):
-                m = select_mode(usable, w, h, fps, raw)
-                if m is not None:
-                    return m
+                add(select_mode(usable, w, h, fps, raw))
     for w, h, fps in _AUTO_PREFERENCE:
-        m = select_mode(usable, w, h, fps, fmt)
-        if m is not None:
-            return m
-    good = [m for m in usable if m.fps >= 25] or usable
-    if not good:
-        return None
+        add(select_mode(usable, w, h, fps, fmt))
     rank = {c: i for i, c in enumerate(FORMAT_ORDER)}
-    return sorted(good, key=lambda m: (-m.width * m.height, -m.fps, rank.get(m.pixfmt, 9)))[0]
+    for m in sorted(usable, key=lambda m: (m.fps < 25, -m.width * m.height, -m.fps, rank.get(m.pixfmt, 9))):
+        add(m)
+    return out
 
 
-def open_v4l2(device="", mode="auto", fmt="auto", standard="auto", drivers=None, label="V4L2", input="", **scan_kw):
+def auto_mode(modes, fmt="auto"):
+    """Первый кандидат auto_modes или None."""
+    found = auto_modes(modes, fmt)
+    return found[0] if found else None
+
+
+class ModeMemory:
+    """Память режимов «auto» по устройствам (ключ — постоянный id источника) на время жизни службы tx.
+
+    Режим, не давший кадров при подключённом устройстве (дешёвые захваты объявляют режимы, которых не отдают), при
+    следующем запуске пропускается; удачный пробуется первым. Все кандидаты неудачны — память устройства сбрасывается
+    и перебор идёт сначала. Явно заданный режим (не «auto») память не меняет."""
+
+    def __init__(self):
+        self._good, self._bad = {}, {}
+
+    @staticmethod
+    def _key(m):
+        return (m.pixfmt, m.width, m.height, m.framerate)
+
+    def pick(self, dev_id, candidates):
+        if not candidates:
+            return None
+        keys = [self._key(m) for m in candidates]
+        good = self._good.get(dev_id)
+        if good in keys:
+            return candidates[keys.index(good)]
+        bad = self._bad.get(dev_id, set())
+        for m, k in zip(candidates, keys):
+            if k not in bad:
+                return m
+        self._bad.pop(dev_id, None)
+        return candidates[0]
+
+    def failed(self, dev_id, mode):
+        k = self._key(mode)
+        self._bad.setdefault(dev_id, set()).add(k)
+        if self._good.get(dev_id) == k:
+            del self._good[dev_id]
+
+    def worked(self, dev_id, mode):
+        k = self._key(mode)
+        self._good[dev_id] = k
+        self._bad.get(dev_id, set()).discard(k)
+
+
+def open_v4l2(device="", mode="auto", fmt="auto", standard="auto", drivers=None, label="V4L2", input="",
+              memory=None, **scan_kw):
     """Источник V4L2 по конфигурации.
 
     device — постоянный идентификатор: /dev/v4l/by-id/… или by-path/… (полный путь или имя ссылки), vvvv:pppp[:serial],
@@ -806,7 +854,8 @@ def open_v4l2(device="", mode="auto", fmt="auto", standard="auto", drivers=None,
     (VIDIOC_QUERYSTD, если драйвер его поддерживает и сигнал распознан, иначе DEFAULT_STANDARD — PAL; текущий
     VIDIOC_G_STD не используется: это умолчание драйвера, а не стандарт сигнала). input — вход: «» | «auto» — не
     менять (у usbtv/stk1160/em28xx после загрузки — 0, композитный), номер или имя («composite», «s-video»);
-    выбирается VIDIOC_S_INPUT до опроса стандарта. drivers — ограничить драйверами (open_uvc: uvcvideo)."""
+    выбирается VIDIOC_S_INPUT до опроса стандарта. drivers — ограничить драйверами (open_uvc: uvcvideo).
+    memory — ModeMemory службы tx: при «auto» пропускает режимы, не давшие кадров на этом устройстве."""
     scanned = scan(drivers=drivers, **scan_kw)
 
     def match(n):
@@ -858,7 +907,10 @@ def open_v4l2(device="", mode="auto", fmt="auto", standard="auto", drivers=None,
         _mask, w, h, _fps, _rate = STANDARDS[standard.upper()]
         modes = [m for m in node.modes if (m.width, m.height) == (w, h)]
     if (mode or "auto") == "auto":
-        chosen, want, request = auto_mode(modes, fmt), "auto", "auto"
+        found = auto_modes(modes, fmt)
+        chosen = memory.pick(f"{'uvc' if node.driver == 'uvcvideo' else 'v4l2'}:{stable_id(node)}", found) \
+            if memory is not None else (found[0] if found else None)
+        want, request = "auto", "auto"
     else:
         width, height, fps = parse_mode(mode)
         chosen = select_mode(modes, width, height, fps, fmt)
@@ -879,14 +931,15 @@ def open_uvc(device="", mode="1280x720@30", fmt="auto", **scan_kw):
 SOURCE_KINDS = ("synthetic", "v4l2", "uvc", "rtsp")
 
 
-def open_source(spec, synthetic=None, **scan_kw):
+def open_source(spec, synthetic=None, memory=None, **scan_kw):
     """Источник по описанию конфигурации блока (словарь):
       {"source": "synthetic"}
       {"source": "v4l2" | "uvc", "device": "...", "mode": "auto" | "WxH@fps", "format": "auto" | "yuyv" | "uyvy" |
        "mjpeg" | "h264", "standard": "auto" | "pal" | "ntsc", "input": "auto" | "composite" | "s-video" | N}
       {"source": "rtsp", "url": "rtsp://host:554/path", "codec": "h264" | "mjpeg", "transport": "auto" | "tcp" | "udp",
        "latency_ms": 200, "timeout_s": 5}
-    synthetic — фабрика синтетического источника (sheregesh.video.synthetic: с надписями). Ошибка описания —
+    synthetic — фабрика синтетического источника (sheregesh.video.synthetic: с надписями); memory — ModeMemory
+    (перебор режимов «auto» службой tx). Ошибка описания —
     Unavailable с причиной, а не исключение."""
     kind = str(spec.get("source") or "synthetic").lower()
     try:
@@ -897,7 +950,7 @@ def open_source(spec, synthetic=None, **scan_kw):
                              str(spec.get("format") or "auto"), str(spec.get("standard") or "auto"),
                              drivers={"uvcvideo"} if kind == "uvc" else None,
                              label="UVC" if kind == "uvc" else "V4L2", input=str(spec.get("input") or "auto"),
-                             **scan_kw)
+                             memory=memory, **scan_kw)
         if kind == "rtsp":
             return RTSPSource(spec["url"], spec.get("codec", "h264"), spec.get("latency_ms", 200),
                               spec.get("timeout_s", 5.0), transport=spec.get("transport", "auto"))

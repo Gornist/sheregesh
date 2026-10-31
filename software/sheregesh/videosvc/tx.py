@@ -41,6 +41,7 @@ class _Active:
     passthrough: bool
     t_start: float
     alive: bool = True        # конвейер ещё принадлежит этому запуску (starting | streaming)
+    media: object = None      # Media запуска: источник и режим «auto» для памяти режимов
 
 
 def _default_factory(cfg, on_event):
@@ -54,7 +55,9 @@ class TxService(M.ServiceBase):
     def __init__(self, runtime_dir=None, *, factory=None, media_opener=None, **kw):
         super().__init__(runtime_dir, **kw)
         self._factory = factory or _default_factory
-        self._media_opener = media_opener or M.open_media
+        from ..videoinput import ModeMemory
+        self.modes = ModeMemory()                          # перебор режимов «auto» между поколениями (v13)
+        self._media_opener = media_opener or (lambda spec, profile: M.open_media(spec, profile, memory=self.modes))
         self._act: dict[str, _Active] = {}
         self._last: dict[str, tuple[str, int]] = {}     # (session, gen) последнего запуска конвейера
         self._retired: deque = deque(maxlen=RETIRED_KEEP)   # вытесненные сеансы: их start — stale
@@ -142,7 +145,7 @@ class TxService(M.ServiceBase):
         except ValueError:
             raise M.bad("параметры конвейера отклонены") from None
         self._token += 1
-        act = _Active(stream, session, gen, ssrc, fp, self._token, None, med.passthrough, self.mono())
+        act = _Active(stream, session, gen, ssrc, fp, self._token, None, med.passthrough, self.mono(), media=med)
         token = self._token
 
         def on_event(kind, detail, _t=token):
@@ -222,9 +225,30 @@ class TxService(M.ServiceBase):
         self.state.update(act.stream, error=error)
         self.state.transition(act.stream, state, reason)
 
+    def _mode_outcome(self, act: _Active, ok: bool) -> None:
+        """Память режимов «auto»: удачный режим — первым в следующий раз; не давший кадров при подключённом
+        устройстве — пропустить (отключение устройства режим не порочит)."""
+        med = act.media
+        src = getattr(med, "src", None)
+        if med is None or not med.auto or src is None or src.mode is None:
+            return
+        if ok:
+            self.modes.worked(src.id, src.mode)
+            return
+        try:
+            present = bool(src.present()[0])
+        except Exception:                                    # noqa: BLE001
+            present = False
+        if present:
+            self.modes.failed(src.id, src.mode)
+            log.warning("tx[%s]: режим %s не дал кадров на %s — следующее поколение возьмёт другой", act.stream,
+                        src.mode, src.id)
+
     def _fail(self, act: _Active, reason: str) -> None:
         """Сбой конвейера: тот же ключ не используется повторно — ждём нового start (need-new-gen)."""
         log.warning("tx[%s]: %s; нужно новое поколение", act.stream, reason)
+        if self.state.snapshot()["streams"][act.stream]["state"] == "starting":
+            self._mode_outcome(act, False)
         n = self.state.snapshot()["streams"][act.stream]["restarts"] + 1
         self._teardown(act, "error", reason, error="need-new-gen")
         self.state.update(act.stream, restarts=n)
@@ -241,6 +265,7 @@ class TxService(M.ServiceBase):
             if kind == "first-frame":
                 if self.state.snapshot()["streams"][act.stream]["state"] == "starting":
                     self.state.transition(act.stream, "streaming", "encoder output")
+                    self._mode_outcome(act, True)
             elif kind == "error":
                 self._fail(act, f"pipeline error: {str(detail.get('message', ''))[:120]}")
             elif kind == "eos":
