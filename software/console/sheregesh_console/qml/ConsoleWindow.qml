@@ -65,4 +65,14 @@ ApplicationWindow {
     palette.light: p.panel
     palette.dark: p.border
 
+
+    // REQ-UI-005: погашенный экран — чёрный слой поверх всего; ввод до пробуждения поглощает screenGuard
+    Rectangle {
+        objectName: "screenBlank"
+        parent: Overlay.overlay
+        anchors.fill: parent
+        z: 1000000
+        color: "black"
+        visible: screenGuard.blanked
+    }
 }

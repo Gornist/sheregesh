@@ -27,6 +27,7 @@ from sheregesh.notify_relay import adopt_pdeathsig
 
 from .backend import Backend
 from .control import ControlServer, server_path
+from .screen import ScreenGuard
 from .sysinfo import SystemInfo
 from .video import VideoView
 
@@ -154,9 +155,14 @@ class Ui:
         self.translator = QTranslator()
         self._lang = None
         self.system_info = SystemInfo()
+        sticks = getattr(backend, "sticks", None)
+        self.screen = ScreenGuard(timeout_s=lambda: int(backend.config.get("screen_timeout_s", 0) or 0),
+                                  busy=lambda: bool(sticks is not None and sticks.enabled))
+        QGuiApplication.instance().installEventFilter(self.screen)
         self._prepare_gl_video()
         self.engine.rootContext().setContextProperty("backend", backend)
         self.engine.rootContext().setContextProperty("systemInfo", self.system_info)
+        self.engine.rootContext().setContextProperty("screenGuard", self.screen)
         self._apply_language()
         backend.appearanceChanged.connect(self._apply_language)
         self.engine.load(QUrl.fromLocalFile(str(QML / LAYOUTS[layout])))
@@ -243,6 +249,7 @@ class Ui:
     def close(self):
         """Уничтожить QML раньше бэкенда, иначе привязки при закрытии обращаются к удалённому объекту."""
         self.backend.stop()
+        QGuiApplication.instance().removeEventFilter(self.screen)
         QGuiApplication.instance().removeTranslator(self.translator)
         self.window = None
         engine, self.engine = self.engine, None
@@ -397,7 +404,8 @@ def main(argv=None):
                                 "params": {k: str(v)[:64] for k, v in e.params.items()}}
                                for e in backend.bench.monitor.log.events[-30:]],
                     "monitorTime": round(backend.bench.monitor.clock(), 2),
-                    "services": st.get("services", [])}  # строки служб раздела «Диагностика» (REQ-SW-001)
+                    "services": st.get("services", []),  # строки служб раздела «Диагностика» (REQ-SW-001)
+                    "screen": ui.screen.snapshot()}      # гашение экрана (REQ-UI-005)
             try:
                 tmp = Path(ui_state + ".tmp")
                 tmp.write_text(json.dumps(data, ensure_ascii=False))
