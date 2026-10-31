@@ -150,3 +150,24 @@ def test_remote_versions_use_console_hello_not_session_id(tmp_path):
     health.check_link(rep, "remote", f)
     v = next(c for c in rep.checks if c["id"] == "link.versions")
     assert v["status"] == "WARN" and v["data"]["source"] == "session"
+
+
+@pytest.mark.parametrize("point,superblock,want", [
+    ("ro,noatime", "rw,lazytime,errors=remount-ro", "PASS"),     # песочница ProtectSystem=strict: точка ro, ФС rw
+    ("rw,noatime", "ro,errors=remount-ro", "FAIL"),              # ext4 перемонтирована после ошибки
+    ("ro,noatime", None, "FAIL"),                                # mountinfo без точки — по опциям /proc/mounts
+])
+def test_persistent_rw_is_judged_by_superblock(tmp_path, monkeypatch, point, superblock, want):
+    """Стенд 2026-10-31: служба с ProtectSystem=strict видела /persistent ro — ложный FAIL при ext4 rw."""
+    mount = str(tmp_path)
+    (tmp_path / "mounts").write_text(f"/dev/mmcblk0p6 {mount} ext4 {point} 0 0\n")
+    info = "22 1 179:4 / / ro,noatime shared:1 - ext4 /dev/mmcblk0p4 ro\n"
+    if superblock is not None:
+        info += f"335 272 179:6 / {mount} {point} shared:311 master:87 - ext4 /dev/mmcblk0p6 {superblock}\n"
+    (tmp_path / "mountinfo").write_text(info)
+    monkeypatch.setattr(health.shutil, "disk_usage", lambda _p: shutil._ntuple_diskusage(1000 * 2**20, 200 * 2**20,
+                                                                                          800 * 2**20))
+    rep = health.Report()
+    health.check_persistent(rep, mount, str(tmp_path / "mounts"), str(tmp_path / "mountinfo"))
+    by = {c["id"]: c for c in rep.checks}
+    assert by["storage.persistent"]["status"] == want, by["storage.persistent"]

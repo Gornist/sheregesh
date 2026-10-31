@@ -94,7 +94,25 @@ def check_config(rep, cfg_path, data_dir, networked=False):
     return cfg
 
 
-def check_persistent(rep, mount="/persistent", mounts_file="/proc/mounts"):
+def superblock_rw(mount, mountinfo="/proc/self/mountinfo"):
+    """Файловая система под `mount` смонтирована на запись — по опциям суперблока (после « - » в mountinfo), а не
+    точки монтирования: служба с ProtectSystem=strict видит /persistent только для чтения в своём пространстве
+    монтирования, хотя ext4 на запись (стенд 2026-10-31: ложный FAIL). errors=remount-ro суперблок показывает
+    честно. None — точки в mountinfo нет."""
+    try:
+        lines = Path(mountinfo).read_text().splitlines()
+    except OSError:
+        return None
+    for ln in lines:
+        head, sep, tail = ln.partition(" - ")
+        f = head.split()
+        if sep and len(f) > 4 and f[4] == mount:
+            sup = tail.split()
+            return len(sup) > 2 and "rw" in sup[2].split(",")
+    return None
+
+
+def check_persistent(rep, mount="/persistent", mounts_file="/proc/mounts", mountinfo="/proc/self/mountinfo"):
     try:
         mounts = {x.split()[1]: x.split() for x in Path(mounts_file).read_text().splitlines()}
     except OSError:
@@ -104,7 +122,9 @@ def check_persistent(rep, mount="/persistent", mounts_file="/proc/mounts"):
         rep.add("storage.persistent", "SKIP" if not Path("/proc/device-tree/model").exists() else "FAIL",
                 f"{mount} не смонтирован")
         return
-    rw = "rw" in m[3].split(",")
+    rw = superblock_rw(mount, mountinfo)
+    if rw is None:
+        rw = "rw" in m[3].split(",")
     st = shutil.disk_usage(mount)
     free_mb, pct = st.free // 2**20, 100 * st.free / st.total
     bad = not rw or free_mb < MIN_FREE_MB or pct < MIN_FREE_PCT
