@@ -125,7 +125,7 @@ def sc_baseline(ch, rh):
     }
     ok = (c1.get("phase") == "connected" and c1.get("tls") == "TLSv1.3" and r1.get("connected")
           and "urn:sheregesh:console:" in session and sent > 0 and acked == sent and ui.get("peerLink") == "CONNECTED"
-          and {"temperatures", "power", "link"} <= set(tel))
+          and {"temperatures", "link"} <= set(tel))      # power — только с модулем питания (на Pi 4 нет, REQ-PWR-007)
     return {**res, "verdict": "PASS" if ok else "FAIL"}
 
 
