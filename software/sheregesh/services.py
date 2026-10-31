@@ -2,14 +2,19 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Обязательные службы и их состояние (REQ-SW-001, docs/software/services.md).
 
-Снимок — одна команда `systemctl show` на все службы роли: ActiveState, SubState, NRestarts, Result. Блок передаёт свой
+Снимок — состояние служб роли у systemd по D-Bus (ListUnitsByNames и два свойства службы, ~7 мс CPU на Pi 4), при
+недоступной шине — одна команда `systemctl show` (порядка 30 мс CPU на запуск процесса): ActiveState, SubState,
+NRestarts, Result. Блок передаёт свой
 снимок пульту необязательным полем `services` сообщения status (старый пульт поле отбрасывает); пульт сравнивает снимки
 обеих сторон (SystemMonitor) и поднимает события каталога: SVC-RESTART — служба перезапущена, SVC-DOWN — служба не
 работает. Без systemd (CI, рабочая станция) снимок пуст.
 """
+import logging
 import shutil
 import subprocess
 import time
+
+log = logging.getLogger(__name__)
 
 MANDATORY = {"console": ("sheregesh-console.service", "sheregesh-video-rx.service"),
              "remote": ("sheregesh-remote-net.service", "sheregesh-video-tx.service")}
@@ -40,6 +45,38 @@ def snapshot(names, run=_run):
     return res
 
 
+class SystemdBus:
+    """Состояние служб у systemd по системной шине D-Bus (Gio): без запуска процесса systemctl на каждый снимок.
+    Ошибка шины — исключение; вызывающий переходит на systemctl."""
+    DEST = "org.freedesktop.systemd1"
+
+    def __init__(self, timeout_ms=1000):
+        import gi
+        gi.require_version("Gio", "2.0")
+        from gi.repository import Gio, GLib
+        self._glib, self.timeout_ms = GLib, timeout_ms
+        self._bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+
+    def _call(self, path, iface, method, args, reply):
+        G = self._glib
+        return self._bus.call_sync(self.DEST, path, iface, method, G.Variant(*args), G.VariantType(reply), 0,
+                                   self.timeout_ms, None).unpack()
+
+    def snapshot(self, names):
+        rows = self._call("/org/freedesktop/systemd1", self.DEST + ".Manager", "ListUnitsByNames",
+                          ("(as)", (list(names),)), "(a(ssssssouso))")[0]
+        res = {}
+        for name, _desc, load, active, sub, _follow, path, *_ in rows:
+            if name not in names or load != "loaded":
+                continue
+            get = lambda key: self._call(path, "org.freedesktop.DBus.Properties", "Get",       # noqa: E731
+                                         ("(ss)", (self.DEST + ".Service", key)), "(v)")[0]
+            r = get("NRestarts")
+            res[name] = {"active": active, "sub": sub, "restarts": r if isinstance(r, int) else 0,
+                         "result": str(get("Result"))}
+        return res
+
+
 def sanitize(value):
     """Снимок второй стороны (недоверенные данные): только ожидаемые поля и типы, не больше 8 служб."""
     if not isinstance(value, dict):
@@ -61,16 +98,30 @@ def short(name):
 
 
 class Cached:
-    """Снимок служб роли не чаще раза в period_s (команда — порядка десятков миллисекунд)."""
+    """Снимок служб роли не чаще раза в period_s. Источник — D-Bus (bus: фабрика SystemdBus, None — только systemctl);
+    первая ошибка шины переводит на systemctl до конца работы процесса (backend — «dbus» | «systemctl»)."""
 
-    def __init__(self, role, period_s=2.0, run=_run, clock=time.monotonic):
+    def __init__(self, role, period_s=2.0, run=_run, clock=time.monotonic, bus=SystemdBus):
         self.names, self.period_s, self.run, self.clock = MANDATORY.get(role, ()), period_s, run, clock
         self._at, self._value = None, {}
+        self._bus_factory, self._bus = bus, None
+        self.backend = "dbus" if bus is not None and self.names else "systemctl"
+
+    def _take(self):
+        if self.backend == "dbus":
+            try:
+                if self._bus is None:
+                    self._bus = self._bus_factory()
+                return self._bus.snapshot(self.names)
+            except Exception as e:   # нет gi, шины или systemd (CI, контейнер) — дальше systemctl
+                log.warning("службы: D-Bus недоступен (%s), дальше systemctl", type(e).__name__)
+                self.backend, self._bus = "systemctl", None
+        return snapshot(self.names, self.run)
 
     def __call__(self):
         now = self.clock()
         if self._at is None or now - self._at >= self.period_s:
-            self._at, self._value = now, snapshot(self.names, self.run)
+            self._at, self._value = now, self._take()
         return self._value
 
 
