@@ -27,7 +27,7 @@
 сумма архива — автотест `tests/gui/test_video_and_pages.py::test_logs_page_and_export_without_secrets`.
 `secrets.md` обновлён после D8 (ключ владельца, ключ устройства, ключи SRTP только в памяти, ключи хоста SSH).
 
-## TEST-SYS-007 — паспорт устройства: всё, кроме формата SemVer
+## TEST-SYS-007 — паспорт устройства: PASS
 
 Найдено на платах: «О системе» показывал «HW-1.0 Rev A (эмулятор, x86)» и сборку «—» (git на плате нет); блок
 представлялся `remote-emu-01` с `HW-1.0 Rev A (emulator)`, команды `sheregesh-info` не было. Исправление (`0c8c88e`,
@@ -81,6 +81,10 @@ hello канала управления — прежняя строка (по н
 
 Доказательства: `~/archive/acceptance/stage-a-2/doc001-evidence.tar.gz`, SHA-256
 `0ba40f2a543b1601e3d732741621575d863f7c53161c867b06bc50ae5576a6db`.
+
+**SemVer на платах (DEV `gdc74aa8`):** «О системе» pi1 — ПО `0.1.0-dev.0`; `sheregesh-info` обеих плат — `software`
+`0.1.0-dev.0`, `package` `0.1.0.dev0`, выпуск `0.1.0~dev0+gdc74aa86ff1c`. Доказательства:
+`~/archive/acceptance/stage-a-2/sys007-semver-evidence.tar.gz`, SHA-256 `be78a2b864db413c1474281c2452048eafc1c489100022f5292dfc05280d5f06`.
 
 ## Доказательства
 
