@@ -47,6 +47,8 @@ ctl-loss «нет видео ≤ 3 с» на границе (2,7–3,2 с): пр
 План и объём (железо отложено до конца программной части) — [ROADMAP](ROADMAP.md).
 Релизная готовность определяется текущим `reqgen.py gate`, не этой страницей. С 2026-10-31 (D8, CHG-016) — 64 REQ,
 42 Must (было 86 / 78); гейт NO-GO. PASS L4: TEST-REL-001, TEST-UPD-001 — [req-l4](../acceptance/req-l4/REPORT.md).
+PASS L4: TEST-SW-004, TEST-UPD-002, TEST-SYS-008, TEST-SW-003 — [stage-a-1](../acceptance/stage-a-1/REPORT.md);
+TEST-UPD-004 — откат на pi2 проверен, «видно в GUI» ждёт прогона на pi1.
 
 ## Известные особенности разработки
 

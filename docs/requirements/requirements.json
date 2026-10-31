@@ -3067,13 +3067,13 @@
         "Выполнены все критерии PASS покрываемых требований."
       ],
       "evidence": "Отчёт pytest",
-      "status": "NOT TESTED",
-      "evidence_level": "L0",
-      "sw_version": null,
-      "hw_rev": null,
-      "evidence_link": null,
-      "executed": null,
-      "executor": null
+      "status": "PASS",
+      "evidence_level": "L4",
+      "sw_version": "образ c0c509c, DEV g3b4ffc7",
+      "hw_rev": "Raspberry Pi 4 Model B 4 ГБ: pi1 10000000568152de, pi2 100000009d497e91",
+      "evidence_link": "docs/acceptance/stage-a-1/REPORT.md#test-sys-008-test-sw-003--совместимость-pass",
+      "executed": "2026-10-31",
+      "executor": "Claude Code по поручению владельца"
     },
     {
       "id": "TEST-SW-004",
@@ -3097,13 +3097,13 @@
         "Выполнены все критерии PASS покрываемых требований."
       ],
       "evidence": "Отчёт, скриншоты",
-      "status": "NOT TESTED",
-      "evidence_level": "L0",
-      "sw_version": null,
-      "hw_rev": null,
-      "evidence_link": null,
-      "executed": null,
-      "executor": null
+      "status": "PASS",
+      "evidence_level": "L4",
+      "sw_version": "образ c0c509c, DEV g678453b",
+      "hw_rev": "Raspberry Pi 4 Model B 4 ГБ: pi1 10000000568152de, pi2 100000009d497e91",
+      "evidence_link": "docs/acceptance/stage-a-1/REPORT.md#test-sw-004--нет-второго-устройства-pass",
+      "executed": "2026-10-31",
+      "executor": "Claude Code по поручению владельца"
     },
     {
       "id": "TEST-SW-005",
@@ -3274,13 +3274,13 @@
         "Выполнены все критерии PASS покрываемых требований."
       ],
       "evidence": "Отчёт pytest, скриншот сообщения",
-      "status": "NOT TESTED",
-      "evidence_level": "L0",
-      "sw_version": null,
-      "hw_rev": null,
-      "evidence_link": null,
-      "executed": null,
-      "executor": null
+      "status": "PASS",
+      "evidence_level": "L4",
+      "sw_version": "образ c0c509c, DEV g3b4ffc7",
+      "hw_rev": "Raspberry Pi 4 Model B 4 ГБ: pi1 10000000568152de, pi2 100000009d497e91",
+      "evidence_link": "docs/acceptance/stage-a-1/REPORT.md#test-sys-008-test-sw-003--совместимость-pass",
+      "executed": "2026-10-31",
+      "executor": "Claude Code по поручению владельца"
     },
     {
       "id": "TEST-SYS-009",
@@ -3540,13 +3540,13 @@
         "Выполнены все критерии PASS покрываемых требований."
       ],
       "evidence": "Отчёт",
-      "status": "NOT TESTED",
-      "evidence_level": "L0",
-      "sw_version": null,
-      "hw_rev": null,
-      "evidence_link": null,
-      "executed": null,
-      "executor": null
+      "status": "PASS",
+      "evidence_level": "L4",
+      "sw_version": "образ c0c509c, DEV g678453b",
+      "hw_rev": "Raspberry Pi 4 Model B 4 ГБ: pi1 10000000568152de, pi2 100000009d497e91",
+      "evidence_link": "docs/acceptance/stage-a-1/REPORT.md#test-upd-002--подпись-образа-pass",
+      "executed": "2026-10-31",
+      "executor": "Claude Code по поручению владельца"
     },
     {
       "id": "TEST-UPD-004",
