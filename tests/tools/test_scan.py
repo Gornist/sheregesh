@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Тесты базовых сканеров (части TEST-UPD-009, TEST-REL-011)."""
+"""Тесты базовых сканеров (часть TEST-REL-011)."""
 import sys
 import tempfile
 import unittest

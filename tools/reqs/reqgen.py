@@ -109,11 +109,13 @@ def validate(doc, baseline=None):
             if rid in reqs:
                 err(f"{c['id']}: удаляет требование {rid}, но оно есть в реестре")
             removed[rid] = c["id"]
+    # Ссылки ранних записей на требования и тесты, удалённые позднее (removes, retired_tests), — история, не ошибка
+    for c in doc["changes"]:
         for rid in c.get("affects", []):
-            if rid != "*" and rid not in reqs:
+            if rid != "*" and rid not in reqs and rid not in removed:
                 err(f"{c['id']}: затрагивает несуществующее требование {rid}")
         for tid in c.get("tests", []):
-            if tid != "*" and tid not in tests:
+            if tid != "*" and tid not in tests and tid not in retired:
                 err(f"{c['id']}: затрагивает несуществующий тест {tid}")
 
     # REQ-REL-009: любое отличие от baseline Rev A прослеживается до содержательного изменения.

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Тесты единого реестра требований и гейта релиза (TEST-REL-001, TEST-REL-002, TEST-REL-009)."""
+"""Тесты единого реестра требований и гейта релиза (TEST-REL-001; прослеживаемость реестра — D8)."""
 import copy
 import json
 import sys
@@ -39,9 +39,19 @@ class RegistryTest(unittest.TestCase):
 
     def test_baseline_requirement_removed_without_change_is_error(self):
         doc = self.doc_copy()
-        doc["requirements"] = [r for r in doc["requirements"] if r["id"] != "REQ-SYS-001"]
+        doc["requirements"] = [r for r in doc["requirements"] if r["id"] != "REQ-SYS-002"]
         errors = reqgen.validate(doc, self.baseline)
-        self.assertTrue(any(e.startswith("REQ-SYS-001: требование baseline удалено") for e in errors), errors)
+        self.assertTrue(any(e.startswith("REQ-SYS-002: требование baseline удалено") for e in errors), errors)
+
+    def test_change_may_reference_requirement_removed_later_but_not_unknown_one(self):
+        """Ранняя запись CHG ссылается на требование, удалённое позднее (removes), — история; неизвестное — ошибка."""
+        doc = self.doc_copy()
+        removed = next(rid for c in doc["changes"] for rid in c.get("removes", []))
+        doc["changes"][0]["affects"] = [removed]
+        self.assertEqual(reqgen.validate(doc, self.baseline), [])
+        doc["changes"][0]["affects"] = ["REQ-SYS-999"]
+        errors = reqgen.validate(doc, self.baseline)
+        self.assertTrue(any("затрагивает несуществующее требование REQ-SYS-999" in e for e in errors), errors)
 
     def test_every_must_has_objective_criteria_and_test(self):
         for r in self.doc["requirements"]:
