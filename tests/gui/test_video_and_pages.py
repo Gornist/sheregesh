@@ -217,6 +217,9 @@ def test_about_page_shows_passport(make_ui):
     show(u, "about")
     assert obj(u, "aboutSoftware").property("text") == __version__
     assert obj(u, "aboutDevice").property("text") == "Шерегеш-пульт"
+    from sheregesh import info
+    assert wait_until(lambda: obj(u, "aboutHardware").property("text") == info.hardware(), 5)   # фоновый сбор
+    assert obj(u, "aboutSerial").property("text") == (info.board()["serial"] or "—")
 
 
 @pytest.mark.test_id("TEST-PWR-007")

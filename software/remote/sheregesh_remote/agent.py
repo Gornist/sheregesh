@@ -48,7 +48,7 @@ import sys
 import time
 from pathlib import Path
 
-from sheregesh import PROTOCOL_VERSION, __version__, sdnotify, timepeer, video, videoinput, videosources
+from sheregesh import PROTOCOL_VERSION, __version__, info, sdnotify, timepeer, video, videoinput, videosources
 from sheregesh.videoingest import Ingest
 from .session import ConsoleSession
 from .videotx import VideoTx
@@ -767,8 +767,8 @@ def main(argv=None):
     ap.add_argument("--port", type=int, default=7700, help="0 — выбрать свободный порт")
     ap.add_argument("--protocol", default=PROTOCOL_VERSION)
     ap.add_argument("--software", default=__version__)
-    ap.add_argument("--hardware", default="HW-1.0 Rev A (emulator)")
-    ap.add_argument("--device-id", default="remote-emu-01")
+    ap.add_argument("--hardware", default=None, help="по умолчанию — sheregesh.info (ревизия и плата)")
+    ap.add_argument("--device-id", default=None, help="по умолчанию — remote-<серийный номер платы>")
     ap.add_argument("--heartbeat-interval", type=float, default=1.0)
     ap.add_argument("--peer-timeout", type=float, default=3.0,
                     help="нет ответа пульта на heartbeat дольше N с (сессия с ack) — соединение потеряно; 0 — не проверять")
@@ -817,6 +817,10 @@ def main(argv=None):
     ap.add_argument("--rc-timeout-ms", type=int, default=500,
                     help="сторож команд органов управления: нет кадра rc дольше N мс — FAILSAFE (50…10000, ADR-0013)")
     args = ap.parse_args(argv)
+    if args.hardware is None:
+        args.hardware = info.hardware()          # REQ-SYS-007: ревизия спецификации и фактическая плата
+    if args.device_id is None:
+        args.device_id = info.device_id("remote")
     if not 50 <= args.rc_timeout_ms <= 10000:
         ap.error("--rc-timeout-ms: ожидается 50…10000")
     args.tls_cfg = None

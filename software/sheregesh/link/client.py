@@ -70,8 +70,8 @@ class _State:
 
 
 class PeerClient:
-    def __init__(self, host="127.0.0.1", port=7700, heartbeat_timeout_s=3.0, device_id="console-emu-01",
-                 hardware="HW-1.0 Rev A (emulator)", tls_cfg: "tls.LinkConfig | None" = None, status_file=None,
+    def __init__(self, host="127.0.0.1", port=7700, heartbeat_timeout_s=3.0, device_id=None,
+                 hardware=None, tls_cfg: "tls.LinkConfig | None" = None, status_file=None,
                  video_session=None):
         self.tls_cfg = tls_cfg
         # Видеосеанс SRTP (протокол 1.5, ADR-0016): объект с hello_fields(), on_message(тип, body), on_session_start(),
@@ -102,6 +102,10 @@ class PeerClient:
         self._last_discover = 0.0
         self._last_status_write = 0.0
         self.heartbeat_timeout_s = heartbeat_timeout_s
+        if hardware is None or device_id is None:      # REQ-SYS-007: плата и серийный номер, вне платы — эмулятор
+            from .. import info as devinfo
+            hardware = devinfo.hardware() if hardware is None else hardware
+            device_id = devinfo.device_id("console") if device_id is None else device_id
         self.info = {"role": "console", "proto": PROTOCOL_VERSION, "software": __version__, "hardware": hardware,
                      "device_id": device_id}
         self.counters = LinkCounters()

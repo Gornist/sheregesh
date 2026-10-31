@@ -36,7 +36,9 @@ Item {
                 Label { text: qsTr("Build"); color: win.p.muted }
                 Label { text: page.a.build; Layout.fillWidth: true }
                 Label { text: qsTr("Hardware"); color: win.p.muted }
-                Label { text: page.a.hardware; Layout.fillWidth: true; elide: Text.ElideRight }
+                Label { objectName: "aboutHardware"; text: page.a.hardware; Layout.fillWidth: true; elide: Text.ElideRight }
+                Label { text: qsTr("Serial number"); color: win.p.muted }
+                Label { objectName: "aboutSerial"; text: page.a.serial; Layout.fillWidth: true }
                 Label { text: qsTr("Protocol"); color: win.p.muted }
                 Label { text: page.a.protocol; Layout.fillWidth: true }
                 Label { text: qsTr("Configuration"); color: win.p.muted }

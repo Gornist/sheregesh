@@ -31,6 +31,11 @@
     </message>
     <message>
         <location filename="../qml/AboutPage.qml" line="40" />
+        <source>Serial number</source>
+        <translation>Серийный номер</translation>
+    </message>
+    <message>
+        <location filename="../qml/AboutPage.qml" line="40" />
         <source>Protocol</source>
         <translation>Протокол</translation>
     </message>

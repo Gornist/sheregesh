@@ -80,7 +80,10 @@ def _about_static():
             return subprocess.run(argv, capture_output=True, text=True, timeout=2, **kw).stdout
         except (OSError, subprocess.SubprocessError):
             return ""
-    build = run(["git", "rev-parse", "--short", "HEAD"], cwd=Path(__file__).parent).strip() or "—"
+    from sheregesh import info as devinfo
+    img, rel = devinfo.image(), devinfo.release()     # REQ-SYS-007: сборка образа и DEV-выпуск (на плате git нет)
+    build = " · ".join(x for x in (f"{img['ota_version']} {img['commit']}".strip(), rel) if x) or \
+        run(["git", "rev-parse", "--short", "HEAD"], cwd=Path(__file__).parent).strip() or "—"
     try:
         gst_version = run(["gst-launch-1.0", "--version"]).splitlines()[0].split()[-1]
     except IndexError:
@@ -89,7 +92,8 @@ def _about_static():
         codec = gst.describe(gst.choose_codec())   # с фактическими элементами (проба S2-4)
     except Exception:                              # noqa: BLE001 — сведения, не работа видео
         codec = "—"
-    return {"build": build, "gstreamer": gst_version, "videoCodec": codec}
+    return {"build": build, "gstreamer": gst_version, "videoCodec": codec, "hardware": devinfo.hardware(),
+            "serial": devinfo.board()["serial"] or "—"}
 
 
 def _yaml(data: dict) -> str:
@@ -235,7 +239,7 @@ class Backend(QObject):
         self._ops.finished.connect(self._op_done)
         self._ops.busyChanged.connect(self.configBusyChanged)
         self.configChanged.connect(self.aboutChanged)       # ревизия и язык — тоже в about
-        self._about_static = {"build": "…", "gstreamer": "…", "videoCodec": "…"}
+        self._about_static = {"build": "…", "gstreamer": "…", "videoCodec": "…", "hardware": "…", "serial": "…"}
         self._aboutDone.connect(self._about_ready)
         self._timeDone.connect(lambda level, text: self.log(level, "time", text))
         threading.Thread(target=lambda: self._aboutDone.emit(_about_static()), name="about", daemon=True).start()
@@ -550,7 +554,7 @@ class Backend(QObject):
         return {"software": __version__, "protocol": PROTOCOL_VERSION, "build": st["build"],
                 "schema": self.schema.version, "revision": self._rev.id,
                 "device": self._rev.data["system.yaml"]["device_name"],
-                "hardware": "HW-1.0 Rev A (эмулятор, x86)" if self.lang == "ru" else "HW-1.0 Rev A (emulator, x86)",
+                "hardware": st["hardware"], "serial": st["serial"],
                 "platform": f"{platform.system()} {platform.machine()}, Python {platform.python_version()}",
                 "qt": f"Qt {qVersion()}, PySide6 {PYSIDE_VERSION}", "gstreamer": st["gstreamer"],
                 "videoCodec": st["videoCodec"], "catalog": len(CATALOG)}
