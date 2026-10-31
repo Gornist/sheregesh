@@ -50,7 +50,8 @@ ctl-loss «нет видео ≤ 3 с» на границе (2,7–3,2 с): пр
 PASS L4: TEST-SW-004, TEST-UPD-002, TEST-SYS-008, TEST-SW-003 — [stage-a-1](../acceptance/stage-a-1/REPORT.md);
 TEST-UPD-004 — откат на pi2 и pi1, «OTA: ROLLED_BACK» в разделе «Система». Слоты B обеих плат — `c0c509c`.
 PASS L4: TEST-SW-005 — [stage-a-2](../acceptance/stage-a-2/REPORT.md); паспорт устройства (SYS-007) на платах
-совпадает с образом и между сторонами; открыт только формат SemVer (вместе с REL-010).
+совпадает с образом и между сторонами; SemVer снаружи — sheregesh.semver (на платах — после раскатки).
+PASS: TEST-CFG-001 (CHG-018), TEST-DOC-001 (REUSE 572/572, reuse lint в CI, лицензии зависимостей).
 
 ## Известные особенности разработки
 
