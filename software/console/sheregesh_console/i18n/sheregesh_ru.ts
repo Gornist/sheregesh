@@ -106,13 +106,13 @@
     </message>
     <message>
         <location filename="../qml/AboutPage.qml" line="83" />
-        <source>Scope of version 1.0</source>
-        <translation>Границы версии 1.0</translation>
+        <source>About the project</source>
+        <translation>О проекте</translation>
     </message>
     <message>
         <location filename="../qml/AboutPage.qml" line="87" />
-        <source>Laboratory prototype for safe testing with software emulators and synthetic data. It is not a means of controlling real aircraft and contains no radio control functions.</source>
-        <translation>Лабораторный прототип для безопасных испытаний с программными эмуляторами и синтетическими данными. Не является средством управления действующими летательными аппаратами и не содержит функций радиоуправления.</translation>
+        <source>Open platform of a console and a remote unit for robots, rovers and laboratory platforms: secure control link, video over SRTP, control output over CRSF (ELRS). Laboratory version: tested with emulators and on the lab stand.</source>
+        <translation>Открытая платформа пульта и удалённого блока для роботов, роверов и лабораторных платформ: защищённый канал управления, видео по SRTP, выход управления CRSF (ELRS). Лабораторная версия: испытания с эмуляторами и на стенде.</translation>
     </message>
     <message>
         <location filename="../qml/AboutPage.qml" line="92" />

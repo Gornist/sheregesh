@@ -82,11 +82,11 @@ Item {
 
         Tile {
             objectName: "tileAboutBoundary"
-            title: qsTr("Scope of version 1.0")
+            title: qsTr("About the project")
             Layout.columnSpan: 2
             Layout.fillWidth: true
             Label {
-                text: qsTr("Laboratory prototype for safe testing with software emulators and synthetic data. It is not a means of controlling real aircraft and contains no radio control functions.")
+                text: qsTr("Open platform of a console and a remote unit for robots, rovers and laboratory platforms: secure control link, video over SRTP, control output over CRSF (ELRS). Laboratory version: tested with emulators and on the lab stand.")
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
