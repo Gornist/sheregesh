@@ -554,7 +554,7 @@ class Backend(QObject):
         return {"software": __version__, "protocol": PROTOCOL_VERSION, "build": st["build"],
                 "schema": self.schema.version, "revision": self._rev.id,
                 "device": self._rev.data["system.yaml"]["device_name"],
-                "hardware": st["hardware"], "serial": st["serial"],
+                "hardware": st.get("hardware", "…"), "serial": st.get("serial", "…"),
                 "platform": f"{platform.system()} {platform.machine()}, Python {platform.python_version()}",
                 "qt": f"Qt {qVersion()}, PySide6 {PYSIDE_VERSION}", "gstreamer": st["gstreamer"],
                 "videoCodec": st["videoCodec"], "catalog": len(CATALOG)}
