@@ -113,6 +113,7 @@ class VideoReceiver(QObject):
         self._fps_window = []
         # off | waiting | playing | no-video | restarting | unavailable | no-device | unsupported
         self._state = "off"
+        self._state_at = time.time()       # время смены состояния (часы платы) — замер «нет видео» по событию, не опросом
         self._error = ""
         self._restarts = 0                 # статистика: перезапусков всего
         self._backoff = 0                  # перезапусков подряд без восстановления — для паузы перед повтором
@@ -250,7 +251,7 @@ class VideoReceiver(QObject):
         with self._lock:
             recent = [t for t in self._decoded if now - t <= 5.0]
             frames = self._seq
-        out = {"state": self._state, "codec": self._codec, "frames_decoded": frames, "restarts": self._restarts,
+        out = {"state": self._state, "state_at": round(self._state_at, 3), "codec": self._codec, "frames_decoded": frames, "restarts": self._restarts,
                "decoded_fps_5s": round(len(recent) / 5.0, 1) if recent else 0.0, "output": f"{FRAME_W}x{FRAME_H}",
                "error": self._error, "mode": "remote-srtp" if self._service else
                "local-input" if self._local else ("local" if self._codec else "off"),
@@ -481,6 +482,8 @@ class VideoReceiver(QObject):
 
     # ---------- основной поток: таймер ----------
     def _set_state(self, state):
+        if state != self._state:
+            self._state_at = time.time()
         self._state = state
         self._last_notify = time.monotonic()
         self.stateChanged.emit()

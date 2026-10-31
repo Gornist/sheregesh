@@ -157,6 +157,30 @@ def test_service_rgbx_path_spawns_gst_and_reads_frames(qapp, monkeypatch, tmp_pa
     assert os.path.exists(sock)
 
 
+def test_state_at_marks_no_video_when_frames_stop(qapp, monkeypatch, tmp_path):
+    """video.state_at — время смены состояния по часам платы: проба стенда меряет «нет видео» по этой метке, а не
+    опросом ui-state.json. Кадры обрываются → «no-video» через NO_VIDEO_AFTER_S после последнего кадра."""
+    writer = ("import sys, time\n"
+              "frame = b'\\x10' * (640 * 360 * 4)\n"
+              "for _ in range(20):\n"
+              "    sys.stdout.buffer.write(frame); sys.stdout.buffer.flush(); time.sleep(0.05)\n"
+              "time.sleep(60)\n")
+    rx, _ = _receiver(monkeypatch, tmp_path, FakeGl(ready=False), cmd=[sys.executable, "-c", writer])
+    rx.configure_service("h264", _sock(tmp_path), _stats)
+    try:
+        assert wait_until(lambda: rx.state == "playing", 5), rx.state
+        playing_at = rx.metrics()["state_at"]
+        assert abs(playing_at - time.time()) < 2.0
+        assert wait_until(lambda: rx.state == "no-video", 6), rx.state
+        m = rx.metrics()
+        gap = m["state_at"] - playing_at          # ~1 с кадров + NO_VIDEO_AFTER_S
+        assert V.NO_VIDEO_AFTER_S <= gap <= V.NO_VIDEO_AFTER_S + 2.0, gap
+        pump(0.3)
+        assert rx.metrics()["state_at"] == m["state_at"]          # метка меняется только при смене состояния
+    finally:
+        rx.stop()
+
+
 def test_service_switches_between_gl_and_rgbx(qapp, monkeypatch, tmp_path):
     """Окно появилось — перезапуск на путь GL (процесс RGBx остановлен); окно пропало — снова RGBx."""
     gl = FakeGl(ready=False)

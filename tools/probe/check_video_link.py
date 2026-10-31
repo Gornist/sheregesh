@@ -14,8 +14,13 @@ remote-srtp (ui-state.json), состояние служб — state.json rx н�
                видео; сравнение с режимом без видео (pi1 3,0 % / 297 МБ, pi2 0,5 % / 149 МБ)
   telemetry    канал управления под нагрузкой видео: heartbeat/с, события, RTT, разрывы seq
   no-plain     на платах нет TCP-видеосервера (порт 7444 не слушается) и UDP прежних незашифрованных портов видео
-  ctl-loss     пауза службы блока 8 с: «нет видео» ≤ 3 с, затем потеря управления → видео выключено; после —
-               видео снова ≤ 10 с в новом сеансе SRTP (REQ-SW-002)
+  stream-loss  обрыв потока: пауза sheregesh-video-tx блока 6 с при живом управлении: «нет видео» в GUI ≤ 3 с, после
+               возобновления видео снова ≤ 10 с (REQ-SW-002 п. 3)
+  ctl-loss     потеря управления: пауза sheregesh-remote-net 8 с (SRTP-поток при этом идёт): видео выключено не позже
+               тайм-аута heartbeat + 1 с; после — видео снова ≤ 10 с в новом сеансе SRTP
+Время обоих сценариев — по событию: момент сигнала — часы блока (date перед kill), момент «нет видео»/возврата —
+метка смены состояния видео пульта (ui-state.json video.state_at); часы плат синхронизированы NTP (расхождение —
+доли мс, time-sync). Без state_at (старый пульт) — верхняя оценка опросом.
   restart      штатный перезапуск sheregesh-remote-net: управление и видео (новый сеанс SRTP) восстанавливаются
   leftovers    после испытаний: службы rx и tx в одном сеансе, не больше одного декодера GUI на пульте, сирот нет,
                на блоке нет gst-launch прежнего видеоканала
@@ -288,39 +293,112 @@ def _sessions(ch):
     return vs(ch).get("session") or ""
 
 
-def sc_ctl_loss(ch, rh, pause=8):
-    """REQ-SW-002 п. 3: «нет видео» в GUI ≤ 3 с после обрыва (состояние приёмника не «playing»), видео снова ≤ 10 с
-    после возобновления. Выключение видео по потере управления (mode «off») наступает по тайм-ауту heartbeat канала
-    управления (link.yaml, 3 с) и критерием «нет видео» не является — записывается отдельно.
-    Замер — с момента, когда ssh с kill -STOP вернулся (до него — установление ssh до pi2), до первого чтения
-    ui-state.json с не-«playing»; дамп пишется раз в 1 с, поэтому значение — верхняя оценка (+≤ 1 с)."""
+HB_TIMEOUT_S = 3.0          # тайм-аут heartbeat канала управления (link.yaml)
+
+
+def _signal(rh, pid, sig):
+    """Сигнал процессу блока; время — часы блока непосредственно перед kill (None — не удалось)."""
+    out = ssh(rh, f"date +%s.%N; kill -{sig} {pid} && echo ok").split()
+    try:
+        return float(out[0]) if out[-1:] == ["ok"] else None
+    except (ValueError, IndexError):
+        return None
+
+
+def _until(ch, pred, t_ref, timeout, step=0.2):
+    """Ждать состояния видео пульта pred(video); время от t_ref (часы блока) до события — по video.state_at, иначе
+    опросом (верхняя оценка). → (секунды | None, способ, video)."""
+    t0, v = time.monotonic(), {}
+    while time.monotonic() - t0 < timeout:
+        v = cv(ch)
+        if pred(v):
+            at = v.get("state_at")
+            if isinstance(at, (int, float)) and t_ref is not None:
+                return round(max(0.0, at - t_ref), 3), "event", v
+            return round(time.monotonic() - t0, 2), "poll", v
+        time.sleep(step)
+    return None, None, v
+
+
+def _pid(rh, unit):
+    pid = ssh(rh, f"systemctl show -p MainPID --value {unit}")
+    return pid if pid.isdigit() and pid != "0" else None
+
+
+def _not_playing(v):
+    return v.get("state") not in (None, "playing")
+
+
+def sc_stream_loss(ch, rh, pause=6):
+    """REQ-SW-002 п. 3: обрыв потока (служба tx блока остановлена SIGSTOP, канал управления жив): «нет видео» в GUI
+    ≤ 3 с, видео снова ≤ 10 с после возобновления потока."""
     if not wait(playing(ch), 60):
         return {"verdict": "ERROR", "reason": "нет видео до сценария"}
-    pid = ssh(rh, "systemctl show -p MainPID --value sheregesh-remote-net")
-    if not pid.isdigit() or pid == "0":
-        return {"verdict": "ERROR", "reason": f"нет PID блока: {pid!r}"}
-    n0 = _sessions(ch)
-    t0 = time.monotonic()
+    pid = _pid(rh, "sheregesh-video-tx")
+    if pid is None:
+        return {"verdict": "ERROR", "reason": "нет PID sheregesh-video-tx"}
+    t_stop = t_cont = None
     try:
-        ssh(rh, f"kill -STOP {pid}")
+        t_stop = _signal(rh, pid, "STOP")
+        if t_stop is None:
+            return {"verdict": "ERROR", "reason": "SIGSTOP не доставлен"}
         t0 = time.monotonic()
-        no_video = wait(lambda: cv(ch).get("state") not in (None, "playing"), pause, 0.2)
-        video_off = wait(lambda: cv(ch).get("mode") == "off", pause + 10, 0.5)
-        video_off = None if video_off is None else round(time.monotonic() - t0, 2)
-        during = cv(ch)
+        no_video, how, during = _until(ch, _not_playing, t_stop, pause, 0.2)
+        ctl = jread(ch, C_STATUS).get("phase")
         time.sleep(max(0.0, pause - (time.monotonic() - t0)))
     finally:
-        resumed = ssh(rh, f"kill -CONT {pid} 2>/dev/null && echo resumed || echo gone")
-    back = wait(lambda: playing(ch)() and _sessions(ch) not in ("", n0), 90, 0.5)
-    res = {"pause_s": pause, "no_video_after_s": no_video, "video_off_after_s": video_off,
+        if t_stop is not None:
+            t_cont = _signal(rh, pid, "CONT")
+    back, how_back, _ = _until(ch, lambda v: srtp(v) and v.get("state") == "playing", t_cont, 60, 0.3)
+    res = {"pause_s": pause, "no_video_after_s": no_video, "no_video_by": how, "video_back_after_resume_s": back,
+           "back_by": how_back, "control_during": ctl,
            "console_video_during": {k: during.get(k) for k in ("mode", "state", "error")},
-           "video_back_after_resume_s": back, "sessions_before": n0, "sessions_after": _sessions(ch),
-           "final_cont": resumed, "criteria": {"no_video_after_s": "<= 3.0 (REQ-SW-002)",
-                                               "video_back_after_resume_s": "<= 10.0 (REQ-SW-002)"},
+           "tx_after": ssh(rh, "systemctl show -p ActiveState,NRestarts --value sheregesh-video-tx").split(),
+           "criteria": {"no_video_after_s": "<= 3.0 (REQ-SW-002)", "video_back_after_resume_s": "<= 10.0 (REQ-SW-002)",
+                        "control_during": "connected (обрыв потока, не управления)"}}
+    if t_cont is None:
+        return {**res, "verdict": "ERROR", "abort": True, "reason": "возобновление tx не подтверждено"}
+    ok = (no_video is not None and no_video <= 3.0 and back is not None and back <= 10.0 and ctl == "connected")
+    return {**res, "verdict": "PASS" if ok else "FAIL"}
+
+
+def sc_ctl_loss(ch, rh, pause=8):
+    """Потеря управления (sheregesh-remote-net остановлена SIGSTOP; SRTP-поток идёт отдельной службой tx): пульт
+    выключает видео по тайм-ауту heartbeat — не позже HB_TIMEOUT_S + 1 с; после возобновления видео снова ≤ 10 с в
+    новом сеансе SRTP. Обрыв потока (REQ-SW-002 п. 3) — сценарий stream-loss: здесь «нет видео» наступает только
+    вместе с выключением и меряет тайм-аут heartbeat."""
+    if not wait(playing(ch), 60):
+        return {"verdict": "ERROR", "reason": "нет видео до сценария"}
+    pid = _pid(rh, "sheregesh-remote-net")
+    if pid is None:
+        return {"verdict": "ERROR", "reason": "нет PID блока"}
+    n0 = _sessions(ch)
+    t_stop = t_cont = None
+    try:
+        t_stop = _signal(rh, pid, "STOP")
+        if t_stop is None:
+            return {"verdict": "ERROR", "reason": "SIGSTOP не доставлен"}
+        t0 = time.monotonic()
+        no_video, how, _ = _until(ch, _not_playing, t_stop, pause + 5, 0.2)
+        video_off, how_off, during = _until(ch, lambda v: v.get("mode") == "off", t_stop, pause + 10, 0.3)
+        time.sleep(max(0.0, pause - (time.monotonic() - t0)))
+    finally:
+        if t_stop is not None:
+            t_cont = _signal(rh, pid, "CONT")
+    back, how_back, _ = _until(ch, lambda v: srtp(v) and v.get("state") == "playing" and _sessions(ch) not in ("", n0),
+                               t_cont, 90, 0.5)
+    limit = HB_TIMEOUT_S + 1.0
+    res = {"pause_s": pause, "heartbeat_timeout_s": HB_TIMEOUT_S, "no_video_after_s": no_video, "no_video_by": how,
+           "video_off_after_s": video_off, "video_off_by": how_off,
+           "console_video_during": {k: during.get(k) for k in ("mode", "state", "error")},
+           "video_back_after_resume_s": back, "back_by": how_back, "sessions_before": n0,
+           "sessions_after": _sessions(ch),
+           "criteria": {"video_off_after_s": f"<= {limit} (тайм-аут heartbeat + 1 с)",
+                        "video_back_after_resume_s": "<= 10.0"},
            "remote_log": journal(rh, "sheregesh-remote-net", time.time() - 120, "video|session")}
-    if resumed not in ("resumed", "gone"):
+    if t_cont is None:
         return {**res, "verdict": "ERROR", "abort": True, "reason": "возобновление блока не подтверждено"}
-    ok = no_video is not None and no_video <= 3.0 and video_off is not None and back is not None and back <= 10.0
+    ok = video_off is not None and video_off <= limit and back is not None and back <= 10.0
     return {**res, "verdict": "PASS" if ok else "FAIL"}
 
 
@@ -359,7 +437,7 @@ def sc_leftovers(ch, rh):
 
 
 SCENARIOS = {"session": sc_session, "stream": sc_stream, "latency": sc_latency, "resources": sc_resources,
-             "telemetry": sc_telemetry, "no-plain": sc_no_plain, "ctl-loss": sc_ctl_loss, "restart": sc_restart,
+             "telemetry": sc_telemetry, "no-plain": sc_no_plain, "stream-loss": sc_stream_loss, "ctl-loss": sc_ctl_loss, "restart": sc_restart,
              "leftovers": sc_leftovers}
 
 
