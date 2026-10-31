@@ -60,6 +60,8 @@ def scan_secrets(files):
 
 
 DECISIONS = ROOT / "docs/security/history-findings.md"
+# Сам сканер и файл решений описывают шаблоны и находки — в них совпадения по определению
+HISTORY_SKIP = ("tools/security/scan.py", "docs/security/history-findings.md")
 
 
 def history_blobs(ref):
@@ -86,7 +88,7 @@ def scan_history(ref):
         size = int(header[2]) if len(header) == 3 else 0
         data = proc.stdout.read(size)
         proc.stdout.read(1)
-        if len(header) != 3 or header[1] != b"blob" or b"\0" in data[:4096] or path == "tools/security/scan.py":
+        if len(header) != 3 or header[1] != b"blob" or b"\0" in data[:4096] or path in HISTORY_SKIP:
             continue
         text = data.decode("utf-8", errors="replace")
         for name, pat in SECRET_PATTERNS:
