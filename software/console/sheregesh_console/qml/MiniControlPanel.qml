@@ -10,7 +10,6 @@ ColumnLayout {
     spacing: 8 * win.k
     readonly property var sv: backend.sticks
     readonly property var mv: backend.module
-    property bool confirming: false
 
     function stateText() {
         switch (sv.support) {
@@ -73,29 +72,33 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.preferredHeight: 44 * win.k
         onClicked: {
-            if (sv.enabled) { sv.setEnabled(false, false); panel.confirming = false }
-            else panel.confirming = !panel.confirming
+            if (sv.enabled) sv.setEnabled(false, false)        // выключение — сразу, без подтверждения (безопасно)
+            else sticksDialog.open()
         }
     }
-    ColumnLayout {
-        visible: panel.confirming && !sv.enabled
-        spacing: 6 * win.k
-        Layout.fillWidth: true
+    Dialog {                                    // REQ-SYS-009: включение — только в отдельном диалоге подтверждения
+        id: sticksDialog
+        objectName: "miniSticksDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        width: Math.min(640 * win.k, win.width - 32 * win.k)
+        height: 260 * win.k                     // явная высота: иначе цикл привязок implicitHeight в Fusion Dialog
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        title: qsTr("Enable command transmission?")
+        onOpened: standardButton(Dialog.Ok).forceActiveFocus()   // без сенсора: Enter — да, Esc — нет
+        Shortcut {
+            sequences: ["Return", "Enter"]
+            enabled: sticksDialog.opened
+            onActivated: sticksDialog.accept()
+        }
         Label {
+            objectName: "miniSticksQuestion"
             text: qsTr("Axes and buttons are sent to the remote unit 50 times per second; without fresh commands for %1 ms it goes to FAILSAFE.").arg(sv.timeoutMs)
-            font.pixelSize: 12 * win.k
             wrapMode: Text.WordWrap
-            Layout.fillWidth: true
+            width: sticksDialog.availableWidth
         }
-        Button {
-            objectName: "miniSticksConfirm"
-            text: qsTr("Confirm: enable transmission")
-            highlighted: true
-            font.pixelSize: 14 * win.k
-            Layout.fillWidth: true
-            Layout.preferredHeight: 44 * win.k
-            onClicked: { sv.setEnabled(true, true); panel.confirming = false }
-        }
+        onAccepted: sv.setEnabled(true, true)
     }
     MiniRow {
         objectName: "miniControlState"

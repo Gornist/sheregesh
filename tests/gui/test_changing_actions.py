@@ -11,8 +11,8 @@
 Не изменяют устройство: backup и exportLogs (файл копии или журнала), validateForm, reload, refresh.
 
 1. Статический обход всех QML: каждый вызов действия каталога с подтверждением (confirmed = true) — только в
-   обработчике подтверждения: onAccepted диалога или кнопка второго шага с objectName «…Confirm» (Minimal: выбор →
-   отдельная кнопка «Подтвердить»); на экранах только для чтения вызовов нет вовсе.
+   onAccepted отдельного диалога подтверждения (классический интерфейс и Minimal); на экранах только для чтения
+   вызовов нет вовсе.
 2. Без подтверждения каждый метод каталога отказывает и ничего не меняет.
 3. Отмена диалога подтверждения не меняет активную ревизию конфигурации.
 """
@@ -61,9 +61,13 @@ def calls():
 
 
 def confirm_context(lines, n):
-    """Вызов внутри onAccepted (диалог) или кнопки второго шага с objectName «…Confirm» — ближайшие 12 строк выше."""
-    above = "\n".join(lines[max(0, n - 12):n + 1])
-    return "onAccepted" in above or re.search(r'objectName:\s*"\w*Confirm"', above) is not None
+    """Вызов внутри onAccepted диалога: обработчик на этой строке или выше в том же блоке (до 12 строк)."""
+    for line in reversed(lines[max(0, n - 12):n + 1]):
+        if "onAccepted" in line:
+            return True
+        if re.match(r"\s*(onClicked|onActivated|onTriggered|onPressed|function)\b", line):
+            return False
+    return False
 
 
 @pytest.mark.test_id("TEST-SYS-009")

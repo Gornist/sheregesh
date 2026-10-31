@@ -13,7 +13,6 @@ ColumnLayout {
     readonly property var sources: backend.videoSources
     readonly property var sel: backend.videoSelection
     readonly property bool switching: sel.state === "switching"
-    property string pick: ""                 // источник, ожидающий подтверждения
 
     Label { text: qsTr("Video source"); color: win.p.muted; font.pixelSize: 11 * win.k; font.bold: true }
     Repeater {
@@ -28,11 +27,16 @@ ColumnLayout {
             enabled: selectable
             Layout.fillWidth: true
             Layout.preferredHeight: 44 * win.k
-            onClicked: panel.pick = panel.pick === modelData.id ? "" : modelData.id
+            onClicked: {                     // REQ-SYS-009: переключение — только в отдельном диалоге подтверждения
+                sourceDialog.sourceId = modelData.id
+                sourceDialog.sourceName = modelData.name
+                sourceDialog.sourceInput = win.videoInputText(modelData.input)
+                sourceDialog.open()
+            }
             background: Rectangle {
                 radius: 5 * win.k
                 color: chip.modelData.active ? Qt.darker(win.p.ok, 2.4) : win.p.bg
-                border.color: chip.modelData.active ? win.p.ok : panel.pick === chip.modelData.id ? win.p.accent : win.p.border
+                border.color: chip.modelData.active ? win.p.ok : sourceDialog.opened && sourceDialog.sourceId === chip.modelData.id ? win.p.accent : win.p.border
                 opacity: chip.modelData.available ? 1 : 0.5
             }
             contentItem: RowLayout {
@@ -55,15 +59,33 @@ ColumnLayout {
             }
         }
     }
-    Button {
-        objectName: "miniSourceConfirm"
-        visible: panel.pick !== ""
-        text: qsTr("Switch to «%1»").arg((panel.sources.find(function (s) { return s.id === panel.pick }) || {}).name || "")
-        highlighted: true
-        font.pixelSize: 14 * win.k
-        Layout.fillWidth: true
-        Layout.preferredHeight: 44 * win.k
-        onClicked: { backend.selectVideoSource(panel.pick, true); panel.pick = "" }
+    Dialog {
+        id: sourceDialog
+        objectName: "miniSourceDialog"
+        property string sourceId
+        property string sourceName
+        property string sourceInput
+        parent: Overlay.overlay
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        width: Math.min(640 * win.k, win.width - 32 * win.k)
+        height: 260 * win.k                     // явная высота: иначе цикл привязок implicitHeight в Fusion Dialog
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        title: qsTr("Switch video source?")
+        onOpened: standardButton(Dialog.Ok).forceActiveFocus()   // без сенсора: Enter — да, Esc — нет
+        Shortcut {
+            sequences: ["Return", "Enter"]
+            enabled: sourceDialog.opened
+            onActivated: sourceDialog.accept()
+        }
+        Label {
+            objectName: "miniSourceQuestion"
+            text: qsTr("The remote unit will switch to «%1» (%2). The current picture is interrupted until the new source starts.")
+                  .arg(sourceDialog.sourceName).arg(sourceDialog.sourceInput)
+            wrapMode: Text.WordWrap
+            width: sourceDialog.availableWidth
+        }
+        onAccepted: backend.selectVideoSource(sourceId, true)
     }
     Label {
         visible: panel.sources.length === 0

@@ -979,11 +979,6 @@
         <translation>Оси и кнопки уходят на блок 50 раз в секунду; без свежих команд дольше %1 мс блок переходит в FAILSAFE.</translation>
     </message>
     <message>
-        <location filename="../qml/MiniControlPanel.qml" line="92" />
-        <source>Confirm: enable transmission</source>
-        <translation>Подтвердить: включить передачу</translation>
-    </message>
-    <message>
         <location filename="../qml/MiniControlPanel.qml" line="102" />
         <source>Remote unit</source>
         <translation>Удалённый блок</translation>
@@ -1012,6 +1007,11 @@
         <location filename="../qml/MiniControlPanel.qml" line="155" />
         <source>Control page</source>
         <translation>Страница «Управление»</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniControlPanel.qml" line="88" />
+        <source>Enable command transmission?</source>
+        <translation>Включить передачу команд?</translation>
     </message>
 </context>
 <context>
@@ -1354,11 +1354,6 @@
         <translation>недоступен</translation>
     </message>
     <message>
-        <location filename="../qml/MiniVideoPanel.qml" line="61" />
-        <source>Switch to «%1»</source>
-        <translation>Переключить на «%1»</translation>
-    </message>
-    <message>
         <location filename="../qml/MiniVideoPanel.qml" line="70" />
         <source>The remote unit does not report a list of sources.</source>
         <translation>Блок не сообщает список источников.</translation>
@@ -1412,6 +1407,16 @@
         <location filename="../qml/MiniVideoPanel.qml" line="113" />
         <source>Video page</source>
         <translation>Страница «Видео»</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="72" />
+        <source>Switch video source?</source>
+        <translation>Переключить источник видео?</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="80" />
+        <source>The remote unit will switch to «%1» (%2). The current picture is interrupted until the new source starts.</source>
+        <translation>Удалённый блок переключится на «%1» (%2). Текущее изображение прервётся, пока не запустится новый источник.</translation>
     </message>
 </context>
 <context>

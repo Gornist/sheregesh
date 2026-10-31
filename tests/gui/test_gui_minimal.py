@@ -219,8 +219,16 @@ def test_gui06_video_source_switch_needs_confirmation(ui):
     tap(ui, "nav_video")
     assert not wfind(ui, "miniSource0").property("enabled"), "активный источник не выбирается повторно"
     tap(ui, "miniSource1")
-    assert peer.calls == [] and wfind(ui, "miniSourceConfirm").property("visible"), "выбор — только с подтверждением"
-    tap(ui, "miniSourceConfirm")
+    question = wfind(ui, "miniSourceQuestion")            # текст диалога подтверждения (REQ-SYS-009)
+    assert wait_until(lambda: question.isVisible(), 3) and "«" in question.property("text")
+    assert peer.calls == []
+    QTest.keyClick(ui.window, Qt.Key_Escape)               # без сенсора: Esc — отмена, ничего не переключается
+    assert wait_until(lambda: not question.isVisible(), 3)
+    pump(200)
+    assert peer.calls == []
+    tap(ui, "miniSource1")
+    assert wait_until(lambda: wfind(ui, "miniSourceQuestion").isVisible(), 3)
+    QTest.keyClick(ui.window, Qt.Key_Return)               # Enter — подтверждение
     assert wait_until(lambda: peer.calls == [SELECT_SOURCES[1]["id"]], 5), peer.calls
     b.videoops.update()
     assert wait_until(lambda: b.videoSource.get("input") == "hdmi", 5), b.videoSource
@@ -342,3 +350,24 @@ def test_gui_diagnostics_lists_mandatory_services_of_both_devices(ui):
     rx, tx = find(ui, "miniSvc_video-rx"), find(ui, "miniSvc_video-tx")
     assert rx.property("label") == "Служба пульта: video-rx" and rx.property("value") == "active · перезапусков 0"
     assert tx.property("label") == "Служба блока: video-tx" and tx.property("value") == "failed · перезапусков 2"
+
+
+@pytest.mark.test_id("TEST-SYS-009")
+def test_sticks_transmission_enabled_only_through_confirmation_dialog(ui):
+    """Включение передачи — отдельный диалог: Esc — передача не включается, Enter — включается; выключение — сразу."""
+    sv = ui.backend.sticks
+    tap(ui, "nav_control")
+    assert wait_until(lambda: wfind(ui, "miniSticksToggle").property("enabled"), 3), sv.support
+    tap(ui, "miniSticksToggle")
+    question = wfind(ui, "miniSticksQuestion")
+    assert wait_until(lambda: question.isVisible(), 3) and not sv.enabled
+    QTest.keyClick(ui.window, Qt.Key_Escape)
+    assert wait_until(lambda: not question.isVisible(), 3)
+    pump(200)
+    assert not sv.enabled
+    tap(ui, "miniSticksToggle")
+    assert wait_until(lambda: wfind(ui, "miniSticksQuestion").isVisible(), 3)
+    QTest.keyClick(ui.window, Qt.Key_Return)
+    assert wait_until(lambda: sv.enabled, 3)
+    tap(ui, "miniSticksToggle")                            # выключение — без диалога
+    assert wait_until(lambda: not sv.enabled, 3)
