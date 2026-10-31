@@ -48,6 +48,7 @@ DEPENDS = [
 # Службы приложения запускаются через launcher (S3.1-DEPLOY): проверенный выпуск DEV deploy из
 # /var/lib/sheregesh-deploy или заводской код /usr/lib/sheregesh. Системные команды — всегда из /usr.
 LAUNCHER = f"/{PREFIX}/software/sheregesh/deploy/launcher.py"
+MANUAL_DST = "usr/share/doc/sheregesh/manual"
 LAUNCHED = {
     "usr/bin/sheregesh-console": "sheregesh_console",
     "usr/bin/sheregesh-remote-emu": "sheregesh_remote",
@@ -169,7 +170,15 @@ def build_tree(stage: Path):
         shutil.copyfile(nft, dst)
     info = stage / "usr/share/sheregesh/build.json"
     info.parent.mkdir(parents=True, exist_ok=True)
-    info.write_text(json.dumps(build_info(), ensure_ascii=False, indent=1) + "\n")
+    binfo = build_info()
+    info.write_text(json.dumps(binfo, ensure_ascii=False, indent=1) + "\n")
+    # Руководство RU/EN офлайн (REQ-DOC-004): версия документации — версия ПО пакета
+    for p in (ROOT / "tools/docs", ROOT / "software"):
+        if str(p) not in sys.path:
+            sys.path.insert(0, str(p))
+    import manual
+    from sheregesh import __version__, semver
+    manual.build(stage / MANUAL_DST, semver(__version__), binfo.get("commit", ""))
     for conf in sorted(TMPFILES.glob("*.conf")):
         dst = stage / "usr/lib/tmpfiles.d" / conf.name
         dst.parent.mkdir(parents=True, exist_ok=True)
