@@ -20,7 +20,7 @@ def test_languages_have_same_pages_and_sections():
     for lang in manual.LANGS:
         for page in manual.PAGES:
             text = (manual.SRC / lang / f"{page}.md").read_text(encoding="utf-8")
-            assert text.count("\n## ") >= 3 and "SPDX-License-Identifier: CC-BY-SA-4.0" in text
+            assert text.count("\n## ") >= 3 and ("SPDX-License-" + "Identifier: CC-BY-SA-4.0") in text   # не тег REUSE
 
 
 def test_check_reports_missing_and_different_sections(tmp_path, monkeypatch):
