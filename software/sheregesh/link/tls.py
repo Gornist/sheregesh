@@ -53,7 +53,7 @@ class LinkConfig:
     dir: Path
     port: int = 7443
     video_port: int = 7444
-    video: bool = True                  # защищённый видеоканал (S3.1-VIDEO, ADR-0011)
+    video: bool = True                  # видео блока (SRTP через службы видео, ADR-0016); false — без видео
     peer_hosts: tuple = ()
     discover: str | None = None        # "auto" — подсеть eth0; CIDR — явно; None — не искать
     source: Path | None = field(default=None, compare=False)

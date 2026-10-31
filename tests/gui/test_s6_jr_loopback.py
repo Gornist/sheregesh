@@ -34,15 +34,6 @@ import pytest
 from procs import ENV, free_port
 
 ROOT = Path(__file__).resolve().parents[2]
-pytest.importorskip("sheregesh.module.wire", reason="подсистема модуля (агент B) ещё не готова")
-pytest.importorskip("sheregesh_console.module", reason="ModuleView пульта (агент C) ещё не готов")
-if not (ROOT / "software/sheregesh/link/modulectl.py").exists():
-    pytest.skip("modulectl (агент B) ещё не готов", allow_module_level=True)
-from sheregesh import PROTOCOL_VERSION  # noqa: E402
-
-if tuple(map(int, PROTOCOL_VERSION.split("."))) < (1, 3):
-    pytest.skip(f"протокол {PROTOCOL_VERSION} < 1.3", allow_module_level=True)
-
 sys.path.insert(0, str(ROOT / "tools/probe"))
 sys.path.insert(0, str(ROOT / "tools/deploy/ota-check"))
 import s6_jr_accept as J  # noqa: E402

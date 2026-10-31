@@ -81,8 +81,9 @@ def test_ports_judgement():
                  "udp 127.0.0.53:53", "tcp 0.0.0.0:7443"]
     assert cl.judge_ports("remote", listening, [22, 7443]) == []
     assert cl.judge_ports("console", listening, [22]) == ["tcp 0.0.0.0:7443"]        # пульт не слушает 7443
-    assert cl.judge_ports("remote", [*listening, "udp6 :::7444"], [22, 7443, 7444]) == ["udp6 :::7444"]   # UDP видео нет
-    assert cl.judge_ports("remote", [*listening, "tcp 0.0.0.0:7444"], [22, 7443, 7444]) == []           # TLS-видео
+    assert cl.judge_ports("remote", [*listening, "udp6 :::7444"], [22, 7443]) == ["udp6 :::7444"]   # UDP видео нет
+    assert cl.judge_ports("remote", [*listening, "tcp 0.0.0.0:7444"], [22, 7443, 7444]) == \
+        ["tcp 0.0.0.0:7444", "lan tcp 7444"]                                           # TLS-видео удалено
     assert cl.judge_ports("console", ["tcp 0.0.0.0:7444"], [7444]) == ["tcp 0.0.0.0:7444", "lan tcp 7444"]
 
 

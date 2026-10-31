@@ -1,8 +1,8 @@
 # Шерегеш 1.0
 
-Открытая воспроизводимая DIY-платформа для роботов, роверов и лабораторных стендов: **пульт** и **удалённый блок** на Raspberry Pi 4B, связанные проводным Ethernet. Для разработки и испытаний без оборудования есть программные эмуляторы и синтетические данные.
+Открытая воспроизводимая DIY-платформа для роботов, роверов и лабораторных стендов: **пульт** и **удалённый блок** на Raspberry Pi 4B. Канал управления — SHRG-LAB поверх TLS 1.3 с взаимной аутентификацией, видео — SRTP от входа блока (HDMI/USB-захват, CVBS, RTSP) к пульту, выход управления — CRSF на модуль ELRS. Для разработки и испытаний без оборудования есть программные эмуляторы.
 
-**Статус на 2026-10-27:** пульт Minimal, ввод стиков и CRSF с эмулятором ELRS, OTA A/B, GL-путь и отдельные видеослужбы SRTP/UDP с резервом TLS проверялись на стенде. Физические отключения Ethernet — PASS; искусственные потери и длительный аппаратный прогон остаются открытыми. Релизный гейт — NO-GO.
+**Статус:** на стенде проверены пульт Minimal, стики и CRSF с эмулятором ELRS, видео SRTP (HDMI 1280×720@60, «захват → декодирован» ≈ 43 мс), OTA A/B с откатом, службы и события в диагностике; потери и перестановка пакетов — в контейнере под tc netem. Железо (корпуса, питание, дисплей) отложено до конца программной части. Релизный гейт — NO-GO. Подробно — [состояние проекта](docs/development/PROJECT-STATE.md).
 
 Точка входа для разработки: [AGENTS.md](AGENTS.md), [процесс](docs/development/AGENT-WORKFLOW.md), [последнее подтверждённое состояние](docs/development/PROJECT-STATE.md).
 
@@ -15,14 +15,15 @@
 | `docs/requirements/TEST-MATRIX.csv`, `CHANGELOG-REQ.md` | Генерируются из реестра |
 | `docs/tests/TEST-SPEC.md` | Спецификация испытаний (генерируется) |
 | `docs/hardware/` | Аппаратная спецификация Rev B, `PRE-CAD-CHECKLIST.md` |
-| `docs/adr/` | Архитектурные решения ADR-0001…0016 |
-| `docs/decisions/DECISIONS.md` | Журнал решений владельца (D1–D7) и Tech Lead |
+| `docs/adr/` | Архитектурные решения ADR-0001…0018 |
+| `docs/decisions/DECISIONS.md` | Журнал решений владельца (D1–D8) и Tech Lead |
 | `docs/audit/` | Первичный аудит и реестр проблем AUD-NNN с текущими статусами |
 | `docs/security/` | Политика работы с секретами |
 | `docs/baseline/rev-a/` | Неизменяемый комплект Rev A (SHA256SUMS) |
 | `hardware/bom/` | BOM v0.4 |
 | `tools/reqs/reqgen.py` | Проверка реестра, генерация, гейт релиза |
-| `tools/security/scan.py` | Базовые проверки секретов и границ объёма |
+| `tools/security/scan.py` | Секреты в файлах и во всей истории веток |
+| `tools/release/release.py` | Комплект выпуска: SBOM, сверка версий, отчёт проверки ([процедура](docs/development/RELEASE.md)) |
 
 ## Запуск на эмуляторах (x86/Linux, без Raspberry Pi)
 
@@ -41,8 +42,9 @@ tools/dev/sheregesh-emu --test                 # все автотесты (offs
 Системные пакеты (Ubuntu/Debian): `libegl1 libgl1 libxkbcommon0 libfontconfig1 gstreamer1.0-tools gstreamer1.0-plugins-base
 gstreamer1.0-plugins-good gstreamer1.0-libav util-linux`. Без GStreamer всё работает, кроме видео (экран «Видео» показывает «Видео недоступно»).
 
-Процессы связаны только через `127.0.0.1`: TCP 7700 (`SHEREGESH_PORT`) — диагностические данные, UDP 5600 (`SHEREGESH_VIDEO_PORT`) —
-синтетическое видео. Удалённый блок отправляет только синтетическое состояние; команд ОС, управления устройствами и радиоинтерфейсов нет.
+На эмуляторах процессы связаны через `127.0.0.1`: TCP 7700 (`SHEREGESH_PORT`) — канал управления, UDP 5600
+(`SHEREGESH_VIDEO_PORT`) — синтетическое видео; эмулятор блока отправляет синтетическое состояние. На платах — сетевой
+профиль (mTLS) и видеослужбы SRTP.
 
 Сценарий `--demo` (200 с модельного времени): штатное состояние → нагрев и переход на батарею → предупреждение TEMP-HIGH →
 пропадание видео (60–75 с) → молчание удалённого блока и потеря связи (95–115 с) → восстановление.
@@ -59,10 +61,13 @@ gstreamer1.0-plugins-good gstreamer1.0-libav util-linux`. Без GStreamer вс�
 | `software/sheregesh/config/` | Схема и хранилище ревизий конфигурации (ADR-0004) |
 | `software/sheregesh/hal.py`, `monitor.py`, `faults.py`, `protocol.py` | Интерфейсы оборудования, монитор состояния, каталог событий RU/EN, совместимость протокола |
 | `software/emulators/sheregesh_emulators/` | Эмуляторы и детерминированные сценарии, демонстрационный сценарий |
-| `software/sheregesh/link/` | Канал SHRG-LAB: кодек сообщений, клиент пульта |
-| `software/sheregesh/video.py`, `protocol.py`, `compat-matrix.yaml` | Конвейеры синтетического видео; правило совместимости (CHG-012) и матрица HW/SW |
-| `software/remote/sheregesh_remote/` | Отдельный процесс-эмулятор удалённого блока |
-| `software/console/sheregesh_console/` | GUI пульта: бэкенд, приём видео, 7 страниц QML, переводы |
+| `software/sheregesh/link/` | Канал SHRG-LAB: кодек сообщений, клиент пульта, mTLS |
+| `software/sheregesh/videosvc/`, `videoinput.py` | Видеослужбы SRTP (tx/rx), входы видео блока |
+| `software/sheregesh/crsf/`, `module/` | Выход CRSF и подсистема внешнего модуля (ELRS) |
+| `software/sheregesh/update/` | OTA A/B: агент обновления, слоты, откат |
+| `software/sheregesh/video.py`, `protocol.py`, `compat-matrix.yaml` | Конвейеры видео эмуляторов; правило совместимости (CHG-012) и матрица HW/SW |
+| `software/remote/sheregesh_remote/` | Агент удалённого блока (и его эмулятор) |
+| `software/console/sheregesh_console/` | GUI пульта: бэкенд, приём видео, интерфейсы Minimal и classic, переводы |
 | `tools/dev/` | Лаунчер, длительный прогон (`soak.py`), матрица снимков (`gallery.py`) |
 | `tests/unit`, `tests/system`, `tests/gui`, `tests/tools` | Автотесты L2/L3; отчёт `reports/evidence.json` по TEST-ID |
 

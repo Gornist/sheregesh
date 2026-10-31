@@ -222,11 +222,10 @@ def _decode(proto, addr):
     return f"{proto} {ip}:{int(port, 16)}"
 
 
-# 7444/tcp — защищённый видеоканал блока (S3.1-VIDEO, TLS 1.3 с взаимной аутентификацией, ADR-0011, резерв);
 # UDP 7444/7445 пульта и 7445 блока — видео SRTP/RTCP (ADR-0016, nftables: только адрес второй платы); 123 — chrony
 # (ADR-0017: пульт отвечает только блоку, блок — никому)
 ALLOWED = {"console": {"tcp": {22}, "udp": {68, 123, 546, 7444, 7445}},
-           "remote": {"tcp": {22, 7443, 7444}, "udp": {68, 123, 546, 7445}}}
+           "remote": {"tcp": {22, 7443}, "udp": {68, 123, 546, 7445}}}     # TCP 7444 (TLS-видео) удалён
 
 
 def judge_ports(role, listening, open_tcp, allowed=ALLOWED, video_owned=()):

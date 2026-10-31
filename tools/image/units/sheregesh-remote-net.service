@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Удалённый лабораторный блок — сетевой профиль SHRG-LAB (S3.1, ADR-0007): TLS 1.3 с взаимной аутентификацией,
-# только синтетические данные, без команд ОС и управления устройствами. Не запускается, пока не настроены роль,
+# Удалённый блок — сетевой профиль SHRG-LAB (S3.1, ADR-0007): TLS 1.3 с взаимной аутентификацией; видеовход
+# (службой sheregesh-video-tx), выход CRSF модуля; команд ОС от пульта нет. Не запускается, пока не настроены роль,
 # ключ, сертификат и CA стенда (sheregesh-link). Входящие — только частные и link-local сети (IPAddressAllow);
 # в приложении — только подсеть интерфейса и пульт с URI из link.json.
 [Unit]
-Description=Sheregesh: laboratory remote unit, network profile (mTLS, synthetic data)
+Description=Sheregesh: remote unit, network profile (mTLS)
 After=network.target local-fs.target
 RequiresMountsFor=/home/sheregesh-ui
 ConditionPathExists=/home/sheregesh-ui/.config/sheregesh/remote.role

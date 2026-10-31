@@ -8,6 +8,7 @@ sheregesh.crsf.frames), пути полей против настоящего wi
 
 Номера CR — критерии спринта, а не TEST-ID реестра: маркер test_id не ставится."""
 import argparse
+import importlib
 import json
 import os
 import re
@@ -59,14 +60,14 @@ def sticks(axes=AX, enabled=True):
 
 def live_ch(axes=AX):
     """Каналы, как их видит пульт в crsf.emu.ch: отсчёт эмулятора → шкала −1000…1000 (frames.crsf_to_axis)."""
-    F = pytest.importorskip("sheregesh.crsf.frames")
+    F = importlib.import_module("sheregesh.crsf.frames")
     return [F.crsf_to_axis(F.axis_to_crsf(v)) for v in axes] + [0] * 8
 
 
 # ---------------------------------------------------------------- разбор, пути, пересчёт
 
 def test_to_crsf_matches_frames_and_roundtrip():
-    F = pytest.importorskip("sheregesh.crsf.frames")
+    F = importlib.import_module("sheregesh.crsf.frames")
     for v in range(-1000, 1001):
         assert s.to_crsf(v) == F.axis_to_crsf(v), v
     for c in range(F.CH_MIN, F.CH_MAX + 1):                         # emu.ch (ось) → отсчёт: без потерь
@@ -76,9 +77,8 @@ def test_to_crsf_matches_frames_and_roundtrip():
 
 def test_paths_against_real_sanitize_module():
     """Пути P и crsf.emu — против настоящего wire.sanitize_module (агент H): то, что видит пульт."""
-    wire = pytest.importorskip("sheregesh.module.wire")
-    if "backend" not in wire.CONFIGURE_KEYS:
-        pytest.skip("wire без S8")
+    wire = importlib.import_module("sheregesh.module.wire")
+    assert "backend" in wire.CONFIGURE_KEYS
     raw = tel(output="live", emu_ch=live_ch(), armed=True)
     raw["settings"]["backend"] = "crsf-pty-lab"
     clean = wire.sanitize_module(raw)
@@ -96,12 +96,11 @@ def test_real_emulator_state_reaches_console_as_crsf_counts():
     """Цепочка без плат: кадр 0x16 → эмулятор ELRS TX (агент K) → строка state → module/crsf._emu_view (агент H) →
     wire → emu_channels: те же отсчёты 11 бит, что упаковал хост; взведение и центр в нейтрали."""
     import time
-    elrs = pytest.importorskip("sheregesh_emulators.elrs_tx")
-    F = pytest.importorskip("sheregesh.crsf.frames")
-    crsf = pytest.importorskip("sheregesh.module.crsf")
-    wire = pytest.importorskip("sheregesh.module.wire")
-    if not hasattr(wire, "_crsf_emu"):
-        pytest.skip("wire без crsf.emu")
+    elrs = importlib.import_module("sheregesh_emulators.elrs_tx")
+    F = importlib.import_module("sheregesh.crsf.frames")
+    crsf = importlib.import_module("sheregesh.module.crsf")
+    wire = importlib.import_module("sheregesh.module.wire")
+    assert hasattr(wire, "_crsf_emu")
     emu = elrs.ElrsTxEmulator(time.monotonic)
     for axes, armed in ((AX, True), ([0] * 8, False)):
         emu.feed(F.pack_channels(list(axes) + [0] * 8, armed))
@@ -112,16 +111,15 @@ def test_real_emulator_state_reaches_console_as_crsf_counts():
 
 
 def test_no_response_s_matches_profile():
-    nomad = pytest.importorskip("sheregesh.module.profiles.radiomaster_nomad").NOMAD
-    if not hasattr(nomad, "no_response_s"):
-        pytest.skip("профиль без S8")
+    nomad = importlib.import_module("sheregesh.module.profiles.radiomaster_nomad").NOMAD
+    assert hasattr(nomad, "no_response_s")
     assert s.LIMITS["no_response_s"] == nomad.no_response_s
     assert nomad.crsf_name == nb.NAME_PREFIX and nomad.baud == nb.BAUD
     assert s.no_response_s(mod(tel())) == nomad.no_response_s
 
 
 def test_emulator_name_matches():
-    elrs = pytest.importorskip("sheregesh_emulators.elrs_tx")
+    elrs = importlib.import_module("sheregesh_emulators.elrs_tx")
     assert elrs.NAME == s.EMU_NAME and elrs.PERIOD_US == s.LIMITS["period_us"]
     assert s.ELRS_MARK == "sheregesh_emulators." + "elrs_tx"
 
@@ -161,10 +159,9 @@ def test_journal_lines_from_real_service_and_manager():
 
 def test_service_logs_crsf_transition_in_parsed_format():
     """Сверка с настоящим ModuleService (агент H): запись о смене режима выхода разбирается parse_crsf_transitions."""
-    svc = pytest.importorskip("sheregesh.module.service")
+    svc = importlib.import_module("sheregesh.module.service")
     src = Path(svc.__file__).read_text()
-    if "crsf: {self.output} -> {out[0]}" not in src:
-        pytest.skip("ModuleService без журнала режима выхода")
+    assert "crsf: {self.output} -> {out[0]}" in src
     line = "5.000000 pi2 python3[1]: [remote] module: crsf: neutral -> live (module READY, control ACTIVE)"
     assert s.parse_crsf_transitions(line)[0]["to"] == "live"
 
@@ -438,9 +435,8 @@ def helper_run(prog, path):
 
 
 def test_helper_against_fake_console_channel():
-    wire = pytest.importorskip("sheregesh.module.wire")
-    if "backend" not in wire.CONFIGURE_KEYS:
-        pytest.skip("modulectl без configure backend (S8)")
+    wire = importlib.import_module("sheregesh.module.wire")
+    assert "backend" in wire.CONFIGURE_KEYS
     d = tempfile.mkdtemp(prefix="s8", dir="/tmp")                     # путь сокета короче 104 байт (macOS)
     try:
         path = os.path.join(d, "c.sock")
@@ -655,7 +651,7 @@ class EmuUart:
     emu = None
 
     def __init__(self, path, baud=400000, half_duplex=True):
-        elrs = pytest.importorskip("sheregesh_emulators.elrs_tx")
+        elrs = importlib.import_module("sheregesh_emulators.elrs_tx")
         import time as _t
         if EmuUart.emu is None:
             EmuUart.emu = elrs.ElrsTxEmulator(_t.monotonic)
@@ -679,9 +675,9 @@ class EmuUart:
 
 def test_bringup_steps_on_emulator(monkeypatch, tmp_path):
     """Шаги 1–3 на ядре эмулятора: линия молчит, device info «RM Nomad X-Band (emu)», синхронизация 20 000 мкс."""
-    frames = pytest.importorskip("sheregesh.crsf.frames")
-    output = pytest.importorskip("sheregesh.crsf.output")
-    pytest.importorskip("sheregesh_emulators.elrs_tx")
+    frames = importlib.import_module("sheregesh.crsf.frames")
+    output = importlib.import_module("sheregesh.crsf.output")
+    importlib.import_module("sheregesh_emulators.elrs_tx")
     dev = tmp_path / "ttyAMA3"
     dev.write_text("")
     port_mod = argparse.Namespace(UartPort=EmuUart, find_uart3=lambda: str(dev))
