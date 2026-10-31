@@ -314,10 +314,28 @@ def _until(ch, pred, t_ref, timeout, step=0.2):
         if pred(v):
             at = v.get("state_at")
             if isinstance(at, (int, float)) and t_ref is not None:
-                return round(max(0.0, at - t_ref), 3), "event", v
+                if at < t_ref:                      # состояние сменилось до сигнала — не событие сценария
+                    return None, "before-signal", v
+                return round(at - t_ref, 3), "event", v
             return round(time.monotonic() - t0, 2), "poll", v
         time.sleep(step)
     return None, None, v
+
+
+def _stable_playing(ch, hold=2.0, timeout=60):
+    """Видео пульта играет и не меняло состояние hold секунд (та же метка state_at): предыдущий сценарий не оставил
+    переходного состояния, которое сменится уже после сигнала."""
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        v = cv(ch)
+        if srtp(v) and v.get("state") == "playing":
+            time.sleep(hold)
+            w = cv(ch)
+            if w.get("state") == "playing" and w.get("state_at") == v.get("state_at"):
+                return True
+        else:
+            time.sleep(0.5)
+    return False
 
 
 def _pid(rh, unit):
@@ -332,8 +350,8 @@ def _not_playing(v):
 def sc_stream_loss(ch, rh, pause=6):
     """REQ-SW-002 п. 3: обрыв потока (служба tx блока остановлена SIGSTOP, канал управления жив): «нет видео» в GUI
     ≤ 3 с, видео снова ≤ 10 с после возобновления потока."""
-    if not wait(playing(ch), 60):
-        return {"verdict": "ERROR", "reason": "нет видео до сценария"}
+    if not _stable_playing(ch):
+        return {"verdict": "ERROR", "reason": "нет устойчивого видео до сценария"}
     pid = _pid(rh, "sheregesh-video-tx")
     if pid is None:
         return {"verdict": "ERROR", "reason": "нет PID sheregesh-video-tx"}
@@ -358,6 +376,8 @@ def sc_stream_loss(ch, rh, pause=6):
                         "control_during": "connected (обрыв потока, не управления)"}}
     if t_cont is None:
         return {**res, "verdict": "ERROR", "abort": True, "reason": "возобновление tx не подтверждено"}
+    if how == "before-signal":
+        return {**res, "verdict": "ERROR", "reason": "видео сменило состояние до сигнала — замер недостоверен"}
     ok = (no_video is not None and no_video <= 3.0 and back is not None and back <= 10.0 and ctl == "connected")
     return {**res, "verdict": "PASS" if ok else "FAIL"}
 
@@ -367,8 +387,8 @@ def sc_ctl_loss(ch, rh, pause=8):
     выключает видео по тайм-ауту heartbeat — не позже HB_TIMEOUT_S + 1 с; после возобновления видео снова ≤ 10 с в
     новом сеансе SRTP. Обрыв потока (REQ-SW-002 п. 3) — сценарий stream-loss: здесь «нет видео» наступает только
     вместе с выключением и меряет тайм-аут heartbeat."""
-    if not wait(playing(ch), 60):
-        return {"verdict": "ERROR", "reason": "нет видео до сценария"}
+    if not _stable_playing(ch):
+        return {"verdict": "ERROR", "reason": "нет устойчивого видео до сценария"}
     pid = _pid(rh, "sheregesh-remote-net")
     if pid is None:
         return {"verdict": "ERROR", "reason": "нет PID блока"}
@@ -398,6 +418,8 @@ def sc_ctl_loss(ch, rh, pause=8):
            "remote_log": journal(rh, "sheregesh-remote-net", time.time() - 120, "video|session")}
     if t_cont is None:
         return {**res, "verdict": "ERROR", "abort": True, "reason": "возобновление блока не подтверждено"}
+    if how_off == "before-signal":
+        return {**res, "verdict": "ERROR", "reason": "видео сменило состояние до сигнала — замер недостоверен"}
     ok = video_off is not None and video_off <= limit and back is not None and back <= 10.0
     return {**res, "verdict": "PASS" if ok else "FAIL"}
 

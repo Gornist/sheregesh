@@ -125,3 +125,30 @@ def test_ctl_loss_slow_recovery_fails(stand, monkeypatch):
     use(monkeypatch, ui(stand, no_video_s=3.1, off_s=3.1, back_s=12.0))
     r = cvl.sc_ctl_loss("c", "r")
     assert r["verdict"] == "FAIL" and r["video_back_after_resume_s"] > 10, r
+
+
+def test_state_change_before_signal_is_not_an_event(stand, monkeypatch):
+    """Метка state_at раньше сигнала (видео сменило состояние до kill) — не замер сценария: ERROR, а не 0 с."""
+    video, service = ui(stand, no_video_s=1.6)
+
+    def stale(ch):
+        v = video(ch)
+        if stand["stop"] is not None and stand["cont"] is None and v["state"] != "playing":
+            v["state_at"] = stand["stop"] - 0.5
+        return v
+    use(monkeypatch, (stale, service))
+    r = cvl.sc_stream_loss("c", "r")
+    assert r["verdict"] == "ERROR" and r["no_video_by"] == "before-signal" and r["no_video_after_s"] is None, r
+
+
+def test_unstable_playing_before_scenario_is_error(stand, monkeypatch):
+    """Видео до сценария не играет устойчиво (метка меняется) — сценарий не начинается."""
+    n = {"i": 0}
+
+    def flapping(ch):
+        stand["t"] += 0.15
+        n["i"] += 1
+        return {"mode": "remote-srtp", "state": "playing", "state_at": float(n["i"])}
+    use(monkeypatch, (flapping, lambda h: {"session": "s1"}))
+    r = cvl.sc_stream_loss("c", "r")
+    assert r["verdict"] == "ERROR" and stand["stop"] is None, r
