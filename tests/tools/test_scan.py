@@ -42,5 +42,13 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(scan.scan_secrets(files), [])
 
 
+class HistoryTest(unittest.TestCase):
+    def test_history_finding_with_recorded_decision_is_not_open(self):
+        """REQ-REL-011: находка истории с решением в history-findings.md («blob шаблон») не считается неразобранной."""
+        blobs, findings, open_ = scan.scan_history("HEAD")
+        self.assertGreater(len(blobs), 100)
+        self.assertEqual(open_, [], open_)
+
+
 if __name__ == "__main__":
     unittest.main()
