@@ -3335,13 +3335,13 @@
         "Выполнены все критерии PASS покрываемых требований."
       ],
       "evidence": "Отчёт полноты переводов, скриншоты",
-      "status": "NOT TESTED",
-      "evidence_level": "L0",
-      "sw_version": null,
-      "hw_rev": null,
-      "evidence_link": null,
-      "executed": null,
-      "executor": null
+      "status": "PASS",
+      "evidence_level": "L4",
+      "sw_version": "образ c0c509c, DEV g52be507",
+      "hw_rev": "Raspberry Pi 4 Model B 4 ГБ: pi1 10000000568152de",
+      "evidence_link": "docs/acceptance/stage-a-3/REPORT.md#test-ui-001--русский-и-английский-pass",
+      "executed": "2026-10-31",
+      "executor": "Claude Code по поручению владельца"
     },
     {
       "id": "TEST-UI-002",

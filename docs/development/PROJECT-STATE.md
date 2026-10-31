@@ -53,6 +53,7 @@ PASS L4: TEST-SW-005 — [stage-a-2](../acceptance/stage-a-2/REPORT.md); пас�
 совпадает с образом и между сторонами; SemVer снаружи — sheregesh.semver; TEST-SYS-007 — PASS (DEV gdc74aa8 на обеих платах).
 PASS: TEST-CFG-001 (CHG-018), TEST-DOC-001 (REUSE 572/572, reuse lint в CI, лицензии зависимостей).
 PASS: TEST-SW-001 — службы в диагностике пульта, kill -9 → SVC-RESTART за 4,7–6,8 с — [stage-a-3](../acceptance/stage-a-3/REPORT.md).
+PASS: TEST-UI-003 (27/27 неисправностей в GUI ≤ 0,52 с), TEST-UI-001 (RU/EN, 36 экранов без обрезки) — там же.
 
 ## Известные особенности разработки
 
