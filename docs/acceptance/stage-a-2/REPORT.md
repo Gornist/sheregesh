@@ -47,6 +47,25 @@ hello канала управления: `HW-1.0 Rev A (<модель из devic
 (SemVer)» — `0.1.0.dev0` в формате PEP 440, не SemVer; решается вместе с TEST-REL-010 (схема версий).
 Доказательства: `~/archive/acceptance/stage-a-2/sys007-evidence.tar.gz`, SHA-256 `d6bd66ad4eb1fc6b4d367fddac57795b86dc3972f9a284ccc1713a2784530341`.
 
+## TEST-CFG-001 — конфигурация YAML со схемой: PASS
+
+- Схемы `software/sheregesh/config/schemas/console-1.json`, `remote-1.json` опубликованы и входят в образ
+  (`/usr/lib/sheregesh/software/sheregesh/config/schemas/` на pi1, образ `c0c509c`).
+- Валидатор: ≥ 5 корректных наборов принимаются, ≥ 20 некорректных отклоняются с путём к полю и классом ошибки
+  (`tests/unit/test_config_schema.py`: `test_valid_sets_accepted`, `test_invalid_sets_rejected_with_field_path`,
+  `test_sample_counts_meet_criterion`, `test_all_errors_reported_at_once`).
+- Критерий профилей уточнён решением владельца (CHG-018): профиль устройства — отдельная схема на роль; настройки
+  модуля блока (`module.yaml`, включая профиль) меняются только новой ревизией, прежняя сохраняется —
+  `tests/unit/test_config_store.py::test_module_settings_change_only_through_new_revision`. 75 passed.
+
+## SemVer (SYS-007, REL-010)
+
+Решение владельца: версия пакета Python остаётся PEP 440 (`0.1.0.dev0`), снаружи — SemVer 2.0 через одну функцию
+`sheregesh.semver`: `0.1.0.dev0` → `0.1.0-dev.0`, локальная часть DEV-выпуска — метаданные сборки
+(`0.1.0-dev.0+g43ea9a9.dirty`). GUI («О системе», «ПО пульта», версия блока) и `sheregesh-info` показывают SemVer;
+hello канала управления — прежняя строка (по ней работает матрица совместимости). Тег и имя архива — при выпуске
+(TEST-REL-010).
+
 ## Доказательства
 
 Архив devbox `~/archive/acceptance/stage-a-2/stage-a2-evidence.tar.gz`, SHA-256

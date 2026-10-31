@@ -199,6 +199,23 @@ def test_invalid_configuration_never_becomes_active(store):
 
 
 @pytest.mark.test_id("TEST-CFG-003")
+@pytest.mark.test_id("TEST-CFG-001")
+def test_module_settings_change_only_through_new_revision(tmp_path):
+    """CHG-018: профиль устройства — отдельная схема (remote-1); настройки модуля блока (module.yaml, в т. ч. профиль)
+    меняются только новой ревизией, прежняя сохраняется."""
+    from sheregesh.config import remote_defaults
+    s = ConfigStore(tmp_path / "config", Schema.load("remote-1"))
+    s.initialize(remote_defaults())
+    before = s.state()["current"]
+    files = remote_defaults()
+    files["module.yaml"] = files["module.yaml"].replace("auto_init: true", "auto_init: false")
+    res = s.apply(files, OK)
+    assert res.ok and res.revision != before
+    module = s.active().data["module.yaml"]
+    assert module["auto_init"] is False and module["profile"] == "radiomaster-nomad"
+    assert len(s.history()) == 2
+
+
 def test_multi_file_change_is_one_revision(store):
     res = store.apply(changed(system__language="en", diagnostics__temp_warning_c=60, link__port=7701), OK)
     assert res.ok
