@@ -483,10 +483,15 @@ def client(action, stdin, stdout, path=SOCKET):
     s.connect(path)
     with s:
         s.sendall((json.dumps(request) + "\n").encode())
-        if action == "install":
-            for chunk in iter(lambda: stdin.read(1 << 20), b""):
-                s.sendall(chunk)
-        s.shutdown(socket.SHUT_WR)
+        try:
+            if action == "install":
+                for chunk in iter(lambda: stdin.read(1 << 20), b""):
+                    s.sendall(chunk)
+            s.shutdown(socket.SHUT_WR)
+        except (BrokenPipeError, ConnectionResetError):
+            # Агент отверг поток до конца (подпись, совместимость) и закрыл соединение: его ответ уже в сокете
+            # (AF_UNIX не теряет записанное) — дочитать, а не сообщать «агент недоступен».
+            pass
         last = {}
         with s.makefile("rb") as f:
             for line in f:

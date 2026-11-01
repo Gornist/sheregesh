@@ -506,6 +506,32 @@ def test_client_streams_over_unix_socket(tmp_path):
     assert rc == 0 and json.loads(out.getvalue().splitlines()[-1])["state"]["state"] == "INSTALLED"
 
 
+def test_client_reads_reject_after_agent_closes_mid_stream():
+    """Агент отверг поток (подпись) и закрыл соединение, не дочитав образ: клиент выдаёт ответ агента, а не «агент
+    недоступен» (Broken pipe; приёмка UPD-005, 2026-11-01)."""
+    d = tempfile.mkdtemp(prefix="sho", dir="/tmp")
+    path = os.path.join(d, "s")
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(path)
+    srv.listen(1)
+
+    def one():
+        conn, _ = srv.accept()
+        with conn:
+            conn.recv(4096)
+            conn.sendall(b'{"result": "REJECTED", "reason": "signature not trusted"}\n')
+    t = threading.Thread(target=one)
+    t.start()
+    out = io.StringIO()
+    rc = ota.client("install", io.BytesIO(b"x" * (32 << 20)), out, path=path)
+    t.join(10)
+    srv.close()
+    os.unlink(path)
+    os.rmdir(d)
+    assert rc == 1 and json.loads(out.getvalue().splitlines()[-1]) == {"result": "REJECTED",
+                                                                        "reason": "signature not trusted"}
+
+
 def test_on_boot_failure_is_unit_failure_only_during_update(tmp_path, capsys):
     b = Board(tmp_path)
     agent = b.agent()
