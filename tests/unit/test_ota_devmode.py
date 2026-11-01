@@ -136,3 +136,39 @@ def test_caller_unit_from_cgroup(tmp_path, monkeypatch):
         def getsockopt(self, *a):
             raise OSError("нет SO_PEERCRED")
     assert ota.caller_unit(NoCred()) == ""
+
+
+def test_caller_unit_console_gui_in_pam_session(tmp_path, monkeypatch):
+    """sheregesh-console (PAMName, cage) — процессы в session-N.scope: служба — по лидеру сеанса logind, равному
+    MainPID службы (pi1, 2026-11-01: взвод из GUI отвергался). Сеанс SSH (лидер — sshd) и чужой лидер — «»."""
+    import struct
+
+    class Sock:
+        def getsockopt(self, *a):
+            return struct.pack("3i", 10665, 0, 0)
+    real = ota.Path
+    (tmp_path / "sessions").mkdir()
+    (tmp_path / "sessions" / "369").write_text("UID=1000\nUSER=sheregesh-ui\nSERVICE=login\nLEADER=10654\n")
+    (tmp_path / "sessions" / "530").write_text("UID=1000\nSERVICE=sshd\nLEADER=777\n")
+    cg = {"369": "0::/user.slice/user-1000.slice/session-369.scope\n",
+          "530": "0::/user.slice/user-1000.slice/session-530.scope\n"}
+    which = {"s": "369"}
+
+    def fake_path(p):
+        if str(p) == "/proc/10665/cgroup":
+            f = tmp_path / "cgroup"
+            f.write_text(cg[which["s"]])
+            return f
+        if str(p).startswith(ota.SESSIONS):
+            return tmp_path / "sessions" / str(p).rsplit("/", 1)[1]
+        return real(p)
+    monkeypatch.setattr(ota.socket, "SO_PEERCRED", 17, raising=False)
+    monkeypatch.setattr(ota, "Path", fake_path)
+    mains = {CONSOLE: 10654, "sheregesh-remote-net.service": 0}
+    assert ota.caller_unit(Sock(), main_pid=mains.get) == CONSOLE
+    which["s"] = "530"
+    assert ota.caller_unit(Sock(), main_pid=mains.get) == ""                 # вход по SSH
+    which["s"] = "369"
+    assert ota.caller_unit(Sock(), main_pid={CONSOLE: 999}.get) == ""        # служба перезапущена: лидер не её
+    (tmp_path / "sessions" / "369").unlink()
+    assert ota.caller_unit(Sock(), main_pid=mains.get) == ""

@@ -212,8 +212,24 @@ class DevGrant:
             pass
 
 
-def caller_unit(sock) -> str:
-    """Служба systemd процесса на другом конце сокета (SO_PEERCRED → /proc/PID/cgroup); «» — не определена."""
+SESSIONS = "/run/systemd/sessions"
+
+
+def _main_pid(unit) -> int:
+    try:
+        r = subprocess.run(["systemctl", "show", "-p", "MainPID", "--value", unit], capture_output=True, text=True,
+                           timeout=5)
+        return int(r.stdout.strip() or 0)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0
+
+
+def caller_unit(sock, main_pid=_main_pid) -> str:
+    """Служба systemd процесса на другом конце сокета (SO_PEERCRED → /proc/PID/cgroup); «» — не определена.
+
+    Служба с PAMName (sheregesh-console: cage под сеансом входа) переносит свои процессы в session-N.scope: такой
+    процесс считается процессом службы ARM_UNITS, только если лидер его сеанса logind (/run/systemd/sessions/N,
+    LEADER) — главный процесс этой службы. У входа по SSH лидер — sshd, такой сеанс службой не считается."""
     import struct
     try:
         pid = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, getattr(socket, "SO_PEERCRED", 17),
@@ -222,7 +238,16 @@ def caller_unit(sock) -> str:
     except (OSError, ValueError, struct.error):
         return ""
     path = text.strip().splitlines()[-1].rpartition(":")[2] if text.strip() else ""
-    return next((p for p in reversed(path.split("/")) if p.endswith(".service")), "")
+    unit = next((p for p in reversed(path.split("/")) if p.endswith(".service")), "")
+    scope = path.rsplit("/", 1)[-1]
+    if unit or not (scope.startswith("session-") and scope.endswith(".scope")):
+        return unit
+    try:
+        fields = dict(ln.split("=", 1) for ln in Path(f"{SESSIONS}/{scope[8:-6]}").read_text().splitlines() if "=" in ln)
+        leader = int(fields.get("LEADER", "0"))
+    except (OSError, ValueError):
+        return ""
+    return next((u for u in ARM_UNITS if leader > 0 and main_pid(u) == leader), "")
 
 
 @dataclass
