@@ -2021,13 +2021,13 @@
         "Выполнены все критерии PASS покрываемых требований."
       ],
       "evidence": "Отчёт сборки",
-      "status": "NOT TESTED",
-      "evidence_level": "L0",
-      "sw_version": null,
-      "hw_rev": null,
-      "evidence_link": null,
-      "executed": null,
-      "executor": null
+      "status": "PASS",
+      "evidence_level": "L4",
+      "sw_version": "образ 4ddbcb9 (0.1.1793514880), ПО 0.1.0-dev.0",
+      "hw_rev": "Raspberry Pi 4 Model B: pi1 10000000568152de, pi2 100000009d497e91",
+      "evidence_link": "docs/acceptance/proto16/REPORT.md#test-doc-004--руководство-ruen-в-образе",
+      "executed": "2026-11-01",
+      "executor": "Claude Code по поручению владельца"
     },
     {
       "id": "TEST-DOC-006",
@@ -3628,13 +3628,13 @@
         "Выполнены все критерии PASS покрываемых требований."
       ],
       "evidence": "Протокол",
-      "status": "NOT TESTED",
-      "evidence_level": "L0",
-      "sw_version": null,
-      "hw_rev": null,
-      "evidence_link": null,
-      "executed": null,
-      "executor": null
+      "status": "PASS",
+      "evidence_level": "L4",
+      "sw_version": "pi1: образ 142c603, DEV g142c603; pi2: образ 4ddbcb9, DEV gf1db02e; собственный образ — пакет OTA 4ddbcb9/142c603 с подписью не проекта",
+      "hw_rev": "Raspberry Pi 4 Model B: pi1 10000000568152de, pi2 100000009d497e91",
+      "evidence_link": "docs/acceptance/proto16/REPORT.md#test-upd-005--test-upd-006--режим-разработчика-и-откат-собственного-образа",
+      "executed": "2026-11-01",
+      "executor": "Claude Code по поручению владельца"
     }
   ],
   "retired_tests": [
