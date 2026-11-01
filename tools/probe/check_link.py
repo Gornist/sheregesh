@@ -202,8 +202,10 @@ def sc_connect(ch, rh):
     return {**res, "verdict": "PASS" if ok else "FAIL"}
 
 
+# Слушающие TCP (0A) и не соединённые UDP: соединённый UDP-сокет (01, connect()) получает датаграммы только от своего
+# собеседника — это клиент (chronyd к серверу пула на пульте, ADR-0017), а не открытый порт (ota-90b9b9c, 2026-11-01).
 LISTEN = r"""for f in /proc/net/tcp /proc/net/tcp6 /proc/net/udp /proc/net/udp6; do
-  awk -v f="${f##*/}" 'NR>1 && (f ~ /udp/ || $4=="0A") {print f, $2, $10}' "$f"; done"""
+  awk -v f="${f##*/}" 'NR>1 && ((f ~ /udp/ && $4!="01") || $4=="0A") {print f, $2, $10}' "$f"; done"""
 # Сокеты службы видео платы (ADR-0016): inode из /proc/<MainPID>/fd — служба работает от sheregesh-ui, как вход по SSH
 VIDEO_SOCKETS = {"console": "sheregesh-video-rx", "remote": "sheregesh-video-tx"}
 VIDEO_FDS = ("p=$(systemctl show -p MainPID --value {unit}); [ \"$p\" -gt 0 ] 2>/dev/null && "
