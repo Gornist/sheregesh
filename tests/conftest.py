@@ -23,10 +23,12 @@ _results = {}
 
 
 @pytest.fixture(autouse=True)
-def _no_stand_lookup(monkeypatch):
+def _no_stand_lookup(request, monkeypatch):
     """Тесты не ищут платы стенда: «auto» в --console/--remote разрешается в имя платы без SSH и сканирования сети
     (иначе на машине со стендом тест ходит на настоящую плату, а в CI падает «плата не найдена»).
-    Сам поиск проверяет tests/tools/test_stand_boards.py."""
+    Тесты tests/tools (сам поиск, отказ shdeploy) — без подмены."""
+    if "/tests/tools/" in str(request.node.fspath):      # тесты инструментов проверяют сам поиск и отказ (shdeploy)
+        return
     import sys
     tools = str(ROOT / "tools")
     if tools not in sys.path:

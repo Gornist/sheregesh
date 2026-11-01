@@ -519,13 +519,17 @@ def client(action, stdin, stdout, path=SOCKET):
             pass
         last = {}
         with s.makefile("rb") as f:
-            for line in f:
-                stdout.write(line.decode(errors="replace"))
-                stdout.flush()
-                try:
-                    last = json.loads(line)
-                except ValueError:
-                    pass
+            try:
+                for line in f:
+                    stdout.write(line.decode(errors="replace"))
+                    stdout.flush()
+                    try:
+                        last = json.loads(line)
+                    except ValueError:
+                        pass
+            except ConnectionResetError:
+                # Linux: агент закрыл сокет, не дочитав поток, — после его ответа чтение даёт ECONNRESET, а не конец
+                pass
     return 0 if last.get("result") == "OK" else 1
 
 
