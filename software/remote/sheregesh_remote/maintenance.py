@@ -6,10 +6,12 @@
 читает системный журнал), в эмуляторе — последние строки журнала самого агента (RING). Секреты заменяются,
 размер ограничен remotecmd.MAX_LOG. Выключение: сетевой профиль — «start» юнита sheregesh-remote-poweroff.service
 (он выключает плату через remotecmd.SHUTDOWN_DELAY_S, правило polkit 54-sheregesh-remote-power.rules), эмулятор —
-SIGTERM своему процессу через то же время. Одна команда за раз: вторая во время первой — busy."""
+SIGTERM своему процессу через то же время. Режим разработчика: sheregesh-ota-client dev-arm (агент OTA принимает его
+только от службы устройства), в эмуляторе агента OTA нет — error. Одна команда за раз: вторая во время первой — busy."""
 import asyncio
 import collections
 import hashlib
+import json
 import os
 import signal
 import subprocess
@@ -21,6 +23,7 @@ from sheregesh.redact import redact
 JOURNAL_CMD = ["journalctl", "-b", "--no-pager", "-o", "short-iso", "-u", "sheregesh-*", "-n", "20000"]
 JOURNAL_TIMEOUT_S = 20.0
 POWEROFF_UNIT = "sheregesh-remote-poweroff.service"
+OTA_DEV_ARM = ["sheregesh-ota-client", "dev-arm"]
 RING = collections.deque(maxlen=4000)           # журнал агента (agent.log) — для эмулятора без journald
 
 
@@ -60,6 +63,25 @@ def poweroff(network: bool, run=subprocess.run) -> str:
     return "" if r.returncode == 0 else f"systemctl exit {r.returncode}: {r.stderr.decode('utf-8', 'replace').strip()[:160]}"
 
 
+def dev_arm(network: bool, run=subprocess.run) -> tuple[bool, str]:
+    """(разрешено, причина агента OTA)."""
+    if not network:
+        return False, "no OTA agent in the emulator"
+    try:
+        r = run(OTA_DEV_ARM, capture_output=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"sheregesh-ota-client: {e}"
+    lines = [x for x in r.stdout.decode("utf-8", "replace").splitlines() if x.strip()]
+    try:
+        res = json.loads(lines[-1]) if lines else {}
+    except ValueError:
+        res = {}
+    if not isinstance(res, dict):
+        res = {}
+    reason = str(res.get("reason") or r.stderr.decode("utf-8", "replace").strip() or f"exit {r.returncode}")[:200]
+    return res.get("result") == "OK", reason
+
+
 class Maintenance:
     """send(тип, тело) — отправка текущему сеансу (Agent.send с writer сеанса), log(text) — журнал агента."""
 
@@ -86,6 +108,8 @@ class Maintenance:
         try:
             if op == "log-export":
                 await self._export(req, send)
+            elif op == "dev-arm":
+                await self._dev_arm(req, send)
             else:
                 await self._shutdown(req, send)
         finally:
@@ -106,6 +130,13 @@ class Maintenance:
                                          "size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
                                          "parts": len(parts)})
         self.log(f"remote-cmd {req} log-export: {name}, {len(data)} bytes, {len(parts)} parts")
+
+    async def _dev_arm(self, req, send):
+        self.log(f"remote-cmd {req} dev-arm requested by console")
+        ok, reason = await asyncio.to_thread(dev_arm, self.network, self.run)
+        self.log(f"remote-cmd {req} dev-arm: {'armed' if ok else 'refused'}: {reason}")
+        await send("remote-cmd-result", {"req": req, "op": "dev-arm", "result": "ok" if ok else "error",
+                                         "error": reason})
 
     async def _shutdown(self, req, send):
         self.log(f"remote-cmd {req} shutdown requested by console")

@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Обслуживание удалённого блока с пульта (протокол 1.6): выгрузка журналов блока и штатное выключение.
+"""Обслуживание удалённого блока с пульта (протокол 1.6): выгрузка журналов, штатное выключение и разовый режим
+разработчика блока.
 
-remote-cmd   пульт → блок   {"req": int, "op": "log-export" | "shutdown", "confirm": true}
+remote-cmd   пульт → блок   {"req": int, "op": "log-export" | "shutdown" | "dev-arm", "confirm": true}
 remote-log   блок → пульт   {"req", "part", "parts", "data"}  — часть журнала, base64, по порядку с 0
 remote-cmd-result  блок → пульт  {"req", "op", "result": RESULTS, "error", для log-export ещё "name", "size",
              "sha256", "parts"} — после всех частей remote-log этого req
@@ -12,11 +13,14 @@ remote-cmd-result  блок → пульт  {"req", "op", "result": RESULTS, "er
 сверяет SHA-256 и пишет файл на «USB» с контрольной суммой рядом (REQ-SW-001/005). Выключение исполняется только с
 confirm: true (подтверждение оператора на пульте, REQ-UI-006); блок отвечает итогом и через SHUTDOWN_DELAY_S
 выключается: юнит sheregesh-remote-poweroff.service (правило polkit — только «start» этого юнита), в эмуляторе —
-завершение процесса агента. Других команд ОС в протоколе нет."""
+завершение процесса агента. dev-arm (REQ-UPD-005: «для удалённого блока — подтверждение на пульте») — тоже только с
+confirm: true; блок вызывает своего агента OTA (sheregesh-ota-client dev-arm) из службы sheregesh-remote-net, а агент
+сам проверяет, что вызывающий — служба устройства. Других команд ОС в протоколе нет."""
 import base64
 import hashlib
 
-OPS = ("log-export", "shutdown")
+OPS = ("log-export", "shutdown", "dev-arm")
+CONFIRMED = ("shutdown", "dev-arm")          # изменяющие: только с подтверждением оператора
 RESULTS = ("ok", "error", "busy", "bad-request")
 CHUNK = 32 * 1024                    # байт журнала в одной части: base64 ≈ 43 КБ < MAX_LINE 64 КБ
 MAX_LOG = 2 * 1024 * 1024            # не больше 64 частей
@@ -39,8 +43,8 @@ def check_command(body) -> dict:
         raise BadCommand("req must be a positive integer")
     if op not in OPS:
         raise BadCommand(f"unknown op {op!r}")
-    if op == "shutdown" and body.get("confirm") is not True:
-        raise BadCommand("shutdown requires confirm: true")
+    if op in CONFIRMED and body.get("confirm") is not True:
+        raise BadCommand(f"{op} requires confirm: true")
     return {"req": req, "op": op}
 
 

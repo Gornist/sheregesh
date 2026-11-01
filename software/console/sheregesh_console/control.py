@@ -36,7 +36,8 @@ bad-request | busy | failed. Включение из локального кан
 Обслуживание удалённого блока (протокол 1.6) — те же слоты Backend, что кнопки «Журналы» и «Настройки»:
   {"cmd": "remote", "op": "log-export", "wait": 60}                  → {"result", "detail", "file": имя на «USB» | ""}
   {"cmd": "remote", "op": "shutdown", "confirmed": true, "wait": 15}  → {"result", "detail", "file": ""}
-result: ok | not-confirmed (shutdown без "confirmed": true) | busy | timeout | коды PeerClient.remote_command
+  {"cmd": "remote", "op": "dev-arm", "confirmed": true, "wait": 30}   → то же (режим разработчика блока, UPD-005)
+result: ok | not-confirmed (shutdown и dev-arm без "confirmed": true) | busy | timeout | коды PeerClient.remote_command
 (not-connected, unsupported, error, bad-reply …). Выключение из локального канала — только с явным флагом (для QA).
 
 Интерфейс (Minimal, испытания GUI-12 и снимки на плате):
@@ -66,7 +67,7 @@ CALL_TIMEOUT_S = 5.0        # поток интерфейса не ответи�
 MODULE_OPS = ("status", "reinit", "reset", "lab", "configure")
 MODULE_WAIT_S = {"configure": 30.0}         # по умолчанию 15 с
 STICKS_OPS = ("status", "enable", "disable")
-REMOTE_OPS = ("log-export", "shutdown")
+REMOTE_OPS = ("log-export", "shutdown", "dev-arm")
 
 
 def server_path(env=None):
@@ -264,11 +265,12 @@ class ControlServer(QObject):
         op, confirmed, wait = req.get("op"), req.get("confirmed", False), req.get("wait", 60.0)
         if op not in REMOTE_OPS or not isinstance(confirmed, bool) or set(req) - {"cmd", "op", "confirmed", "wait"} \
                 or not isinstance(wait, (int, float)) or isinstance(wait, bool):
-            return {"result": "bad-request", "detail": "op: log-export | shutdown; confirmed: bool; wait: seconds",
+            return {"result": "bad-request", "detail": "op: log-export | shutdown | dev-arm; confirmed: bool; wait: s",
                     "file": ""}
-        if op == "shutdown" and confirmed is not True:
-            return {"result": "not-confirmed", "detail": "shutdown requires \"confirmed\": true", "file": ""}
-        call = b.exportRemoteLogs if op == "log-export" else (lambda: b.shutdownRemote(True))
+        if op != "log-export" and confirmed is not True:
+            return {"result": "not-confirmed", "detail": f"{op} requires \"confirmed\": true", "file": ""}
+        call = {"log-export": b.exportRemoteLogs, "shutdown": lambda: b.shutdownRemote(True),
+                "dev-arm": lambda: b.armRemoteDevImage(True)}[op]
         if not self._invoke(call):
             return {"result": "busy", "detail": "another configuration or file operation is running", "file": ""}
         end = time.monotonic() + min(max(float(wait), 0.0), WAIT_MAX_S)

@@ -4,6 +4,7 @@
 
   python3 -m sheregesh.link.remotectl log-export [--wait 60]     журнал блока на «USB» пульта
   python3 -m sheregesh.link.remotectl shutdown --confirm         штатное выключение блока
+  python3 -m sheregesh.link.remotectl dev-arm --confirm          разрешить блоку один собственный образ (15 мин)
 
 Только через работающий пульт (локальный канал, {"cmd": "remote", …}): пульт исполняет те же слоты, что кнопки
 «Журналы» → «Выгрузить журнал блока» и «Настройки» → «Выключить удалённый блок…», и пишет событие в свой журнал.
@@ -19,15 +20,15 @@ from .videoselect import ConsoleAbsent, ask_console, socket_path
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="remotectl", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("op", choices=["log-export", "shutdown"])
-    ap.add_argument("--confirm", action="store_true", help="подтверждение выключения (обязательно для shutdown)")
+    ap.add_argument("op", choices=["log-export", "shutdown", "dev-arm"])
+    ap.add_argument("--confirm", action="store_true", help="подтверждение (обязательно для shutdown и dev-arm)")
     ap.add_argument("--wait", type=float, default=60.0)
     ap.add_argument("--socket", default=None, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
-    if a.op == "shutdown" and not a.confirm:
-        print(json.dumps({"result": "not-confirmed", "detail": "shutdown requires --confirm", "file": ""}))
+    if a.op != "log-export" and not a.confirm:
+        print(json.dumps({"result": "not-confirmed", "detail": f"{a.op} requires --confirm", "file": ""}))
         return 2
-    req = {"cmd": "remote", "op": a.op, "wait": a.wait, **({"confirmed": True} if a.op == "shutdown" else {})}
+    req = {"cmd": "remote", "op": a.op, "wait": a.wait, **({"confirmed": True} if a.op != "log-export" else {})}
     try:
         r = ask_console(a.socket or socket_path(), req, a.wait + 10)
     except ConsoleAbsent as e:

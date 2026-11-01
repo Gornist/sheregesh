@@ -23,6 +23,7 @@ def test_types_and_check_command():
     assert remotecmd.check_command({"req": 3, "op": "log-export"}) == {"req": 3, "op": "log-export"}
     assert remotecmd.check_command({"req": 4, "op": "shutdown", "confirm": True})["op"] == "shutdown"
     for bad in ({"req": 1, "op": "shutdown"}, {"req": 1, "op": "shutdown", "confirm": 1}, {"req": 0, "op": "log-export"},
+                {"req": 1, "op": "dev-arm"},
                 {"req": True, "op": "log-export"}, {"req": 1, "op": "reboot"}, {"req": 1, "op": "sh -c id"}, []):
         with pytest.raises(remotecmd.BadCommand):
             remotecmd.check_command(bad)
@@ -145,3 +146,17 @@ def test_second_command_while_busy():
     m.busy = True
     sent = handle(m, {"req": 9, "op": "log-export"})
     assert sent == [("remote-cmd-result", {"req": 9, "op": "log-export", "result": "busy", "error": "another command runs"})]
+
+
+def test_dev_arm_calls_ota_agent_and_reports_reason():
+    run = Run(out=b'noise\n{"result": "OK", "reason": "one own image allowed"}\n')
+    sent = handle(mt.Maintenance(True, log=lambda s: None, run=run), {"req": 3, "op": "dev-arm", "confirm": True})
+    assert run.argv == [["sheregesh-ota-client", "dev-arm"]]
+    assert sent == [("remote-cmd-result", {"req": 3, "op": "dev-arm", "result": "ok", "error": "one own image allowed"})]
+    run = Run(rc=1, out=b'{"result": "REFUSED", "reason": "caller is not a device service"}\n')
+    sent = handle(mt.Maintenance(True, log=lambda s: None, run=run), {"req": 4, "op": "dev-arm", "confirm": True})
+    assert sent[0][1]["result"] == "error" and "device service" in sent[0][1]["error"]
+    sent = handle(mt.Maintenance(False, log=lambda s: None, run=Run(exc=AssertionError)),
+                  {"req": 5, "op": "dev-arm", "confirm": True})
+    assert sent[0][1]["result"] == "error" and "emulator" in sent[0][1]["error"]
+

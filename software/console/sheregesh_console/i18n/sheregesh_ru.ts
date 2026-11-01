@@ -2801,6 +2801,21 @@
         <source>The remote unit finishes its services and powers off. The link and video will be lost; to turn the unit on again, switch its power off and on.</source>
         <translation>Удалённый блок завершит работу служб и выключится. Связь и видео пропадут; чтобы включить блок снова, выключите и включите его питание.</translation>
     </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="200" />
+        <source>Allow on remote unit…</source>
+        <translation>Разрешить на удалённом блоке…</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="280" />
+        <source>Allow one own image on the remote unit?</source>
+        <translation>Разрешить удалённому блоку один собственный образ?</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="284" />
+        <source>The next system update of the remote unit may be an image not signed by the project. Only one installation is allowed within 15 minutes; a faulty image rolls back as usual.</source>
+        <translation>Следующим обновлением системы удалённого блока можно установить образ без подписи проекта. Разрешена одна установка в течение 15 минут; неисправный образ откатывается как обычно.</translation>
+    </message>
 </context>
 <context>
     <name>SticksPage</name>

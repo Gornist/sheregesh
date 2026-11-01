@@ -74,6 +74,8 @@ RESULTS = {
     "remote-logs": {"ru": "Журнал удалённого блока выгружен: {name} ({size} байт)",
                     "en": "Remote unit log exported: {name} ({size} bytes)"},
     "remote-off": {"ru": "Удалённый блок выключается по команде пульта", "en": "The remote unit is shutting down on command"},
+    "remote-dev": {"ru": "Удалённый блок: разрешена установка одного собственного образа ({reason})",
+                   "en": "Remote unit: one own image may be installed ({reason})"},
     "remote-failed": {"ru": "Удалённый блок: не выполнено ({result}{reason})",
                       "en": "Remote unit: not done ({result}{reason})"},
 }
@@ -634,6 +636,20 @@ class Backend(QObject):
         self.log("warning", "remote", "shutdown requested by operator (confirmed)")
         return self._ops.submit("remote-shutdown", run)
 
+    @Slot(bool, result=bool)
+    def armRemoteDevImage(self, confirmed):
+        """Разовый режим разработчика удалённого блока (REQ-UPD-005: подтверждение на пульте). Только из диалога."""
+        if not confirmed or self._refuse_busy():
+            return False
+        call = self._remote_call()
+
+        def run():
+            if not callable(call):
+                return {"ok": False, "result": "unsupported", "error": "no link to remote unit"}
+            return call("dev-arm", REMOTE_OFF_WAIT_S + 10)
+        self.log("warning", "remote", "developer mode on remote unit requested by operator (confirmed)")
+        return self._ops.submit("remote-dev", run)
+
     @Property(str, notify=configChanged)
     def lastRemoteResult(self):
         return self._last_remote
@@ -740,7 +756,7 @@ class Backend(QObject):
             self._last_result = self._result("logs", name=name, count=count)
             self.log("info", "logs", f"exported {name}")
             self.configChanged.emit()
-        elif op in ("remote-logs", "remote-shutdown"):
+        elif op in ("remote-logs", "remote-shutdown", "remote-dev"):
             self._remote_done(op, result)
 
     def _remote_done(self, op, r):
@@ -755,6 +771,9 @@ class Backend(QObject):
             self._last_export = r["name"]
             self._last_result = self._result("remote-logs", name=r["name"], size=r.get("size", "?"))
             self.log("info", "remote", f"remote log exported {r['name']}")
+        elif op == "remote-dev":
+            self._last_result = self._result("remote-dev", reason=r.get("error") or "15 min")
+            self.log("warning", "remote", f"remote unit developer mode armed: {r.get('error', '')}".strip())
         else:
             self._last_result = self._result("remote-off")
             self.log("warning", "remote", "remote unit accepted shutdown: link loss is expected")

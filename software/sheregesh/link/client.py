@@ -303,15 +303,15 @@ class PeerClient:
                 "error": f"no result in {wait_s:g} s" + (" (still pending)" if cmd and cmd.get("req") == req else "")}
 
     def remote_command(self, op: str, wait_s: float = 30.0) -> dict:
-        """Обслуживание блока (протокол 1.6, remote-cmd; sheregesh.link.remotecmd): log-export | shutdown.
+        """Обслуживание блока (протокол 1.6, remote-cmd; sheregesh.link.remotecmd): log-export | shutdown | dev-arm.
 
-        Вызывать не из GUI-потока; подтверждение оператора — за вызывающим (shutdown уходит с confirm: true).
+        Вызывать не из GUI-потока; подтверждение оператора — за вызывающим (shutdown и dev-arm — с confirm: true).
         → {"ok", "result", "error", "req"}, для log-export при ok ещё "name" и "data" (bytes, SHA-256 сверена).
         result: код блока (remotecmd.RESULTS) | not-connected | unsupported (сессия < 1.6) | timeout | bad-reply
         (части журнала не сошлись с итогом)."""
         with self._lock:
             req = self._req.new("remote-cmd")
-        body = {"req": req, "op": op, **({"confirm": True} if op == "shutdown" else {})}
+        body = {"req": req, "op": op, **({"confirm": True} if op in remotecmd.CONFIRMED else {})}
         try:
             remotecmd.check_command(body)
         except remotecmd.BadCommand as e:

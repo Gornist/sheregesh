@@ -8,7 +8,8 @@
   sticks.setEnabled(true)               — включение передачи управления;
   module: requestReinit, requestReset, setEnabled, setAutoInit, configure, setBackend, runLabScenario;
   systemInfo.armDevImage                — разовый режим разработчика (REQ-UPD-005);
-  shutdownRemote                        — штатное выключение удалённого блока (REQ-UI-006, протокол 1.6).
+  shutdownRemote                        — штатное выключение удалённого блока (REQ-UI-006, протокол 1.6);
+  armRemoteDevImage                     — разовый режим разработчика удалённого блока (REQ-UPD-005, протокол 1.6).
 Исключение по безопасности: выключение передачи (sticks.setEnabled(false, …)) — сразу и без подтверждения.
 Не изменяют устройство: backup, exportLogs и exportRemoteLogs (файл копии или журнала), validateForm, reload, refresh.
 
@@ -30,7 +31,7 @@ from sheregesh_console.qtwait import pump, wait_until
 
 QQuickStyle.setStyle("Fusion")
 ACTIONS = ("applyForm", "restore", "selectVideoSource", "setEnabled", "requestReinit", "requestReset", "setAutoInit",
-           "configure", "setBackend", "runLabScenario", "armDevImage", "shutdownRemote")
+           "configure", "setBackend", "runLabScenario", "armDevImage", "shutdownRemote", "armRemoteDevImage")
 READ_ONLY = ("AboutPage.qml", "DiagnosticsPage.qml", "LogsPage.qml", "DashboardPage.qml", "PowerPage.qml",
              "MiniDiagPanel.qml", "MiniSystemPanel.qml")
 CALL = re.compile(r"\b(" + "|".join(ACTIONS) + r")\(")
@@ -127,7 +128,7 @@ def test_every_catalog_method_refuses_without_confirmation(ui):
     assert ui.system_info.armDevImage(False) is False
     calls_ = []
     b._module_peer = lambda: type("P", (), {"remote_command": lambda self, op, w: calls_.append(op) or {"ok": True}})()
-    assert b.shutdownRemote(False) is False
+    assert b.shutdownRemote(False) is False and b.armRemoteDevImage(False) is False
     pump(200)
     assert b.revision == rev and b.language == "ru" and ran == [] and calls_ == []
 
@@ -188,6 +189,8 @@ class FakeRemote:
         if op == "log-export":
             return {"ok": True, "result": "ok", "error": "", "req": 1, "name": "sheregesh-remote-log-20261101-120000.txt",
                     "data": b"remote line\n"}
+        if op == "dev-arm":
+            return {"ok": True, "result": "ok", "error": "разрешена установка одного собственного образа", "req": 3}
         return {"ok": True, "result": "ok", "error": "", "req": 2}
 
 
@@ -225,3 +228,25 @@ def test_remote_log_export_writes_file_with_checksum(ui):
     assert (b.usb_dir / name).read_bytes() == b"remote line\n"
     assert (b.usb_dir / f"{name}.sha256").read_text().endswith(f"  {name}\n")
     assert b.lastExport == name and name in b.lastRemoteResult
+
+
+@pytest.mark.test_id("TEST-UPD-005")
+def test_remote_dev_mode_dialog_arms_only_after_confirmation(ui):
+    b, fake = ui.backend, FakeRemote()
+    b._module_peer = lambda: fake
+    ui.window.setProperty("currentIndex", PAGE_NAMES.index("settings"))
+    pump(300)
+    items = {o.objectName(): o for o in ui.window.findChildren(QObject) if o.objectName()}
+    assert "remoteDevModeButton" in items
+    dlg = items["remoteDevDialog"]
+    dlg.open()
+    pump(200)
+    dlg.reject()
+    pump(200)
+    assert fake.calls == []
+    dlg.open()
+    pump(200)
+    dlg.accept()
+    assert wait_until(lambda: fake.calls == ["dev-arm"] and not b.configBusy, 3), fake.calls
+    assert "собственного образа" in b.lastRemoteResult
+

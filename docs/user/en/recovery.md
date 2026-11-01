@@ -43,7 +43,8 @@ revision.
 ## Your own image
 
 An image without the project's signature can be installed once, through the one-time developer mode: "Settings" →
-"Allow one own image…" on the console. The mode lasts 15 minutes and turns off after the first installation. A
+"Allow one own image…" on the console. For the remote unit, use "Allow on remote unit…" next to it: the
+confirmation is also given on the console. The mode lasts 15 minutes and turns off after the first installation. A
 faulty own image rolls back in the same way as a regular one.
 
 ## Full recovery

@@ -195,6 +195,12 @@ Item {
                     enabled: systemInfo.info.available && !systemInfo.busy && !systemInfo.info.devMode
                     onClicked: devDialog.open()
                 }
+                Button {
+                    objectName: "remoteDevModeButton"
+                    text: qsTr("Allow on remote unit…")
+                    enabled: !backend.configBusy && win.st.peerState === "connected" && win.st.peerMode !== "emulated"
+                    onClicked: remoteDevDialog.open()
+                }
             }
             Label {
                 id: devResultLabel
@@ -262,6 +268,24 @@ Item {
             width: devDialog.availableWidth
         }
         onAccepted: systemInfo.armDevImage(true)
+    }
+
+    Dialog {
+        id: remoteDevDialog
+        height: 340 * win.s          // явная высота: иначе цикл привязок implicitHeight в Fusion Dialog
+        onOpened: standardButton(Dialog.Cancel).forceActiveFocus()   // опасное действие: по умолчанию — отказ
+        objectName: "remoteDevDialog"
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: qsTr("Allow one own image on the remote unit?")
+        width: 720 * win.s
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        Label {
+            text: qsTr("The next system update of the remote unit may be an image not signed by the project. Only one installation is allowed within 15 minutes; a faulty image rolls back as usual.")
+            wrapMode: Text.WordWrap
+            width: remoteDevDialog.availableWidth
+        }
+        onAccepted: backend.armRemoteDevImage(true)
     }
 
     Dialog {
