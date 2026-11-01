@@ -58,3 +58,31 @@ def test_remotectl_cli(ui, server, capsys):  # noqa: F811
     assert remotectl.main(["shutdown"]) == 2                                   # без --confirm — ничего не уходит
     assert in_thread(lambda: remotectl.main(["log-export", "--wait", "10", "--socket", server.path]), 25) == 0
     assert '"result": "ok"' in capsys.readouterr().out
+
+
+@pytest.fixture
+def ui_server(ui):  # noqa: F811
+    d = tempfile.mkdtemp(prefix="shy-")
+    srv = ControlServer(ui.backend, os.path.join(d, videoselect.CONSOLE_SOCKET), ui=ui).start()
+    yield srv
+    srv.stop()
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_system_dev_arm_via_control(ui, ui_server):  # noqa: F811
+    """Режим разработчика пульта из локального канала: тот же armDevImage, только с confirmed; итог агента OTA."""
+    ran = []
+
+    def run(argv):
+        ran.append(argv[1])
+        return {"result": "OK", "reason": "allowed for 900 s"} if argv[1] == "dev-arm" \
+            else {"dev_mode": {"armed": 1, "expires": 901}}
+    ui.system_info._run = run
+    assert ask(ui_server.path, {"cmd": "system", "op": "dev-arm"})["result"] == "not-confirmed" and ran == []
+    out = ask(ui_server.path, {"cmd": "system", "op": "dev-arm", "confirmed": True, "wait": 10})
+    assert out["result"] == "ok" and out["detail"] == "allowed for 900 s" and ran.count("dev-arm") == 1, out
+    assert out["system"]["devMode"] is True
+    ui.system_info._run = lambda argv: {"result": "REFUSED", "reason": "not from the console service"}
+    ui.system_info._at = 0.0
+    out = ask(ui_server.path, {"cmd": "system", "op": "dev-arm", "confirmed": True, "wait": 10})
+    assert out["result"] == "refused" and "console service" in out["detail"]

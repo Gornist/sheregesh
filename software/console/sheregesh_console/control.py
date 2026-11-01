@@ -40,6 +40,13 @@ bad-request | busy | failed. Включение из локального кан
 result: ok | not-confirmed (shutdown и dev-arm без "confirmed": true) | busy | timeout | коды PeerClient.remote_command
 (not-connected, unsupported, error, bad-reply …). Выключение из локального канала — только с явным флагом (для QA).
 
+Сведения о системе и разовый режим разработчика пульта (REQ-UPD-005) — тот же слот SystemInfo.armDevImage, что диалог
+«Настройки» → «Разрешить один собственный образ…»; агент OTA принимает его, потому что вызов идёт из службы пульта:
+  {"cmd": "system", "op": "status"}                           → {"result": "ok", "detail": "", "system": I}
+  {"cmd": "system", "op": "dev-arm", "confirmed": true, "wait": 15}  → {"result": ok | refused | not-confirmed | busy
+                                                                  | timeout, "detail": причина агента, "system": I}
+I = SystemInfo.info (слоты, состояние OTA, devMode). Для QA: физической кнопки пульта нет (UPD-005 — только с ней).
+
 Интерфейс (Minimal, испытания GUI-12 и снимки на плате):
   {"cmd": "ui", "op": "state"}                          → {"result": "ok", "detail": "", "ui": P}
   {"cmd": "ui", "op": "open", "section": "video"}       → то же (video | control | module | diagnostics | system | "")
@@ -167,8 +174,8 @@ class ControlServer(QObject):
             req = json.loads(raw.decode("utf-8").strip() or "null")
         except (UnicodeDecodeError, ValueError):
             return self._fail("bad-request", "not a JSON line")
-        if not isinstance(req, dict) or req.get("cmd") not in ("list", "select", "module", "sticks", "ui", "remote"):
-            return self._fail("bad-request", "cmd: list | select | module | sticks | ui | remote")
+        if not isinstance(req, dict) or req.get("cmd") not in ("list", "select", "module", "sticks", "ui", "remote", "system"):
+            return self._fail("bad-request", "cmd: list | select | module | sticks | ui | remote | system")
         if not self._busy.acquire(blocking=False):
             return self._fail("busy", "another request is in progress")
         try:
@@ -180,6 +187,8 @@ class ControlServer(QObject):
                 return self._ui(req)
             if req["cmd"] == "remote":
                 return self._remote(req)
+            if req["cmd"] == "system":
+                return self._system(req)
             snap = self._invoke(self._snapshot)
             if req["cmd"] == "list":
                 return self._reply("ok", "", snap)
@@ -281,6 +290,35 @@ class ControlServer(QObject):
         ok, text, name = self._invoke(lambda: (b._last_ok, b.lastRemoteResult, b.lastExport))
         code = "ok" if ok else (self._invoke(lambda: b.lastRemoteCode) or "failed")
         return {"result": code, "detail": text, "file": name if ok and op == "log-export" else ""}
+
+    # ---------- сведения о системе и режим разработчика пульта ----------
+    def _system(self, req):
+        si = getattr(self.ui, "system_info", None)
+        if si is None:
+            return self._fail("unsupported", "no system info in this process")
+        op, confirmed, wait = req.get("op"), req.get("confirmed", False), req.get("wait", 15.0)
+        if op not in ("status", "dev-arm") or not isinstance(confirmed, bool) or isinstance(wait, bool) \
+                or not isinstance(wait, (int, float)) or set(req) - {"cmd", "op", "confirmed", "wait"}:
+            return {"result": "bad-request", "detail": "op: status | dev-arm; confirmed: bool; wait: s", "system": {}}
+        if op == "status":
+            return {"result": "ok", "detail": "", "system": self._invoke(lambda: dict(si.info))}
+        if confirmed is not True:
+            return {"result": "not-confirmed", "detail": "dev-arm requires \"confirmed\": true", "system": {}}
+        got = {}
+        on = lambda ok, reason: got.update(ok=ok, reason=reason)       # noqa: E731 — итог агента (devResult)
+        self._invoke(lambda: si.devResult.connect(on))
+        try:
+            if not self._invoke(lambda: si.armDevImage(True)):
+                return {"result": "busy", "detail": "system info is being read", "system": {}}
+            end = time.monotonic() + min(max(float(wait), 0.0), WAIT_MAX_S)
+            while not got or self._invoke(lambda: si.busy):
+                if time.monotonic() >= end:
+                    return {"result": "timeout", "detail": f"no result after {wait:g} s", "system": {}}
+                time.sleep(0.1)
+        finally:
+            self._invoke(lambda: si.devResult.disconnect(on))
+        return {"result": "ok" if got["ok"] else "refused", "detail": got["reason"],
+                "system": self._invoke(lambda: dict(si.info))}
 
     # ---------- стики и кнопки → блок (S7) ----------
     def _sticks(self, req):
