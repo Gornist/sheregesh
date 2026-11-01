@@ -612,6 +612,11 @@
         <source>Export removes secrets by template and writes a SHA-256 checksum next to the file.</source>
         <translation>При выгрузке секреты удаляются по шаблону, рядом с файлом записывается контрольная сумма SHA-256.</translation>
     </message>
+    <message>
+        <location filename="../qml/LogsPage.qml" line="41" />
+        <source>Export remote unit log</source>
+        <translation>Выгрузить журнал блока</translation>
+    </message>
 </context>
 <context>
     <name>Main</name>
@@ -2770,6 +2775,31 @@
         <location filename="../qml/SettingsPage.qml" line="241" />
         <source>The next system update may be an image not signed by the project (your own build). Only one installation is allowed within 15 minutes; then the mode turns off. A faulty image rolls back to the current one as usual.</source>
         <translation>Следующим обновлением системы можно установить образ без подписи проекта (собственную сборку). Разрешена одна установка в течение 15 минут, затем режим выключается. Неисправный образ, как обычно, откатится к текущему.</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="162" />
+        <source>Remote unit</source>
+        <translation>Удалённый блок</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="168" />
+        <source>The remote unit has no power button: it is shut down from the console.</source>
+        <translation>У удалённого блока нет кнопки питания: он выключается с пульта.</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="175" />
+        <source>Shut down remote unit…</source>
+        <translation>Выключить удалённый блок…</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="274" />
+        <source>Shut down the remote unit?</source>
+        <translation>Выключить удалённый блок?</translation>
+    </message>
+    <message>
+        <location filename="../qml/SettingsPage.qml" line="278" />
+        <source>The remote unit finishes its services and powers off. The link and video will be lost; to turn the unit on again, switch its power off and on.</source>
+        <translation>Удалённый блок завершит работу служб и выключится. Связь и видео пропадут; чтобы включить блок снова, выключите и включите его питание.</translation>
     </message>
 </context>
 <context>

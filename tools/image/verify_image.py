@@ -392,6 +392,23 @@ def time_checks(rep, root, packages_tsv):
             and "sheregesh-time-peer@" in rules and "stop" not in rules and "restart" not in rules, TIME_POLKIT)
 
 
+REMOTE_POWER_POLKIT = "/etc/polkit-1/rules.d/54-sheregesh-remote-power.rules"
+
+
+def remote_power_checks(rep, root):
+    """Протокол 1.6 (REQ-UI-006): выключение блока с пульта — юнит sheregesh-remote-poweroff (только блок, root,
+    systemctl poweroff) и правило polkit «sheregesh-ui — только start этого юнита»."""
+    unit = root.cat("/usr/lib/systemd/system/sheregesh-remote-poweroff.service")
+    rep.add("remote_power.unit", "юнит выключения блока: только роль remote, systemctl --no-block poweroff",
+            "ConditionPathExists=/home/sheregesh-ui/.config/sheregesh/remote.role" in unit
+            and "ExecStart=/usr/bin/systemctl --no-block poweroff" in unit and "NoNewPrivileges=yes" in unit)
+    rules = root.cat(REMOTE_POWER_POLKIT)
+    rep.add("remote_power.polkit", "polkit: sheregesh-ui — только «start» sheregesh-remote-poweroff.service",
+            'subject.user != "sheregesh-ui"' in rules and 'action.lookup("verb") != "start"' in rules
+            and '!= "sheregesh-remote-poweroff.service"' in rules and rules.count("polkit.Result.YES") == 1
+            and "login1" not in rules, REMOTE_POWER_POLKIT)
+
+
 def hostname_checks(rep, root):
     """Имя системы по роли (пульт pi1, блок pi2): помощник, юнит до systemd-networkd, включён в sysinit."""
     unit = root.cat("/usr/lib/systemd/system/sheregesh-hostname.service")
@@ -530,6 +547,7 @@ def verify(img, variant, out):
             packages_tsv = root.cat("/usr/share/sheregesh/image-packages.tsv")
             video_checks(rep, root, packages_tsv)
             time_checks(rep, root, packages_tsv)
+            remote_power_checks(rep, root)
             hostname_checks(rep, root)
             status = data.cat("/slots/system_a/var/lib/dpkg/status")
             # Установлен — если последнее слово Status «installed» (в т. ч. «purge ok installed» после неудачного purge).

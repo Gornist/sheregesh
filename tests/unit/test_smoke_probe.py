@@ -21,7 +21,8 @@ SERVICES = [{"side": s, "name": n, "state": "active", "restarts": 0}
 @pytest.fixture
 def stand(monkeypatch):
     st = {"t": 1000.0, "soc": 61.0, "sensor": "62300", "services": list(SERVICES), "system": "running",
-          "failed": "0", "events": [], "stopped": False, "fps": 56.6}
+          "failed": "0", "events": [], "stopped": False, "fps": 56.6, "file": ["sum-ok", "48211", "312", "0"],
+          "export": "ok", "off": False, "remotectl": []}
     monkeypatch.setattr(smoke.time, "time", lambda: st["t"])
     monkeypatch.setattr(smoke.time, "monotonic", lambda: st["t"])
     monkeypatch.setattr(smoke.time, "sleep", lambda s: st.__setitem__("t", st["t"] + s))
@@ -48,13 +49,26 @@ def stand(monkeypatch):
             return f"{st['t']}\nok"
         if cmd.startswith("readlink"):
             return "releases/x"
+        if "sheregesh.link.remotectl" in cmd:
+            st["remotectl"].append(cmd)
+            if "shutdown" in cmd:
+                st["off"] = True
+                return json.dumps({"result": "ok", "detail": "", "file": ""})
+            return "noise\n" + json.dumps({"result": st["export"], "detail": "",
+                                            "file": "sheregesh-remote-log-20261101-120000.txt"})
+        if "sha256sum -c" in cmd:
+            return "\n".join(st["file"])
+        if cmd == "echo up":
+            return "" if st["off"] else "up"
+        if "remote unit accepted shutdown" in cmd:
+            return "1"
         return ""
 
     def jread(host, path):
         if path == smoke.UI:
             return {"time": st["t"] - 0.4, "services": st["services"], "events": st["events"],
                     "video": {"mode": "remote-srtp", "state": "playing", "decoded_fps_5s": st["fps"]}}
-        return {"phase": "lost" if st["stopped"] else "connected", "session": "1.5", "peer": PEER,
+        return {"phase": "lost" if st["stopped"] or st["off"] else "connected", "session": "1.5", "peer": PEER,
                 "telemetry": {"temperatures": {"soc": st["soc"]}, "video": {"source": {"input": "hdmi"}}}}
     monkeypatch.setattr(smoke.cvl, "ssh", ssh)
     monkeypatch.setattr(smoke.cvl, "jread", jread)
@@ -122,3 +136,25 @@ def test_protocol_markdown_lists_every_item(stand, tmp_path):
     md = smoke.protocol_md({"time": "t", "console": "c", "remote": "r"}, res, smoke.summary(res, ["P", "R", "S"]))
     assert all(f"| {i} |" in md for i, _, _, _ in smoke.ITEMS)
     assert "## TEST-SMOKE-P: FAIL" in md
+
+
+def test_r5_exports_remote_log_and_checks_file(stand):
+    assert smoke.check_r5("c", "r")["verdict"] == "PASS"
+    stand["file"] = ["sum-bad", "48211", "312", "0"]
+    assert "НЕ сходится" in smoke.check_r5("c", "r")["detail"]
+    stand["file"] = ["sum-ok", "48211", "312", "2"]
+    assert smoke.check_r5("c", "r")["verdict"] == "FAIL"
+    stand["export"] = "unsupported"
+    assert smoke.check_r5("c", "r")["verdict"] == "FAIL"
+
+
+def test_r6_runs_only_with_flag_and_last(stand):
+    res = smoke.run("c", "r", ["R", "S"], {})
+    assert res["R6"]["verdict"] == "MANUAL" and not stand["off"]
+    assert not any("shutdown" in c for c in stand["remotectl"])
+    stand["events"] = []                                                   # подменный стенд: id событий заново
+    res = smoke.run("c", "r", ["R", "S"], {"R6": "PASS"}, shutdown_remote=True)
+    assert list(res)[-1] == "R6" and stand["off"]                          # после всех остальных пунктов
+    assert res["R6"]["verdict"] == "PASS" and "недоступен" in res["R6"]["detail"]
+    assert res["S5"]["verdict"] == "PASS"                                  # S-пункты прошли до выключения
+

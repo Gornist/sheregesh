@@ -8,12 +8,11 @@ AppLog — единственный владелец записей журнал
 import collections
 import hashlib
 import os
-import re
 import time
 
+from sheregesh.redact import REDACT     # фильтр секретов (REQ-SW-005), общий с журналом удалённого блока
+
 LOG_LIMIT = 2000
-# Фильтр секретов для экспорта журналов (REQ-SW-005): шаблоны из docs/security/secrets.md
-REDACT = re.compile(r"SHRG-CANARY-[A-Z]+-[A-Za-z0-9]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?i:(password|passwd|token|secret)\s*[=:]\s*\S+)")
 LEVEL_FILTERS = {0: lambda r: True, 1: lambda r: r["level"] != "info", 2: lambda r: r["level"] == "error"}
 
 

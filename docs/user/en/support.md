@@ -21,9 +21,18 @@ power module on the stand.
 - **"Logs" → "Export to USB"** (in Minimal, the export button in "Diagnostics") saves the log with a checksum;
   secrets in it are replaced with `[REDACTED]`.
 - **"Settings" → "Back up to USB"** saves the configuration.
+- **"Logs" → "Export remote unit log"** saves the remote unit's service log for the current boot to the
+  console's USB, also with a checksum and without secrets.
 
 On the stand, the console's `/var/lib/sheregesh/usb` directory stands in for a USB drive.
 Service logs on a board: `journalctl -u sheregesh-console`, `-u sheregesh-remote-net`, `-u sheregesh-video-tx`.
+
+## Shutting down the remote unit
+
+The remote unit has no power button. It is shut down from the console: "Settings" → "Shut down remote unit…" and
+confirm (Cancel is selected by default). The unit stops its services and powers off; the link and video on the
+console are lost, and the event stays in the logs of both devices. To turn the unit on again, switch its power off
+and on.
 
 ## Settings
 

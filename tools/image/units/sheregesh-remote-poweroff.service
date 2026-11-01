@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Штатное выключение удалённого блока командой с пульта (протокол 1.6, REQ-UI-006): агент sheregesh-remote-net после
+# подтверждения оператора запускает этот юнит (polkit 54-sheregesh-remote-power.rules: sheregesh-ui — только «start»
+# этого юнита, без параметров). Пауза — итог команды успевает уйти пульту; затем обычное выключение systemd (службы
+# завершаются, журнал сохраняется). Только на удалённом блоке.
+[Unit]
+Description=Sheregesh: remote unit shutdown on console command
+ConditionPathExists=/home/sheregesh-ui/.config/sheregesh/remote.role
+RefuseManualStop=yes
+
+[Service]
+Type=oneshot
+User=root
+ExecStartPre=/bin/sleep 1
+ExecStart=/usr/bin/systemctl --no-block poweroff
+TimeoutStartSec=20
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+NoNewPrivileges=yes

@@ -50,6 +50,12 @@ mmdebstrap:
         $1/etc/polkit-1/rules.d/52-sheregesh-video-allow.rules
     - |-
       set -eu
+      # Протокол 1.6 (REQ-UI-006): sheregesh-ui может только «start» sheregesh-remote-poweroff.service — выключение
+      # удалённого блока по подтверждённой команде пульта.
+      install -D -m 0644 "$IGconf_sheregesh_assetdir/54-sheregesh-remote-power.rules" \
+        $1/etc/polkit-1/rules.d/54-sheregesh-remote-power.rules
+    - |-
+      set -eu
       # ADR-0017: время пульт → блок без интернета. chrony (зависимость пакета sheregesh) заменил systemd-timesyncd;
       # chrony.conf без источников — их по роли задаёт sheregesh-time; sheregesh-ui может только «start»
       # sheregesh-time-peer@<адрес|none>.service.

@@ -46,6 +46,7 @@ watchdog к ним неприменим — они завершаются, а и
 | sheregesh-video-nft.service | oneshot | пульт | Таблица nftables видео пульта: UDP 7444/7445 только с адреса блока сеанса | — | — | After: local-fs.target, nftables; PartOf: nftables |
 | sheregesh-video-nft-remote.service | oneshot | блок | Таблица nftables видео блока: UDP 7445 (RTCP) только с адреса пульта сеанса | — | — | After: local-fs.target, nftables; PartOf: nftables |
 | sheregesh-video-allow@.service | oneshot | обе | Адрес второй платы сеанса в таблицу nftables видео | — | — | After: sheregesh-video-nft, sheregesh-video-nft-remote |
+| sheregesh-remote-poweroff.service | oneshot | блок | Штатное выключение блока по подтверждённой команде пульта (протокол 1.6): через 1 с `systemctl poweroff` | — | — | — |
 
 Черновик таблиц составлен локальной моделью Offrail по текстам юнитов и проверен построчно (`Restart=`,
 `WatchdogSec=`, зависимости, роли по условиям); 2026-10-31.

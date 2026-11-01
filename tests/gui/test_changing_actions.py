@@ -7,9 +7,10 @@
   selectVideoSource                     — источник видео на блоке;
   sticks.setEnabled(true)               — включение передачи управления;
   module: requestReinit, requestReset, setEnabled, setAutoInit, configure, setBackend, runLabScenario;
-  systemInfo.armDevImage                — разовый режим разработчика (REQ-UPD-005).
+  systemInfo.armDevImage                — разовый режим разработчика (REQ-UPD-005);
+  shutdownRemote                        — штатное выключение удалённого блока (REQ-UI-006, протокол 1.6).
 Исключение по безопасности: выключение передачи (sticks.setEnabled(false, …)) — сразу и без подтверждения.
-Не изменяют устройство: backup и exportLogs (файл копии или журнала), validateForm, reload, refresh.
+Не изменяют устройство: backup, exportLogs и exportRemoteLogs (файл копии или журнала), validateForm, reload, refresh.
 
 1. Статический обход всех QML: каждый вызов действия каталога с подтверждением (confirmed = true) — только в
    onAccepted отдельного диалога подтверждения (классический интерфейс и Minimal); на экранах только для чтения
@@ -29,7 +30,7 @@ from sheregesh_console.qtwait import pump, wait_until
 
 QQuickStyle.setStyle("Fusion")
 ACTIONS = ("applyForm", "restore", "selectVideoSource", "setEnabled", "requestReinit", "requestReset", "setAutoInit",
-           "configure", "setBackend", "runLabScenario", "armDevImage")
+           "configure", "setBackend", "runLabScenario", "armDevImage", "shutdownRemote")
 READ_ONLY = ("AboutPage.qml", "DiagnosticsPage.qml", "LogsPage.qml", "DashboardPage.qml", "PowerPage.qml",
              "MiniDiagPanel.qml", "MiniSystemPanel.qml")
 CALL = re.compile(r"\b(" + "|".join(ACTIONS) + r")\(")
@@ -124,8 +125,11 @@ def test_every_catalog_method_refuses_without_confirmation(ui):
     ran = []
     ui.system_info._run = lambda argv: ran.append(argv)
     assert ui.system_info.armDevImage(False) is False
+    calls_ = []
+    b._module_peer = lambda: type("P", (), {"remote_command": lambda self, op, w: calls_.append(op) or {"ok": True}})()
+    assert b.shutdownRemote(False) is False
     pump(200)
-    assert b.revision == rev and b.language == "ru" and ran == []
+    assert b.revision == rev and b.language == "ru" and ran == [] and calls_ == []
 
 
 @pytest.mark.test_id("TEST-SYS-009")
@@ -171,3 +175,53 @@ def test_dev_mode_dialog_arms_only_after_confirmation(ui):
     dlg.accept()
     assert wait_until(lambda: "dev-arm" in ran and si.info.get("devMode") is True, 3), ran
     assert ran.count("dev-arm") == 1
+
+
+class FakeRemote:
+    """Клиент канала с remote_command (протокол 1.6): журнал блока и выключение."""
+
+    def __init__(self):
+        self.calls = []
+
+    def remote_command(self, op, wait_s):
+        self.calls.append(op)
+        if op == "log-export":
+            return {"ok": True, "result": "ok", "error": "", "req": 1, "name": "sheregesh-remote-log-20261101-120000.txt",
+                    "data": b"remote line\n"}
+        return {"ok": True, "result": "ok", "error": "", "req": 2}
+
+
+@pytest.mark.test_id("TEST-UI-006")
+def test_remote_shutdown_dialog_sends_only_after_confirmation(ui):
+    """Выключение блока: диалог в «Настройках» (по умолчанию — «Отмена»); отмена — без команды, «ОК» — одна команда
+    shutdown, итог и запись в журнале пульта."""
+    b, fake = ui.backend, FakeRemote()
+    b._module_peer = lambda: fake
+    ui.window.setProperty("currentIndex", PAGE_NAMES.index("settings"))
+    pump(300)
+    items = {o.objectName(): o for o in ui.window.findChildren(QObject) if o.objectName()}
+    assert "remoteShutdownButton" in items
+    dlg = items["remoteShutdownDialog"]
+    dlg.open()
+    pump(200)
+    dlg.reject()
+    pump(200)
+    assert fake.calls == []
+    dlg.open()
+    pump(200)
+    dlg.accept()
+    assert wait_until(lambda: fake.calls == ["shutdown"] and not b.configBusy, 3), fake.calls
+    assert "выключается" in b.lastRemoteResult
+    assert any("shutdown requested by operator" in r["text"] for r in b.logRows(0))
+
+
+@pytest.mark.test_id("TEST-SW-001")
+def test_remote_log_export_writes_file_with_checksum(ui):
+    b, fake = ui.backend, FakeRemote()
+    b._module_peer = lambda: fake
+    assert b.exportRemoteLogs() is True
+    assert wait_until(lambda: not b.configBusy, 3)
+    name = "sheregesh-remote-log-20261101-120000.txt"
+    assert (b.usb_dir / name).read_bytes() == b"remote line\n"
+    assert (b.usb_dir / f"{name}.sha256").read_text().endswith(f"  {name}\n")
+    assert b.lastExport == name and name in b.lastRemoteResult

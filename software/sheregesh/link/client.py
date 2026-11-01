@@ -11,7 +11,7 @@
 (DHCP), но доверие только по сертификату.
 
 Поток канала ждёт данные блока в select вместе с сокетом пробуждения: сообщения от других потоков (video-select,
-module-cmd, кадры органов управления rc) уходят сразу, без ожидания таймаута приёма 0,2 с.
+module-cmd, remote-cmd, кадры органов управления rc) уходят сразу, без ожидания таймаута приёма 0,2 с.
 """
 import ipaddress
 import json
@@ -32,7 +32,7 @@ from ..faults import CATALOG
 from ..hal import PeerStatus
 from ..module import wire
 from ..protocol import negotiate
-from . import discovery, tls
+from . import discovery, remotecmd, tls
 from .requests import LOST, OFFLINE, QUEUED, UNSUPPORTED, Requests
 from .codec import TYPES, BadMessage, Decoder, encode
 
@@ -118,7 +118,8 @@ class PeerClient:
         self._seq = 0
         self._last_peer_seq = None
         self._outbox = []                   # (тип, тело) от других потоков; отправляет только поток канала
-        self._req = Requests()              # video-select и module-cmd: номер и состояние последнего (requests.py)
+        self._req = Requests()              # video-select, module-cmd, remote-cmd: номер и состояние последнего
+        self._rcmd = {}                     # remote-cmd (1.6): req → {"asm": remotecmd.Assembly, "result": dict | None}
         # Органы управления (протокол 1.4, ADR-0013): только последний кадр, не очередь; номер n — в потоке канала
         # при отправке (новое соединение — с 1), поэтому перезаписанные до отправки кадры не дают пропусков номеров.
         self._rc = None                     # тело последнего кадра rc без n, ещё не отправленное
@@ -301,6 +302,75 @@ class PeerClient:
         return {"ok": False, "result": "timeout", "req": req,
                 "error": f"no result in {wait_s:g} s" + (" (still pending)" if cmd and cmd.get("req") == req else "")}
 
+    def remote_command(self, op: str, wait_s: float = 30.0) -> dict:
+        """Обслуживание блока (протокол 1.6, remote-cmd; sheregesh.link.remotecmd): log-export | shutdown.
+
+        Вызывать не из GUI-потока; подтверждение оператора — за вызывающим (shutdown уходит с confirm: true).
+        → {"ok", "result", "error", "req"}, для log-export при ok ещё "name" и "data" (bytes, SHA-256 сверена).
+        result: код блока (remotecmd.RESULTS) | not-connected | unsupported (сессия < 1.6) | timeout | bad-reply
+        (части журнала не сошлись с итогом)."""
+        with self._lock:
+            req = self._req.new("remote-cmd")
+        body = {"req": req, "op": op, **({"confirm": True} if op == "shutdown" else {})}
+        try:
+            remotecmd.check_command(body)
+        except remotecmd.BadCommand as e:
+            return {"ok": False, "result": "bad-request", "error": e.text, "req": req}
+        with self._lock:
+            st = self._st
+            if st.phase != "connected":
+                state = OFFLINE
+            elif "remote-cmd" not in TYPES.get(st.session or "", ()):
+                state = UNSUPPORTED
+            else:
+                state = QUEUED
+                self._rcmd = {req: {"asm": remotecmd.Assembly(req), "result": None}}   # только последний запрос
+                self._outbox.append(("remote-cmd", body))
+            self._req.open("remote-cmd", req, state, op=op)
+            connects, session = self.counters.connects, st.session
+        if state == OFFLINE:
+            return {"ok": False, "result": "not-connected", "error": "no link to remote unit", "req": req}
+        if state == UNSUPPORTED:
+            return {"ok": False, "result": "unsupported", "req": req,
+                    "error": f"remote unit does not support maintenance commands (protocol {session})"}
+        self._wake()
+        deadline = time.monotonic() + max(0.0, wait_s)
+        while not self._stop.is_set():
+            with self._lock:
+                slot = self._rcmd.get(req) or {}
+                res = slot.get("result")
+                if res is not None:
+                    self._req.completed("remote-cmd", req)
+                    self._rcmd.pop(req, None)
+                lost = self._req.state("remote-cmd", req) in LOST \
+                    or self.counters.connects != connects or self._st.phase != "connected"
+            if res is not None:
+                return self._remote_result(req, op, res, slot["asm"])
+            if lost:
+                return {"ok": False, "result": "not-connected", "req": req,
+                        "error": "link lost before the result (outcome unknown)"}
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+        with self._lock:
+            self._req.timed_out("remote-cmd", req)
+            self._rcmd.pop(req, None)
+        return {"ok": False, "result": "timeout", "req": req, "error": f"no result in {wait_s:g} s"}
+
+    @staticmethod
+    def _remote_result(req, op, res, asm):
+        code = res.get("result") if res.get("result") in remotecmd.RESULTS else "error"
+        out = {"ok": code == "ok", "result": code, "error": str(res.get("error") or "")[:200], "req": req}
+        if code == "ok" and op == "log-export":
+            try:
+                out["data"] = asm.finish(res)
+            except ValueError as e:
+                return {"ok": False, "result": "bad-reply", "error": str(e), "req": req}
+            name = str(res.get("name") or "")
+            out["name"] = name if re.fullmatch(r"sheregesh-[a-z]+-log-\d{8}-\d{6}\.txt", name) \
+                else time.strftime("sheregesh-remote-log-%Y%m%d-%H%M%S.txt")
+        return out
+
     def send_rc(self, body: dict) -> str:
         """Кадр органов управления блоку (протокол 1.4, rc; ADR-0013, раздел 3.1). Можно вызывать из любого потока,
         не ждёт: → "queued" | "offline" (нет соединения) | "unsupported" (сессия < 1.4: старый блок или пульт).
@@ -344,6 +414,7 @@ class PeerClient:
                     "peer_uri": self.tls_cfg.peer_uri if self.tls_cfg else None,
                     "video_select": self._req.snapshot("video-select"),
                     "module_cmd": self._req.snapshot("module-cmd"),
+                    "remote_cmd": self._req.snapshot("remote-cmd"),
                     "rc_state": self._rc_state_snapshot(), "rc_sent": self._rc_sent_snapshot()}
 
     def _rc_state_snapshot(self):
@@ -646,6 +717,15 @@ class PeerClient:
                 self._ack(seq)                           # диагностическое подтверждение доставки, не команда
             else:
                 self.counters.ignored_messages += 1
+        elif mtype in ("remote-log", "remote-cmd-result"):
+            with self._lock:
+                slot = self._rcmd.get(body.get("req"))
+                if slot is None or slot["result"] is not None:
+                    self.counters.ignored_messages += 1      # не наш (устаревший) req
+                elif mtype == "remote-log":
+                    slot["asm"].add(body)
+                else:
+                    slot["result"] = dict(body)
         elif mtype == "bye":
             self._set(detail="closed")
 
@@ -657,7 +737,7 @@ class PeerClient:
             if mtype not in TYPES.get(self._st.session or "", ()):
                 continue
             self._send(sock, mtype, body)                # OSError — обрыв: обрабатывает _session
-            if mtype in ("video-select", "module-cmd"):
+            if mtype in ("video-select", "module-cmd", "remote-cmd"):
                 with self._lock:
                     self._req.sent(mtype, body["req"])
         with self._lock:

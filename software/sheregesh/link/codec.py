@@ -4,7 +4,7 @@
 
 Набор типов закрыт по версиям: сообщение исполняется, только если его тип есть в версии сессии (CHG-012).
 1.2: выбор видеоисточника video-select; 1.3: команда подсистеме внешнего модуля module-cmd; 1.4: кадры органов
-управления rc и их состояние на блоке rc-state — см. TYPES.
+управления rc и их состояние на блоке rc-state; 1.5: видеосеанс SRTP; 1.6: обслуживание блока remote-cmd — см. TYPES.
 """
 import json
 from dataclasses import dataclass
@@ -37,6 +37,10 @@ TYPES["1.4"] = TYPES["1.3"] | {"rc", "rc-state"}
 # нужен новый ключ и SSRC) — пульт → блок, video-stop — блок → пульт.
 # Схемы и правила устаревания — sheregesh.videosvc.session и docs/architecture/VIDEO-SERVICE-CONTRACT.md §6.
 TYPES["1.5"] = TYPES["1.4"] | {"video-key", "video-key-ack", "video-stop", "video-fallback", "video-renew"}
+# 1.6: обслуживание удалённого блока с пульта — remote-cmd (пульт → блок: log-export | shutdown с confirm), remote-log
+# (блок → пульт: части журнала блока) и remote-cmd-result (блок → пульт: итог). Схемы — sheregesh.link.remotecmd.
+# Сессия 1.5 (старый пульт или старый блок) их не отправляет и не исполняет: на пульте — «не поддерживается».
+TYPES["1.6"] = TYPES["1.5"] | {"remote-cmd", "remote-log", "remote-cmd-result"}
 
 
 @dataclass(frozen=True)

@@ -31,8 +31,17 @@ Item {
                 objectName: "exportLogsButton"
                 text: qsTr("Export to USB")
                 KeyNavigation.left: levelBox
+                KeyNavigation.right: remoteExportButton
                 enabled: !backend.configBusy
                 onClicked: backend.exportLogs()
+            }
+            Button {
+                id: remoteExportButton
+                objectName: "exportRemoteLogsButton"
+                text: qsTr("Export remote unit log")
+                KeyNavigation.left: exportButton
+                enabled: !backend.configBusy && win.st.peerState === "connected"
+                onClicked: backend.exportRemoteLogs()
             }
         }
         Label {

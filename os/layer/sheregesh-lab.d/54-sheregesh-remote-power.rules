@@ -1,0 +1,12 @@
+// SPDX-FileCopyrightText: 2026 Sheregesh contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Все образы (протокол 1.6, REQ-UI-006): пользователь sheregesh-ui может только ЗАПУСТИТЬ (verb "start") юнит
+// sheregesh-remote-poweroff.service — штатное выключение удалённого блока по подтверждённой команде пульта. Сам юнит
+// работает только на блоке (ConditionPathExists роли). Других прав на питание и юниты правило не даёт.
+polkit.addRule(function(action, subject) {
+    if (subject.user != "sheregesh-ui") { return polkit.Result.NOT_HANDLED; }
+    if (action.id != "org.freedesktop.systemd1.manage-units") { return polkit.Result.NOT_HANDLED; }
+    if (action.lookup("verb") != "start") { return polkit.Result.NOT_HANDLED; }
+    if (String(action.lookup("unit")) != "sheregesh-remote-poweroff.service") { return polkit.Result.NOT_HANDLED; }
+    return polkit.Result.YES;
+});

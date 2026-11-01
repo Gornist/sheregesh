@@ -5,7 +5,7 @@
 import re
 
 __version__ = "0.1.0.dev0"            # версия пакета Python (PEP 440); снаружи — SemVer (semver)
-PROTOCOL_VERSION = "1.5"
+PROTOCOL_VERSION = "1.6"
 
 _PEP440 = re.compile(r"(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?(?:\.post(\d+))?(?:\.dev(\d+))?(?:\+([0-9A-Za-z.]+))?")
 _PRE = {"a": "alpha", "b": "beta", "rc": "rc"}

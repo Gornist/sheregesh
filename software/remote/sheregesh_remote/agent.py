@@ -25,9 +25,10 @@ video-input.json, результат — в status.video.select.
 crsf-uart (JR-модуль на UART3) командой module-cmd configure, сторож команд питает CrsfOutput: модуль не READY — кадров
 каналов нет (none), IDLE/FAILSAFE — нейтраль (neutral), ACTIVE — каналы пульта (live); режим и снимок выхода — в
 status.module (output, crsf). По умолчанию бэкенд lab-emulator — поведение S6/S7, выхода нет.
-От пульта принимает только hello, ack, bye, (сессия ≥ 1.2) video-select, (сессия ≥ 1.3) module-cmd и (сессия ≥ 1.4)
-rc; остальные сообщения не исполняются, а учитываются. Команд ОС от пульта нет; устройства — только видеовход и
-выход CRSF выбранного бэкенда модуля.
+От пульта принимает только hello, ack, bye, (сессия ≥ 1.2) video-select, (сессия ≥ 1.3) module-cmd, (сессия ≥ 1.4)
+rc и (сессия ≥ 1.6) remote-cmd; остальные сообщения не исполняются, а учитываются. Произвольных команд ОС от пульта
+нет: remote-cmd — только выгрузка журнала блока и штатное выключение с подтверждением (maintenance.py); устройства —
+только видеовход и выход CRSF выбранного бэкенда модуля.
 
 Неисправности для испытаний задаются расписанием (--fault AT:KIND[:ARG]), время — в секундах от старта:
   silence:DUR   не отправлять heartbeat и status DUR секунд (соединение не рвётся)
@@ -51,6 +52,7 @@ from pathlib import Path
 
 from sheregesh import PROTOCOL_VERSION, __version__, info, sdnotify, services, timepeer, video, videoinput, videosources
 from sheregesh.videoingest import Ingest
+from .maintenance import Maintenance, remember
 from .session import ConsoleSession
 from .videotx import VideoTx
 from sheregesh.control import wire as control_wire
@@ -152,6 +154,9 @@ class Agent:
         self.rc_state_at = 0.0                      # monotonic последней отправки rc-state
         self.rc_state_task = None                   # отправка rc-state не задерживает такт сторожа
         self.control_written = None                 # control.transitions в последнем записанном файле состояния
+        # Обслуживание с пульта (протокол 1.6): журнал блока и выключение — отдельной задачей, приём не ждёт
+        self.maint = Maintenance(network=self.tls_cfg is not None, log=lambda s: log(f"maintenance: {s}"))
+        self.maint_task = None
 
     def open_video_source(self, spec=None):
         a = self.args
@@ -553,6 +558,18 @@ class Agent:
         if self.conn is conn:                       # итог (или pending) — сразу, не ждать heartbeat
             await self.send_status()
 
+    async def on_remote_cmd(self, conn, mtype, body):
+        if self.maint_task is not None and not self.maint_task.done():    # одна команда за раз
+            req = body.get("req") if isinstance(body.get("req"), int) else 0
+            await self.send("remote-cmd-result", {"req": req, "op": str(body.get("op", ""))[:32], "result": "busy",
+                                                  "error": "another command runs"}, conn.writer)
+            return
+        self.maint_task = asyncio.ensure_future(self.maint.handle(body, self.reply_to(conn)))
+
+    def reply_to(self, conn):
+        """Отправка только сеансу conn: после его замены части журнала и итог не уходят новому пульту."""
+        return lambda mtype, body: self.send(mtype, body, conn.writer)
+
     async def on_rc(self, conn, mtype, body):
         mono = time.monotonic()
         try:
@@ -575,7 +592,8 @@ class Agent:
             st["events_acked"] += 1
 
     HANDLERS = {"video-select": on_video_select, "video-key-ack": on_video_session, "video-fallback": on_video_session,
-                "video-renew": on_video_session, "module-cmd": on_module_cmd, "rc": on_rc, "ack": on_ack}
+                "video-renew": on_video_session, "module-cmd": on_module_cmd, "rc": on_rc, "ack": on_ack,
+                "remote-cmd": on_remote_cmd}
 
     # ---------- органы управления ----------
     def control_tick(self, mono):
@@ -696,6 +714,7 @@ class Agent:
 
 
 def log(text):
+    remember(text)                                   # журнал агента для выгрузки в эмуляторе (maintenance.RING)
     print(f"[remote] {text}", file=sys.stderr, flush=True)
 
 

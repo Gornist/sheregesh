@@ -5,6 +5,7 @@
 import collections
 import platform
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -70,7 +71,15 @@ RESULTS = {
     "config-busy": {"ru": "Не выполнено: ещё идёт предыдущая операция с конфигурацией или файлами",
                     "en": "Not done: a previous configuration or file operation is still running"},
     "op-failed": {"ru": "Операция не выполнена: {reason}", "en": "Operation failed: {reason}"},
+    "remote-logs": {"ru": "Журнал удалённого блока выгружен: {name} ({size} байт)",
+                    "en": "Remote unit log exported: {name} ({size} bytes)"},
+    "remote-off": {"ru": "Удалённый блок выключается по команде пульта", "en": "The remote unit is shutting down on command"},
+    "remote-failed": {"ru": "Удалённый блок: не выполнено ({result}{reason})",
+                      "en": "Remote unit: not done ({result}{reason})"},
 }
+# Обслуживание блока (протокол 1.6): ожидание итога выгрузки журнала (journalctl + до 2 МБ по каналу) и выключения
+REMOTE_LOG_WAIT_S = 45.0
+REMOTE_OFF_WAIT_S = 10.0
 
 
 def _about_static():
@@ -235,6 +244,8 @@ class Backend(QObject):
         self._events_rev = 0
         self._last_result = ""
         self._last_export = ""
+        self._last_remote = ""                      # итог последней команды обслуживания блока (протокол 1.6)
+        self.lastRemoteCode = ""                    # … её код (remote_command result) — для локального канала
         self._last_ok = False                       # итог последней операции с конфигурацией или файлами
         # Применение, резервная копия, восстановление и выгрузка журнала — вне потока интерфейса (configops.py):
         # итог приходит сигналом, состояние (ревизия, монитор, события) меняется только здесь.
@@ -301,6 +312,8 @@ class Backend(QObject):
     # ---------- журнал приложения ----------
     def log(self, level, source, text):
         self._log.add(level, source, text)
+        if source == "remote":                      # обслуживание блока — ещё и в журнал службы (REQ-UI-006)
+            print(f"[console] remote: {level}: {text}", file=sys.stderr, flush=True)
 
     # ---------- представление ----------
     @property
@@ -583,6 +596,48 @@ class Backend(QObject):
             return name, count
         return self._ops.submit("logs", run)
 
+    def _remote_call(self):
+        return getattr(self._module_peer(), "remote_command", None)
+
+    @Slot(result=bool)
+    def exportRemoteLogs(self):
+        """Журнал удалённого блока на «USB» пульта (протокол 1.6, REQ-SW-001/005): блок фильтрует секреты, пульт сверяет
+        SHA-256 частей и пишет файл с контрольной суммой рядом. False — идёт другая операция."""
+        if self._refuse_busy():
+            return False
+        call, usb = self._remote_call(), self.usb_dir
+
+        def run():
+            if not callable(call):
+                return {"ok": False, "result": "unsupported", "error": "no link to remote unit"}
+            r = call("log-export", REMOTE_LOG_WAIT_S)
+            if r.get("ok"):
+                data = r.pop("data")
+                logops.write_export(usb, r["name"], data)
+                r["size"] = len(data)
+            return r
+        self.log("info", "remote", "log export requested")
+        return self._ops.submit("remote-logs", run)
+
+    @Slot(bool, result=bool)
+    def shutdownRemote(self, confirmed):
+        """Штатное выключение удалённого блока командой с пульта (REQ-UI-006): только с подтверждением оператора;
+        событие — в журналах обоих устройств."""
+        if not confirmed or self._refuse_busy():
+            return False
+        call = self._remote_call()
+
+        def run():
+            if not callable(call):
+                return {"ok": False, "result": "unsupported", "error": "no link to remote unit"}
+            return call("shutdown", REMOTE_OFF_WAIT_S)
+        self.log("warning", "remote", "shutdown requested by operator (confirmed)")
+        return self._ops.submit("remote-shutdown", run)
+
+    @Property(str, notify=configChanged)
+    def lastRemoteResult(self):
+        return self._last_remote
+
     @Property(str, notify=configChanged)
     def lastExport(self):
         return self._last_export
@@ -685,6 +740,27 @@ class Backend(QObject):
             self._last_result = self._result("logs", name=name, count=count)
             self.log("info", "logs", f"exported {name}")
             self.configChanged.emit()
+        elif op in ("remote-logs", "remote-shutdown"):
+            self._remote_done(op, result)
+
+    def _remote_done(self, op, r):
+        self._last_ok = bool(r.get("ok"))
+        self.lastRemoteCode = str(r.get("result") or ("ok" if self._last_ok else "error"))
+        if not self._last_ok:
+            reason = f": {r['error']}" if r.get("error") else ""
+            self._last_result = self._result("remote-failed", result=r.get("result", "error"), reason=reason)
+            self.log("warning", "remote", f"{op} {r.get('result')} {r.get('error', '')}".strip())
+            self.message.emit("error", self._last_result)
+        elif op == "remote-logs":
+            self._last_export = r["name"]
+            self._last_result = self._result("remote-logs", name=r["name"], size=r.get("size", "?"))
+            self.log("info", "remote", f"remote log exported {r['name']}")
+        else:
+            self._last_result = self._result("remote-off")
+            self.log("warning", "remote", "remote unit accepted shutdown: link loss is expected")
+            self.message.emit("info", self._last_result)
+        self._last_remote = self._last_result
+        self.configChanged.emit()
 
     def _files_from_form(self, form: dict):
         fields = {name: list(spec["schema"]["properties"]) for name, spec in self.schema.files.items()}

@@ -159,6 +159,25 @@ Item {
                 Layout.fillWidth: true
             }
 
+            Label { text: qsTr("Remote unit"); font.bold: true }
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    objectName: "remoteShutdownLabel"
+                    text: backend.lastRemoteResult !== "" ? backend.lastRemoteResult
+                          : qsTr("The remote unit has no power button: it is shut down from the console.")
+                    color: win.p.muted
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+                Button {
+                    objectName: "remoteShutdownButton"
+                    text: qsTr("Shut down remote unit…")
+                    enabled: !backend.configBusy && win.st.peerState === "connected" && win.st.peerMode !== "emulated"
+                    onClicked: remoteOffDialog.open()
+                }
+            }
+
             Label { text: qsTr("Developer mode"); font.bold: true }
             RowLayout {
                 Layout.fillWidth: true
@@ -243,6 +262,24 @@ Item {
             width: devDialog.availableWidth
         }
         onAccepted: systemInfo.armDevImage(true)
+    }
+
+    Dialog {
+        id: remoteOffDialog
+        height: 340 * win.s          // явная высота: иначе цикл привязок implicitHeight в Fusion Dialog
+        onOpened: standardButton(Dialog.Cancel).forceActiveFocus()   // опасное действие: по умолчанию — отказ
+        objectName: "remoteShutdownDialog"
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: qsTr("Shut down the remote unit?")
+        width: 720 * win.s
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        Label {
+            text: qsTr("The remote unit finishes its services and powers off. The link and video will be lost; to turn the unit on again, switch its power off and on.")
+            wrapMode: Text.WordWrap
+            width: remoteOffDialog.availableWidth
+        }
+        onAccepted: backend.shutdownRemote(true)
     }
 
     Dialog {

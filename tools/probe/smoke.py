@@ -5,12 +5,15 @@
 и TEST-SMOKE-S (совместная работа) по пунктам реестра. С машины владельца по SSH.
 
   python3 tools/probe/smoke.py --console 192.168.1.94 --remote 192.168.1.173 --out DIR [--suite P,R,S]
-                               [--interactive | --manual FILE.json] [--exchange-s 300]
+                               [--interactive | --manual FILE.json] [--exchange-s 300] [--shutdown-remote]
 
 Пункты, которые проверяются с машины владельца, — автоматически; пункты рук и глаз оператора (касание, физические
 органы, USB, кабель, кнопка питания, индикатор) — вопросом оператору (--interactive) или ответами из файла (--manual:
 {"P2": "PASS", "P3": "FAIL: Esc не закрывает диалог", ...}); без ответа — MANUAL, и протокол не PASS. Холодной
-перезагрузки и выключения проба не делает: эти пункты — оператору. Итог набора — PASS, только если каждый пункт PASS.
+перезагрузки и выключения пульта проба не делает. R5 — журнал блока выгружается командой пульта (remotectl, тот же слот,
+что кнопка «Выгрузить журнал блока») и проверяется на «USB» пульта. R6 выключает блок только с --shutdown-remote
+(после него блок включает оператор, питание): команда с пульта, блок пропадает из сети, в журнале пульта — событие;
+индикатор — оператору. Итог набора — PASS, только если каждый пункт PASS.
 В DIR: smoke.json, PROTOCOL.md.
 """
 import argparse
@@ -26,6 +29,10 @@ import check_video_link as cvl  # noqa: E402
 UI, C_STATUS = cvl.UI, cvl.C_STATUS
 MANDATORY = {"console": ("console", "video-rx"), "remote": ("remote-net", "video-tx")}
 TEMP_TOLERANCE_C = 5.0
+REL = "C=$(readlink -f /var/lib/sheregesh-deploy/current 2>/dev/null || echo /usr/lib/sheregesh)"
+USB = "/var/lib/sheregesh/usb"
+SECRETS = "SHRG-CANARY|PRIVATE KEY|key_b64.:..[A-Za-z0-9+/]{8}"
+OFF_WITHIN_S = 60.0
 MIN_FPS = 25.0
 
 # (пункт, набор, текст реестра, кто проверяет)
@@ -41,8 +48,8 @@ ITEMS = [
     ("R2", "R", "Службы: состояние всех обязательных служб видно на пульте и равно active", "auto"),
     ("R3", "R", "Настройки: изменить, применить и подтвердить тестовый параметр через пульт", "manual"),
     ("R4", "R", "Диагностика: паспорт и температура видны на пульте", "auto"),
-    ("R5", "R", "Журналы: экспорт журналов удалённого блока на USB пульта", "manual"),
-    ("R6", "R", "Штатное выключение командой с пульта; индикатор гаснет; журнал завершён", "manual"),
+    ("R5", "R", "Журналы: экспорт журналов удалённого блока на USB пульта", "auto"),
+    ("R6", "R", "Штатное выключение командой с пульта; индикатор гаснет; журнал завершён", "auto+manual"),
     ("S1", "S", "Рукопожатие, проверка совместимости версий", "auto"),
     ("S2", "S", "Обмен тестовыми данными без потерь", "auto"),
     ("S3", "S", f"Видео с удалённого блока на пульте ≥ {MIN_FPS:.0f} к/с", "auto"),
@@ -128,6 +135,50 @@ def check_r4(ch, rh):
                 peer=peer, info=info, temp_shown_c=shown, temp_sensor_c=real)
 
 
+def remotectl(ch, args, timeout):
+    """remotectl на пульте (выпуск пульта, локальный канал работающего пульта) → последний JSON-ответ."""
+    out = cvl.ssh(ch, f"{REL}; PYTHONPATH=$C/software python3 -m sheregesh.link.remotectl {args} 2>&1", timeout=timeout)
+    for line in reversed(out.splitlines()):
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(r, dict) and "result" in r:
+            return r
+    return {"result": "failed", "detail": out[-200:]}
+
+
+def check_r5(ch, rh):
+    """Журнал блока на «USB» пульта: файл, контрольная сумма сходится, записи служб блока есть, секретов нет."""
+    r = remotectl(ch, "log-export --wait 60", 100)
+    name = r.get("file") or ""
+    if r.get("result") != "ok" or not name.startswith("sheregesh-remote-log-"):
+        return item("FAIL", f"выгрузка: {r.get('result')} {r.get('detail', '')}".strip(), reply=r)
+    out = cvl.ssh(ch, f"cd {USB} && (sha256sum -c {name}.sha256 >/dev/null 2>&1 && echo sum-ok || echo sum-bad); "
+                      f"wc -c < {name}; grep -c sheregesh-remote {name}; grep -cE '{SECRETS}' {name}").split()
+    summed, size, svc, leaks = (out + ["", "", "", ""])[:4]
+    good = summed == "sum-ok" and svc.isdigit() and int(svc) > 0 and leaks == "0"
+    return item("PASS" if good else "FAIL", f"{name}: {size} байт, контрольная сумма "
+                f"{'сходится' if summed == 'sum-ok' else 'НЕ сходится'}, записей служб блока {svc}, секретов {leaks or '?'}",
+                file=name, size=size, service_lines=svc, secrets=leaks)
+
+
+def check_r6(ch, rh):
+    """Только с --shutdown-remote: команда выключения с пульта, блок пропадает из сети, событие в журнале пульта."""
+    r = remotectl(ch, "shutdown --confirm --wait 15", 40)
+    if r.get("result") != "ok":
+        return item("FAIL", f"команда выключения: {r.get('result')} {r.get('detail', '')}".strip(), reply=r)
+    t0 = time.monotonic()
+    gone = cvl.wait(lambda: cvl.ssh(rh, "echo up", timeout=10) != "up", OFF_WITHIN_S)
+    lost = cvl.wait(lambda: cvl.jread(ch, C_STATUS).get("phase") != "connected", 15)
+    jr = cvl.ssh(ch, "journalctl -u sheregesh-console --since -5min --no-pager | grep -c 'remote unit accepted shutdown'")
+    ok = gone is not None and lost is not None and jr.isdigit() and int(jr) > 0
+    return item("PASS" if ok else "FAIL", f"принято; блок недоступен через {gone} с, связь на пульте потеряна "
+                f"через {lost} с, событий в журнале пульта {jr}; журнал блока завершён — после включения "
+                "(journalctl -b -1)", off_after_s=gone, link_lost_s=lost, console_log=jr,
+                elapsed_s=round(time.monotonic() - t0, 1), abort=True)
+
+
 def check_s1(ch, rh):
     st = cvl.jread(ch, C_STATUS)
     peer = st.get("peer") or {}
@@ -183,8 +234,8 @@ def check_s5(ch, rh, pause=6):
                 event_after_s=seen, reconnect_s=back)
 
 
-AUTO = {"P1": check_p1, "P4": check_p4, "R1": check_r1, "R2": check_r2, "R4": check_r4, "S1": check_s1,
-        "S3": check_s3, "S5": check_s5}
+AUTO = {"P1": check_p1, "P4": check_p4, "R1": check_r1, "R2": check_r2, "R4": check_r4, "R5": check_r5,
+        "R6": check_r6, "S1": check_s1, "S3": check_s3, "S5": check_s5}
 
 
 def ask(iid, text, auto=None):
@@ -212,12 +263,16 @@ def combine(auto, op):
     return {**auto, "verdict": op["verdict"], "detail": f"{auto['detail']}; оператор: {op['detail']}", "operator": op}
 
 
-def run(ch, rh, suites, answers, interactive=False, exchange_s=300.0):
+def run(ch, rh, suites, answers, interactive=False, exchange_s=300.0, shutdown_remote=False):
+    """R6 выключает блок: только с shutdown_remote и последним (после него блока нет — остальные пункты раньше)."""
     out = {}
-    for iid, suite, text, how in ITEMS:
+    order = [i for i in ITEMS if i[0] != "R6"] + [i for i in ITEMS if i[0] == "R6"]
+    for iid, suite, text, how in order:
         if suite not in suites:
             continue
         auto = None
+        if iid == "R6" and not shutdown_remote:
+            how = "manual"
         if how.startswith("auto"):
             fn = AUTO.get(iid)
             try:
@@ -270,6 +325,8 @@ def main(argv=None):
     ap.add_argument("--interactive", action="store_true")
     ap.add_argument("--manual", type=Path, help="ответы оператора JSON {пункт: «PASS» | «FAIL: причина»}")
     ap.add_argument("--exchange-s", type=float, default=300.0, help="S2: окно обмена, с (реестр — 5 мин)")
+    ap.add_argument("--shutdown-remote", action="store_true",
+                    help="R6: выключить блок командой с пульта (последним пунктом; включает блок оператор)")
     a = ap.parse_args(argv)
     suites = [s.strip().upper() for s in a.suite.split(",") if s.strip()]
     answers = json.loads(a.manual.read_text()) if a.manual else {}
@@ -278,7 +335,7 @@ def main(argv=None):
     meta = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "console": a.console, "remote": a.remote,
             "release_console": cvl.ssh(a.console, rel), "release_remote": cvl.ssh(a.remote, rel),
             "exchange_s": a.exchange_s}
-    results = run(a.console, a.remote, suites, answers, a.interactive, a.exchange_s)
+    results = run(a.console, a.remote, suites, answers, a.interactive, a.exchange_s, a.shutdown_remote)
     by = summary(results, suites)
     (a.out / "smoke.json").write_text(json.dumps({"meta": meta, "tests": by, "items": results}, ensure_ascii=False,
                                                  indent=1))
