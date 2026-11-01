@@ -378,7 +378,6 @@ def test_leftover_temporary_revision_removed(store):
 
 
 # ---------------- снимки и слоты ----------------
-@pytest.mark.test_id("TEST-CFG-009")
 def test_three_latest_snapshots_kept_and_valid(store):
     for i in range(4):
         assert store.apply(changed(system__screen_timeout_s=10 + i), OK).ok
@@ -405,7 +404,6 @@ def test_slot_rollback_activates_bound_revision(tmp_path):
 
 
 # ---------------- резервные копии ----------------
-@pytest.mark.test_id("TEST-CFG-008")
 def test_backup_roundtrip_requires_confirmation(store, tmp_path):
     store.apply(changed(system__language="en"), OK)
     path = store.backup(tmp_path)
@@ -418,7 +416,6 @@ def test_backup_roundtrip_requires_confirmation(store, tmp_path):
     assert store.active().files == saved
 
 
-@pytest.mark.test_id("TEST-CFG-008")
 @pytest.mark.parametrize("damage", ["bitflip", "truncated", "wrong-device", "newer-schema", "extra-member"])
 def test_backup_damage_or_incompatibility_rejected(store, tmp_path, damage):
     import io
@@ -457,7 +454,6 @@ def test_backup_damage_or_incompatibility_rejected(store, tmp_path, damage):
     assert store.state() == before
 
 
-@pytest.mark.test_id("TEST-CFG-007")
 def test_backup_contains_no_secrets(store, tmp_path):
     secrets = store.root.parent / "secrets"
     secrets.mkdir()
