@@ -171,7 +171,8 @@ def check_r6(ch, rh):
     t0 = time.monotonic()
     gone = cvl.wait(lambda: cvl.ssh(rh, "echo up", timeout=10) != "up", OFF_WITHIN_S)
     lost = cvl.wait(lambda: cvl.jread(ch, C_STATUS).get("phase") != "connected", 15)
-    jr = cvl.ssh(ch, "journalctl -u sheregesh-console --since -5min --no-pager | grep -c 'remote unit accepted shutdown'")
+    # Процесс пульта пишет в журнал сеанса cage (PAM), не юнита sheregesh-console: поиск по журналу загрузки
+    jr = cvl.ssh(ch, "journalctl -b --since -5min --no-pager -o cat | grep -c 'remote unit accepted shutdown'")
     ok = gone is not None and lost is not None and jr.isdigit() and int(jr) > 0
     return item("PASS" if ok else "FAIL", f"принято; блок недоступен через {gone} с, связь на пульте потеряна "
                 f"через {lost} с, событий в журнале пульта {jr}; журнал блока завершён — после включения "

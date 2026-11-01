@@ -314,7 +314,7 @@ class Backend(QObject):
     # ---------- журнал приложения ----------
     def log(self, level, source, text):
         self._log.add(level, source, text)
-        if source == "remote":                      # обслуживание блока — ещё и в журнал службы (REQ-UI-006)
+        if source == "remote":                      # обслуживание блока — ещё и в системный журнал (REQ-UI-006)
             print(f"[console] remote: {level}: {text}", file=sys.stderr, flush=True)
 
     # ---------- представление ----------
