@@ -120,6 +120,7 @@ def test_plain_tcp_and_tls_without_client_certificate_are_rejected(lab):
                     data = s.recv(4096)
                     assert data == b""
                     raise ConnectionError("closed without data")
+        time.sleep(1)       # отказ рукопожатия агент пишет после закрытия клиентом; stderr читается только после stop()
     finally:
         a.stop()
     assert a.stderr().count("auth:") >= 2

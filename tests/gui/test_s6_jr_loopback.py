@@ -320,6 +320,7 @@ def test_jr01_to_jr07_lab_scenarios_through_console(loop):
     t0 = time.monotonic()
     m = {"detach_result": loop.lab("detach")}
     m["absent_s"] = loop.wait(loop.ui, J.ui_state_is("DISCONNECTED", J.STATE_TEXT["DISCONNECTED"]), 8, t0)[0]
+    loop.status()                     # снимок output в DISCONNECTED: до attach состояние не меняется (опрос — 0,3 с)
     t1 = time.monotonic()
     m["attach_result"] = loop.lab("attach")
     m["ready_s"] = ready_ui(loop, 20, t1)[0]
