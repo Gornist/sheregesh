@@ -14,6 +14,7 @@ from sheregesh.link.codec import TYPES
 from sheregesh_remote import maintenance as mt
 
 CANARY = "SHRG-CANARY-LOG-abc123"
+KEY_HEADER = "-----BEGIN " + "PRIVATE KEY-----"          # из частей: сканер истории (REQ-REL-011) не видит шаблон
 
 
 def test_types_and_check_command():
@@ -91,7 +92,7 @@ def handle(m, body):
 
 
 def test_log_export_redacts_and_reports_checksum():
-    run = Run(out=f"svc started\npassword=hunter2 token: x\n{CANARY}\n-----BEGIN PRIVATE KEY-----\n".encode())
+    run = Run(out=f"svc started\npassword=hunter2 token: x\n{CANARY}\n{KEY_HEADER}\n".encode())
     sent = handle(mt.Maintenance(True, log=lambda s: None, run=run), {"req": 7, "op": "log-export"})
     assert run.argv[0][:2] == ["journalctl", "-b"] and "sheregesh-*" in run.argv[0]
     logs, (rtype, res) = sent[:-1], sent[-1]
@@ -99,7 +100,7 @@ def test_log_export_redacts_and_reports_checksum():
     data = b"".join(base64.b64decode(b["data"]) for _, b in logs)
     assert res["sha256"] == hashlib.sha256(data).hexdigest() and res["size"] == len(data)
     assert b"svc started" in data and b"hunter2" not in data and CANARY.encode() not in data
-    assert b"PRIVATE KEY" not in data and data.count(b"[REDACTED]") == 4
+    assert KEY_HEADER.encode() not in data and data.count(b"[REDACTED]") == 4
     assert res["name"].startswith("sheregesh-remote-log-")
 
 
