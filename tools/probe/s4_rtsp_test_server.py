@@ -181,6 +181,8 @@ class Server:
             s.close()
         for p in procs:
             self._kill(p)
+        with self.lock:                     # поток _stream уберёт их позже сам; к возврату stop() учёт уже пуст
+            self.procs.difference_update(procs)
 
     # ---------- RTSP ----------
     def _accept(self, lsock):

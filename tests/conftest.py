@@ -22,6 +22,19 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 _results = {}
 
 
+@pytest.fixture(autouse=True)
+def _no_stand_lookup(monkeypatch):
+    """Тесты не ищут платы стенда: «auto» в --console/--remote разрешается в имя платы без SSH и сканирования сети
+    (иначе на машине со стендом тест ходит на настоящую плату, а в CI падает «плата не найдена»).
+    Сам поиск проверяет tests/tools/test_stand_boards.py."""
+    import sys
+    tools = str(ROOT / "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    from stand import boards
+    monkeypatch.setattr(boards, "resolve", lambda board, host=None, **kw: board if host in (None, boards.AUTO) else host)
+
+
 def _git_rev():
     try:
         return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True,
