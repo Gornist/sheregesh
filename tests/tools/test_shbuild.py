@@ -148,7 +148,7 @@ class ShbuildTest(unittest.TestCase):
         text = (ROOT / "tools/build/boot_check.sh").read_text()
         probe = (ROOT / "tools/build/vm/probe.sh").read_text()
         init = (ROOT / "tools/build/vm/init").read_text()
-        self.assertEqual(sb.BOOT_SCENARIOS, ("console", "remote", "fresh"))
+        self.assertEqual(sb.BOOT_SCENARIOS, ("console", "remote", "fresh", "offline"))
         self.assertNotIn("--privileged", text)
         self.assertIn("qemu-system-aarch64 -M virt", text)
         self.assertIn("readonly=on", text)                       # модули — только чтение; образ — через оверлей

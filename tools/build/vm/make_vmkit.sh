@@ -10,7 +10,7 @@
 set -euo pipefail
 KIT=${1:-$HOME/shbuild/vm}
 mkdir -p "$KIT"
-if [ -s "$KIT/vmlinuz" ] && [ -s "$KIT/modules.ext4" ] && tar -tf "$KIT/modules.tar" | grep -q "/modules.dep$" && [ -x "$KIT/busybox" ] && docker image inspect shbuild-qemu >/dev/null 2>&1; then
+if [ -s "$KIT/vmlinuz" ] && [ -s "$KIT/modules.ext4" ] && tar -tf "$KIT/modules.tar" | grep -q "/modules.dep$" && [ -x "$KIT/busybox" ] && docker run --rm shbuild-qemu sh -c "command -v tcpdump" >/dev/null 2>&1; then
   echo "$KIT"; exit 0
 fi
 docker run --rm -v "$KIT":/kit debian:trixie bash -euo pipefail -c '
@@ -38,7 +38,7 @@ docker run --rm -v "$KIT":/kit debian:trixie bash -euo pipefail -c '
 docker build -q -t shbuild-qemu - >/dev/null <<'EOF'
 FROM debian:trixie
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-    qemu-system-arm qemu-utils dnsmasq-base iproute2 cpio zstd xz-utils fdisk ca-certificates kmod >/dev/null \
+    qemu-system-arm qemu-utils dnsmasq-base iproute2 tcpdump cpio zstd xz-utils fdisk ca-certificates kmod >/dev/null \
  && rm -rf /var/lib/apt/lists/*
 EOF
 echo "$KIT"

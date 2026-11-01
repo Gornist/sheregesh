@@ -45,7 +45,7 @@ TIMEOUTS = {"preflight": 60, "checkout": 300, "tests": 900, "build": 5400, "gate
 MIN_DISK_GB = 40          # образ 7 ГБ, корень в tar, persistent, рабочий том сборки
 MIN_MEM_GB = 6            # OOM devbox во время сборки (s5-ota/DEVBOX-REBOOT.md)
 KEEP_PASSED = 5           # артефакты последних PASSED; задания с keep — всегда
-BOOT_SCENARIOS = ("console", "remote", "fresh")
+BOOT_SCENARIOS = ("console", "remote", "fresh", "offline")
 
 
 def now():

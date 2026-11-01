@@ -4,8 +4,11 @@
 #
 # Загрузочный тест образа до железа (ADR-0018, этап boot): весь диск образа в QEMU virt (aarch64, TCG) с ядром
 # Debian, настоящий systemd образа — пространства имён, cgroup и песочница юнитов как на плате.
-#   boot_check.sh ОБРАЗ.img.zst console|remote|fresh [МЕТКА]
-# console/remote — маркер роли в /home (как после pair, без link.json); fresh — свежая плата без роли.
+#   boot_check.sh ОБРАЗ.img.zst console|remote|fresh|offline [МЕТКА]
+# console/remote — маркер роли в /home (как после pair, без link.json); fresh — свежая плата без роли;
+# offline — fresh в сети без маршрута по умолчанию и без DNS (REQ-SYS-004): DHCP не выдаёт router/dns, весь трафик
+# моста пишется tcpdump; пакетов из машины за пределы подсети стенда и запросов DNS быть не должно, юнитов с
+# записями err (кроме аппаратных ALLOW_FAILED) — тоже.
 # Набор машины — tools/build/vm/make_vmkit.sh (~/shbuild/vm). Сеть: tap + мост внутри контейнера, DHCP — dnsmasq с
 # журналом (имя клиента — как его видит роутер). Изменения пишутся в оверлей qcow2, образ не меняется.
 # Проверки (проба vm/probe.sh печатает «SHBOOT …» в консоль): упавших юнитов нет (кроме аппаратных ALLOW_FAILED);
@@ -14,7 +17,9 @@
 # Отличия от платы (не проверяются): ядро Pi, прошивка, tryboot, VideoCore, дисплей, GPIO/UART, Bluetooth.
 set -euo pipefail
 IMG="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; SC=${2:?console|remote|fresh}; LABEL=${3:-$$}
-case "$SC" in console) WANT=pi1;; remote) WANT=pi2;; fresh) WANT=;; *) echo "сценарий: console|remote|fresh" >&2; exit 2;; esac
+case "$SC" in console) WANT=pi1;; remote) WANT=pi2;; fresh|offline) WANT=;;
+  *) echo "сценарий: console|remote|fresh|offline" >&2; exit 2;; esac
+VMSC=$SC; [ "$SC" = offline ] && VMSC=fresh
 HERE=$(cd "$(dirname "$0")" && pwd)
 KIT=${SHBOOT_KIT:-$HOME/shbuild/vm}
 [ -s "$KIT/vmlinuz" ] && [ -s "$KIT/modules.ext4" ] || { echo "нет набора машины: $HERE/vm/make_vmkit.sh" >&2; exit 2; }
@@ -31,7 +36,7 @@ cp "$HERE/vm/init" "$HERE/vm/probe.sh" "$W/"
 echo "== $(date -u +%T) машина: $SC"
 set +e
 docker run --rm --name "$NAME" --cap-add NET_ADMIN --device /dev/net/tun \
-  -v "$IMG":/img.zst:ro -v "$KIT":/kit:ro -v "$W":/w -e SC="$SC" shbuild-qemu bash -euo pipefail -c '
+  -v "$IMG":/img.zst:ro -v "$KIT":/kit:ro -v "$W":/w -e SC="$VMSC" -e OFFLINE="$([ "$SC" = offline ] && echo 1)" shbuild-qemu bash -euo pipefail -c '
   ver=$(cat /kit/kernel.version)
   zstd -qdc /img.zst > /w/disk.img
   qemu-img create -q -f qcow2 -F raw -b /w/disk.img /w/overlay.qcow2
@@ -51,8 +56,10 @@ docker run --rm --name "$NAME" --cap-add NET_ADMIN --device /dev/net/tun \
   rm -rf /w/mods /w/ird
   ip link add br0 type bridge; ip addr add 172.30.77.1/24 dev br0; ip link set br0 up
   ip tuntap add tap0 mode tap; ip link set tap0 master br0; ip link set tap0 up
+  nogw=; [ -n "$OFFLINE" ] && nogw="--dhcp-option=3 --dhcp-option=6"   # без маршрута и DNS (REQ-SYS-004)
   dnsmasq --no-daemon --user=root --interface=br0 --bind-interfaces --port=0 --dhcp-range=172.30.77.100,172.30.77.150,2m \
-    --log-dhcp --log-facility=/w/dnsmasq.log 2>/dev/null &
+    $nogw --log-dhcp --log-facility=/w/dnsmasq.log 2>/dev/null &
+  tcpdump -q -n -U -i br0 -w /w/net.pcap 2>/dev/null & TD=$!
   timeout 1500 qemu-system-aarch64 -M virt -cpu cortex-a72 -smp 4 -m 3072 -no-reboot \
     -kernel /kit/vmlinuz -initrd /w/initrd.gz -append "console=ttyAMA0 shboot.scenario=$SC panic=-1 systemd.show_status=0" \
     -drive if=virtio,format=qcow2,file=/w/overlay.qcow2 -drive if=virtio,format=raw,file=/kit/modules.ext4,readonly=on \
@@ -60,7 +67,14 @@ docker run --rm --name "$NAME" --cap-add NET_ADMIN --device /dev/net/tun \
     -device virtio-serial-pci -chardev file,id=pr,path=/w/probe.log -device virtserialport,chardev=pr,name=shboot \
     -serial file:/w/serial.log -monitor none -display none
   echo "qemu код $?"
-  chmod 644 /w/dnsmasq.log /w/serial.log /w/probe.log 2>/dev/null || true
+  sleep 1; kill $TD 2>/dev/null; wait $TD 2>/dev/null || true
+  # трафик машины (172.30.77.100–150) за пределы подсети стенда: IPv4 кроме broadcast/multicast, IPv6 кроме
+  # link-local/multicast; DNS — 53 и 853 в любую сторону
+  tcpdump -n -r /w/net.pcap "ip and src net 172.30.77.0/24 and not src host 172.30.77.1 and not dst net 172.30.77.0/24 and not dst host 255.255.255.255 and not ip multicast" 2>/dev/null > /w/net-ext4.txt || true
+  tcpdump -n -r /w/net.pcap "ip6 and not dst net fe80::/10 and not dst net ff00::/8" 2>/dev/null > /w/net-ext6.txt || true
+  tcpdump -n -r /w/net.pcap "port 53 or port 853" 2>/dev/null > /w/net-dns.txt || true
+  tcpdump -n -r /w/net.pcap 2>/dev/null | wc -l > /w/net-total.txt || true
+  chmod 644 /w/dnsmasq.log /w/serial.log /w/probe.log /w/net* 2>/dev/null || true
   rm -f /w/disk.img /w/overlay.qcow2'
 rc=$?
 set -e
@@ -69,7 +83,7 @@ S="$W/probe.log"
 grep -q "^SHBOOT end" "$S" 2>/dev/null || { echo "ERROR: проба не завершилась (зависание загрузки?); хвост консоли:"
   sed 's/\x1b\[[0-9;:]*m//g' "$W/serial.log" | tail -40; exit 3; }
 # каждая строка пробы обязательна: потерянная строка — провал, а не «пусто = хорошо»
-for k in state failed hostname1 static hostname2 hostname3 default sources chrony permitroot rootkey var; do
+for k in state failed hostname1 static hostname2 hostname3 default sources chrony permitroot rootkey var gw dns errunits; do
   grep -q "^SHBOOT $k=" "$S" || { echo "ERROR: в итоге пробы нет строки $k"; exit 3; }
 done
 v() { sed -n "s/^SHBOOT $1=//p" "$S" | tail -1 | tr -d '\r'; }
@@ -97,5 +111,25 @@ eq "chrony активен" "$(v chrony)" "active"
 eq "sshd: root только по ключу" "$(v permitroot)" "without-password"
 eq "ключ root = ключ sheregesh-ui" "$(v rootkey)" "same"
 eq "/var засеян" "$(v var)" "seeded"
+if [ "$SC" = offline ]; then
+  eq "маршрут по умолчанию (offline)" "$(v gw | sed 's/ *$//')" ""
+  eq "серверы DNS (offline)" "$(v dns | sed 's/ *$//')" ""
+  [ -s "$W/net-total.txt" ] || bad "захват трафика" "нет net.pcap"
+  ext=$(cat "$W/net-ext4.txt" "$W/net-ext6.txt" 2>/dev/null | wc -l); dns=$(wc -l < "$W/net-dns.txt" 2>/dev/null || echo x)
+  echo "захват: пакетов $(cat "$W/net-total.txt" 2>/dev/null)"
+  eq "пакеты за пределы подсети стенда" "$ext" "0"
+  eq "запросы DNS" "$dns" "0"
+  [ "$ext" = 0 ] || head -5 "$W/net-ext4.txt" "$W/net-ext6.txt"
+  [ "$dns" = 0 ] || head -5 "$W/net-dns.txt"
+  # записи err, не связанные с сетью: аппаратные юниты и их запуск из init.scope; правило alsa-utils Debian
+  # (GOTO без метки) — то же на плате. Остальные записи err в offline — провал.
+  errs=$(sed -n 's/^SHBOOT errlog //p' "$S" | while IFS= read -r l; do
+    u=${l%%:*}; m=${l#*: }; allowed "$u" && continue
+    for a in $ALLOW_FAILED; do case "$m" in ("Failed to start $a"*) continue 2;; esac; done
+    case "$u:$m" in ("systemd-udevd.service:/usr/lib/udev/rules.d/90-alsa-restore.rules:"*"has no matching label"*) continue;; esac
+    echo "$l"; done)
+  eq "записи err в журнале без сети (кроме аппаратных)" "$(printf %s "$errs" | grep -c .)" "0"
+  [ -z "$errs" ] || printf '%s\n' "$errs" | head -10
+fi
 if [ $FAIL != 0 ]; then echo "--- журналы упавших юнитов"; sed -n 's/^SHBOOT log //p' "$S" | tail -60; fi
 exit $FAIL

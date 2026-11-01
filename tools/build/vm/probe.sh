@@ -26,6 +26,19 @@ rk=$(head -1 /root/.ssh/authorized_keys 2>/dev/null | cut -d' ' -f1-2)
 uk=$(head -1 /home/sheregesh-ui/.ssh/authorized_keys 2>/dev/null | cut -d' ' -f1-2)
 [ -n "$rk" ] && [ "$rk" = "$uk" ] && out "rootkey=same" || out "rootkey=${rk:-none}"
 out "var=$(test -s /var/lib/dpkg/status && echo seeded || echo empty)"
+out "gw=$(ip -4 route show default 2>/dev/null | awk '{print $3}' | tr '\n' ' ')"
+out "dns=$(resolvectl dns 2>/dev/null | awk -F': ' 'NF>1 && $2!="" {print $2}' | tr '\n' ' ')"
+# юниты с записями уровня err и выше за загрузку (ядро и записи без юнита — не учитываются); сами записи — «errlog»
+journalctl -b -p err -o json --no-pager 2>/dev/null | python3 -c '
+import json, sys
+units = set()
+for line in sys.stdin:
+    e = json.loads(line)
+    u = e.get("_SYSTEMD_UNIT") or ""
+    if u:
+        units.add(u)
+        print("errlog", u + ":", str(e.get("MESSAGE", ""))[:200])
+print("errunits=" + " ".join(sorted(units)))' 2>/dev/null | tail -41 | while IFS= read -r l; do out "$l"; done
 for u in $(systemctl list-units --failed --no-legend --plain | awk '{print $1}'); do
   journalctl -b -u "$u" --no-pager -n 6 -o cat 2>/dev/null | while IFS= read -r l; do out "log $u: $l"; done
 done
