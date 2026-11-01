@@ -6,7 +6,8 @@
   python3 tools/docs/manual.py --out DIR [--version SEMVER] [--commit SHA]   собрать DIR/{ru,en}/*.html и DIR/index.html
   python3 tools/docs/manual.py --check                                      языки совпадают по страницам и разделам
 
-Пакет sheregesh кладёт результат в /usr/share/doc/sheregesh/manual (tools/image/build_deb.py): версия документации в
+Пакет sheregesh кладёт результат в /usr/share/sheregesh/manual (tools/image/build_deb.py; /usr/share/doc образ
+исключает правилом dpkg path-exclude mmdebstrap): версия документации в
 образе совпадает с версией ПО. Только стандартная библиотека; разметка — то подмножество Markdown, что используется
 в docs/user: заголовки, абзацы, списки (с вложенностью), блоки кода, `код`, **жирный**.
 """

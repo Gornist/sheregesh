@@ -409,6 +409,23 @@ def remote_power_checks(rep, root):
             and "login1" not in rules, REMOTE_POWER_POLKIT)
 
 
+MANUAL = "/usr/share/sheregesh/manual"
+
+
+def manual_checks(rep, root):
+    """REQ-DOC-004: руководство RU/EN офлайн в образе — все страницы на диске (dpkg path-exclude не вырезал), версия ПО
+    и коммит образа на странице."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "docs"))
+    import manual as man
+    pages = [f"{MANUAL}/{lang}/{p}.html" for lang in man.LANGS for p in man.PAGES]
+    missing = [p for p in pages if not root.exists(p)]
+    commit = str((json.loads(root.cat("/usr/share/sheregesh/build.json") or "{}")).get("commit", ""))[:12]
+    page = root.cat(f"{MANUAL}/ru/support.html")
+    rep.add("doc.manual", "руководство RU/EN в образе: все страницы, версия ПО и коммит образа",
+            not missing and "Версия ПО " in page and bool(commit) and commit in page,
+            f"нет: {missing[:3]}" if missing else commit)
+
+
 def hostname_checks(rep, root):
     """Имя системы по роли (пульт pi1, блок pi2): помощник, юнит до systemd-networkd, включён в sysinit."""
     unit = root.cat("/usr/lib/systemd/system/sheregesh-hostname.service")
@@ -548,6 +565,7 @@ def verify(img, variant, out):
             video_checks(rep, root, packages_tsv)
             time_checks(rep, root, packages_tsv)
             remote_power_checks(rep, root)
+            manual_checks(rep, root)
             hostname_checks(rep, root)
             status = data.cat("/slots/system_a/var/lib/dpkg/status")
             # Установлен — если последнее слово Status «installed» (в т. ч. «purge ok installed» после неудачного purge).

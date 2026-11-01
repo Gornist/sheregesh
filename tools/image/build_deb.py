@@ -48,7 +48,7 @@ DEPENDS = [
 # Службы приложения запускаются через launcher (S3.1-DEPLOY): проверенный выпуск DEV deploy из
 # /var/lib/sheregesh-deploy или заводской код /usr/lib/sheregesh. Системные команды — всегда из /usr.
 LAUNCHER = f"/{PREFIX}/software/sheregesh/deploy/launcher.py"
-MANUAL_DST = "usr/share/doc/sheregesh/manual"
+MANUAL_DST = "usr/share/sheregesh/manual"   # не /usr/share/doc: образ (mmdebstrap) исключает его из dpkg
 LAUNCHED = {
     "usr/bin/sheregesh-console": "sheregesh_console",
     "usr/bin/sheregesh-remote-emu": "sheregesh_remote",

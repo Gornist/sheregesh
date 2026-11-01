@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Руководство пользователя (tools/docs/manual.py, REQ-DOC-004, TEST-DOC-004): инструкции сборки, обслуживания и
 восстановления на RU и EN с одинаковыми разделами, HTML из Markdown при сборке пакета с версией ПО на каждой
-странице, в пакете — /usr/share/doc/sheregesh/manual."""
+странице, в пакете — /usr/share/sheregesh/manual."""
 import io
 import lzma
 import sys
@@ -68,3 +68,26 @@ def test_deb_contains_manual_with_package_version(tmp_path):
         assert {f"./{build_deb.MANUAL_DST}/{lang}/{p}.html" for lang in manual.LANGS for p in manual.PAGES} <= names
         html = tar.extractfile(f"./{build_deb.MANUAL_DST}/ru/build.html").read().decode()
     assert f"Версия ПО {semver(__version__)}" in html
+
+
+def test_manual_path_survives_image_dpkg_excludes():
+    """Образ (mmdebstrap) ставит пакеты с path-exclude=/usr/share/doc/* (кроме copyright): в doc/ руководство
+    исчезало (ota-90b9b9c, 2026-11-01). Путь — вне исключений, а verify_image проверяет страницы на диске."""
+    import build_deb
+    import verify_image as vi
+    assert not build_deb.MANUAL_DST.startswith(("usr/share/doc/", "usr/share/man/", "usr/share/locale/"))
+    build = '{"commit": "90b9b9c7c4faa4a3"}'
+    pages = {f"/{build_deb.MANUAL_DST}/{lang}/{p}.html": "<p>Версия ПО 0.1.0-dev.0 · 90b9b9c7c4fa</p>"
+             for lang in manual.LANGS for p in manual.PAGES}
+
+    def run(files):
+        class Root:
+            cat = staticmethod(lambda p: files.get(p, ""))
+            exists = staticmethod(lambda p: p in files)
+        rep = vi.Report()
+        vi.manual_checks(rep, Root)
+        return rep.checks[0]["status"]
+    assert run({"/usr/share/sheregesh/build.json": build, **pages}) == "PASS"
+    assert run({"/usr/share/sheregesh/build.json": build}) == "FAIL"                       # каталоги есть, файлов нет
+    assert run({"/usr/share/sheregesh/build.json": '{"commit": "deadbeef"}', **pages}) == "FAIL"
+
