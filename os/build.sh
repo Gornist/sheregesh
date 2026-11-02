@@ -79,6 +79,9 @@ fi
 echo "== сборка образа $CFG (SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH)"
 START=$(date -u +%FT%TZ)
 if [[ -z "${SHEREGESH_POST_ONLY:-}" ]]; then
+  # Каталог deploy-<дата> живёт в рабочем томе между сборками: файлы прошлых сборок (образ, SBOM) попадали бы в
+  # манифест (+13 с) и подменяли бы SBOM текущей. Чистим перед сборкой.
+  rm -rf "$WORK"/build/deploy-*
   HOST_BUILD_DIR="$WORK/build" "$RIG/rpi-image-gen" build -S "$ROOT/os" -c "$CFG.yaml" ${EXTRA[@]+"${EXTRA[@]}"} \
     2>&1 | tee "$OUT/build.log"
 fi
@@ -101,7 +104,9 @@ set -e
 echo "== артефакты"
 # Уровень 3: на Pi 5 уровень 10 стоил 118 с из 527 с сборки, уровень 3 — 38 с (файл на 12% больше, содержимое то же).
 zstd -q -T0 -"${SHEREGESH_ZSTD_LEVEL:-3}" -f "$IMG" -o "$OUT/$NAME.img.zst"
-cp "$DEPLOY"/filesystem-*.sbom.zst "$OUT/$NAME.sbom.zst" 2>/dev/null || true
+# SBOM — обязательный артефакт: нет у этой сборки — сборка падает (а не берёт чужой из прошлых)
+cp "$DEPLOY"/filesystem-*.sbom.zst "$OUT/$NAME.sbom.zst" 2>/dev/null
+[[ -s "$OUT/$NAME.sbom.zst" ]] || { echo "нет SBOM образа в $DEPLOY (rpi-image-gen)" >&2; exit 1; }
 if [[ -n "$BUILDHOST" ]]; then
   (cd "$OUT" && sha256sum "$NAME.img.zst" "$NAME.packages.tsv" verify.json $(ls "$NAME.sbom.zst" 2>/dev/null) > SHA256SUMS)
 else

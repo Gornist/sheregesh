@@ -191,7 +191,8 @@ class ShbuildTest(unittest.TestCase):
         self.assertEqual([Path(c).name for c in calls[0][1][4:]], ["img.sbom.zst"])
         calls.clear()
         (p.art / "img.img.zst").write_text("x")
-        (p.art / "build-report.json").write_text(json.dumps({"verify_exit": 0, "dirty": False, "commit": sha}))
+        (p.art / "build-report.json").write_text(json.dumps({"verify_exit": 0, "dirty": False, "commit": sha,
+                                                              "verify": {"counts": {"PASS": 34, "FAIL": 0, "SKIP": 0}}}))
         (p.art / "SHA256SUMS").write_text("")
         p.gates()
         self.assertTrue(all("owners_check.sh" not in str(c[1]) and "order_check.sh" not in str(c[1]) for c in calls))
@@ -274,6 +275,23 @@ class ShbuildTest(unittest.TestCase):
         p.abort.parent.mkdir(parents=True, exist_ok=True)
         p.abort.touch()
         self.assertTrue(sb._AnyExists(p.cancel, p.abort).exists())
+
+    def test_gates_refuse_skipped_or_missing_verify(self):
+        # проверка структуры с SKIP (нет debugfs/mtools) — не PASS: на железо такой образ не идёт
+        sha = "c" * 40
+        for verify, text in (({"counts": {"PASS": 90, "FAIL": 0, "SKIP": 4}}, "неполная"), (None, "нет итогов"),
+                             ({"counts": {"PASS": 0, "FAIL": 0, "SKIP": 0}}, "неполная")):
+            j = sb.new_job(self.root, sha, self.bundle, {"config": "sheregesh-buildhost-pi5"})
+            p = sb.Pipeline(self.root, j)
+            p.art.mkdir(parents=True, exist_ok=True)
+            rep = {"verify_exit": 0, "dirty": False, "commit": sha}
+            if verify is not None:
+                rep["verify"] = verify
+            (p.art / "build-report.json").write_text(json.dumps(rep))
+            p.sh = lambda stage, cmd, **kw: None
+            with self.assertRaises(sb.Fail) as e:
+                p.gates()
+            self.assertIn(text, str(e.exception))
 
     def test_old_jobs_without_config_build_product_image(self):
         p = sb.Pipeline(self.root, self.job())

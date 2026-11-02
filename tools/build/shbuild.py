@@ -308,6 +308,12 @@ class Pipeline:
             f.write("\n".join(notes) + "\n")
         if rep.get("verify_exit") != 0:
             raise Fail("verify_image не пройден (build-report verify_exit)")
+        # SKIP — проверка не выполнена (нет debugfs/mtools в сборщике): это не PASS, образ без проверок на железо не идёт
+        counts = (rep.get("verify") or {}).get("counts")
+        if not isinstance(counts, dict):
+            raise Fail("в build-report нет итогов проверки структуры (verify.counts)")
+        if counts.get("SKIP", 0) or counts.get("FAIL", 0) or not counts.get("PASS", 0):
+            raise Fail(f"проверка структуры образа неполная: {counts}")
         if rep.get("dirty") is not False:
             raise Fail("дерево сборки dirty")
         if rep.get("commit") != self.commit:

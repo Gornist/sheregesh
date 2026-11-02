@@ -66,6 +66,15 @@ class BuildhostImageTest(unittest.TestCase):
         self.assertIn("swap_free_gb()", sb)
         self.assertIn('"zram" not in', sb)                           # zram занимает ОЗУ — подкачкой на диске не считается
 
+    def test_checks_cannot_pass_silently(self):
+        order = (ROOT / "tools/image/order_check.sh").read_text()
+        self.assertIn("zz-canary-a.service", order)                 # контрольный цикл: проверка доказывает, что видит циклы
+        self.assertIn("exit 3", order)
+        build = (ROOT / "os/build.sh").read_text()
+        self.assertIn('rm -rf "$WORK"/build/deploy-*', build)       # SBOM и манифест только этой сборки
+        self.assertNotIn('sbom.zst" 2>/dev/null || true', build)
+        self.assertIn("нет SBOM образа", build)
+
     def test_mbr_parse(self):
         with tempfile.NamedTemporaryFile() as f:
             f.write(mbr())

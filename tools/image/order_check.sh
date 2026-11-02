@@ -4,7 +4,8 @@
 #
 # Циклы упорядочения systemd в корне системного раздела образа (system_a): systemd-analyze verify default.target
 # и sysinit.target, несколько прогонов (систему разрывает цикл, удаляя задание; выбор зависит от порядка обхода и от
-# прогона к прогону разный). Код 0 — циклов нет; 1 — найдены (строки «ordering cycle»/«deleted» в выводе).
+# прогона к прогону разный). Код 0 — циклов нет; 1 — найдены (строки «ordering cycle»/«deleted» в выводе); 3 — проверка
+# не отработала (нет default.target, юниты не загружены или контрольный цикл не найден — проверка слепа).
 # Только чтение: раздел монтируется ro,noload под overlay в tmpfs одноразового привилегированного контейнера
 # (Linux-хост с Docker, devbox). Генераторы не запускаются (persistent.mount и т. п. не проверяются).
 #   tools/image/order_check.sh ОБРАЗ.img.zst [ПРОГОНОВ]
@@ -24,9 +25,27 @@ docker run --rm --privileged -e DEBIAN_FRONTEND=noninteractive -e RUNS="$RUNS" -
   mount -o ro,noload,loop,offset=$((start*512)),sizelimit=$((size*512)) /w/img /lo
   mount -t overlay overlay -o lowerdir=/lo,upperdir=/ov/up,workdir=/ov/wk /r   # verify пишет служебное в корень
   echo "$(systemd-analyze --version | head -1); прогонов: $RUNS"
+  # Корень настоящий? Без default.target проверка ничего не прочитала бы и «не нашла бы» циклов.
+  [ -e /r/usr/lib/systemd/system/default.target ] || [ -e /r/etc/systemd/system/default.target ] \
+    || { echo "ERROR: в образе нет default.target — проверка не читает юниты"; exit 3; }
+  # Канарейка: заведомый цикл в оверлее. Если проверка его не видит, она слепа (другой формат вывода, не те ключи,
+  # не загрузились юниты) и «циклов нет» ничего не значит.
+  mkdir -p /r/etc/systemd/system
+  printf "[Unit]\nDescription=canary a\nWants=zz-canary-b.service\nAfter=zz-canary-b.service\n[Service]\nExecStart=/bin/true\n" > /r/etc/systemd/system/zz-canary-a.service
+  printf "[Unit]\nDescription=canary b\nWants=zz-canary-a.service\nAfter=zz-canary-a.service\n[Service]\nExecStart=/bin/true\n" > /r/etc/systemd/system/zz-canary-b.service
+  canary=$(systemd-analyze --root=/r verify --man=no zz-canary-a.service 2>&1 || true)
+  printf "%s\n" "$canary" | grep -qE "ordering cycle|deleted to break" \
+    || { echo "ERROR: контрольный цикл не обнаружен — проверка слепа; вывод:"; printf "%s\n" "$canary" | head -5; exit 3; }
+  rm -f /r/etc/systemd/system/zz-canary-a.service /r/etc/systemd/system/zz-canary-b.service
+  echo "канарейка: контрольный цикл найден"
   found=0
   for i in $(seq 1 "$RUNS"); do
-    out=$(systemd-analyze --root=/r verify --man=no default.target sysinit.target 2>&1 | grep -E "ordering cycle|deleted to break" || true)
+    full=$(systemd-analyze --root=/r verify --man=no default.target sysinit.target 2>&1 || true)
+    # проверка не отработала (юниты не загружены), а не «циклов нет»
+    if printf "%s\n" "$full" | grep -qE "Failed to (load|create|determine|initialize)|Cannot (access|open)|Unit (default|sysinit)\.target not found"; then
+      echo "ERROR: прогон $i не прочитал юниты:"; printf "%s\n" "$full" | head -5; exit 3
+    fi
+    out=$(printf "%s\n" "$full" | grep -E "ordering cycle|deleted to break" || true)
     if [ -n "$out" ]; then found=1; printf "%s\n" "$out" | sed "s/^/прогон $i: /"; fi
   done
   umount /r /lo
