@@ -23,7 +23,7 @@ qemu-user-static (binfmt aarch64, загрузочный тест в эмуля�
 На хосте (вызывается командами выше): enqueue, worker, status, wait, logs, cancel.
 
 Этапы задания: preflight → checkout → tests → build → gates → boot → (итог). Пары tests‖build и gates‖boot идут вместе
-(выключатели parallel_tests/parallel_boot в ~/shbuild/host.conf — откат без переустановки); любой провал останавливает задание.
+(выключатели parallel_tests/parallel_boot в ~/shbuild/host.conf; parallel_boot по умолчанию выключен — откат без переустановки); любой провал останавливает задание.
 Конечные состояния всегда явные: PASSED, FAILED (дефект кода/образа), ERROR (среда), CANCELLED, TIMEOUT.
 Одно задание за раз (flock); остальные ждут в очереди."""
 import argparse
@@ -63,9 +63,10 @@ BUILDHOST_SCENARIOS = ("buildhost",)
 CONFIGS = (CFG, "sheregesh-buildhost-pi5")
 
 
+# parallel_boot по умолчанию 0: рядом с гейтами на Pi 5 (2 ГБ) старт KVM даёт ENOMEM (KVM_CREATE_VM) — флак хуже выигрыша ≈ 20 с.
 # Выключатели оптимизаций конвейера (быстрый откат без переустановки и без коммита): файл ~/shbuild/host.conf, строки
 # «имя=значение»; нет файла или строки — значение по умолчанию. Откат любой оптимизации — поставить 0 (zstd_level=10).
-FLAG_DEFAULTS = {"parallel_tests": "1", "parallel_gates": "1", "parallel_boot": "1", "zstd_level": "3"}
+FLAG_DEFAULTS = {"parallel_tests": "1", "parallel_gates": "1", "parallel_boot": "0", "zstd_level": "3"}
 
 
 def host_flags(root):

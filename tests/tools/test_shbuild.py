@@ -245,7 +245,11 @@ class ShbuildTest(unittest.TestCase):
         self.assertEqual({s["name"]: s["status"] for s in st["stages"]}["build"], "PASS")
         self.assertNotIn("gates", p.ran)                                   # дальше задание не идёт
 
-    def test_gates_and_boot_run_together_and_gate_failure_wins(self):
+    def test_gates_and_boot_run_together_only_when_enabled_and_gate_failure_wins(self):
+        p, state, st = self.run_fake({"gates": sb.Fail("владельцы")})        # по умолчанию выключено: boot после gates не идёт
+        self.assertEqual(st["flags"]["parallel_boot"], "0")
+        self.assertNotIn("boot", p.ran)
+        (self.root / "host.conf").write_text("parallel_boot=1\n")
         p, state, st = self.run_fake({})
         self.assertEqual((state, st["flags"]["parallel_boot"]), ("PASSED", "1"))
         self.assertEqual([s["name"] for s in st["stages"]].count("boot"), 1)
