@@ -175,7 +175,7 @@ def build_media(src, profile, pair=None) -> Media:
         body = [*head, "h264parse", "config-interval=-1", "!", H264_OUT_CAPS]
         return Media(join_tokens(body), True, _source_info(src, "passthrough"))
     enc, hw = encoder_fragment(bitrate, pair)
-    raw = [*head, *src.decode(None)]
+    raw = [*head, *src.decode(None), *getattr(src, "square_pixels", list)()]    # аналог — 4:3 (videoinput)
     direct = hw and mode is not None and mode.pixfmt in _RAW_DIRECT
     if not direct:
         raw += ["videoconvert", "!", "video/x-raw,format=I420", "!"]

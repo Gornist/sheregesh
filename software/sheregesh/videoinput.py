@@ -570,6 +570,10 @@ class VideoSource:
         code = self.mode.pixfmt if self.mode else ""
         return {"MJPG": ["jpegdec", "!"], "H264": ["h264parse", "!", decoder or "avdec_h264", "!"]}.get(code, [])
 
+    def square_pixels(self):
+        """Фрагмент масштабирования до квадратных пикселей после decode() или [] (кадр уже квадратный)."""
+        return []
+
     def present(self):
         """(True, «») или (False, причина) — без захвата и без длительной блокировки."""
         return (self.available, self.error)
@@ -665,6 +669,18 @@ class V4L2Source(VideoSource):
         if not self.node.analog:
             return super().decode(decoder)
         return ["deinterlace", "mode=auto", "method=linear", "fields=top", "!", *super().decode(decoder)]
+
+    def square_pixels(self):
+        """Аналоговый вход — картинка 4:3 при любом размере кадра захвата: 720×480 (NTSC) и 720×576 (PAL) имеют
+        неквадратные пиксели, а кодер и пульт считают их квадратными (на экране 3:2 и 5:4 вместо 4:3). Кадр
+        масштабируется до ширины высота×4/3, кратной 16 (640×480, 768×576). Стенд 2026-11-02: MS210x 534d:0021."""
+        m = self.mode
+        if self.input_type != "CVBS" or m is None or not m.width or not m.height:
+            return []
+        width = (m.height * 4 // 3 + 8) // 16 * 16
+        if width == m.width:
+            return []
+        return ["videoscale", "!", f"video/x-raw,width={width},height={m.height},pixel-aspect-ratio=1/1", "!"]
 
     def present(self):
         if os.path.exists(self.node.dev):

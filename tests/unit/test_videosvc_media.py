@@ -591,3 +591,30 @@ def test_parse_runtime_arg_usage_error(argv):
     """Лишний или неизвестный аргумент, пустое значение — выход с кодом использования."""
     with pytest.raises(SystemExit):
         M.parse_runtime_arg(argv)
+
+
+def _analog(width, height, pixfmt="MJPG", input_type="CVBS"):
+    src = object.__new__(vi.V4L2Source)
+    src.mode, src.input_type = vi.Mode(width, height, 25, pixfmt), input_type
+    return src
+
+
+def test_analog_input_is_scaled_to_square_pixels_4_3():
+    """Стенд 2026-11-02 (MS210x 534d:0021): кадр CVBS 720×480 — картинка 4:3 с неквадратными пикселями, а кодер и пульт
+    считают пиксели квадратными (3:2 на экране). Масштаб до высота×4/3; кадр 4:3 и не-аналоговый вход — без него."""
+    assert _analog(720, 480).square_pixels() == [
+        "videoscale", "!", "video/x-raw,width=640,height=480,pixel-aspect-ratio=1/1", "!"]
+    assert "width=768,height=576" in _analog(720, 576).square_pixels()[2]
+    assert "width=432,height=320" in _analog(480, 320).square_pixels()[2]
+    assert _analog(640, 480).square_pixels() == [] and _analog(320, 240).square_pixels() == []
+    assert _analog(720, 480, input_type="HDMI").square_pixels() == []
+    assert vi.SyntheticSource(720, 480).square_pixels() == []
+
+
+def test_build_scales_analog_after_decode_before_encoder():
+    """Масштаб — после jpegdec и до приведения к I420 и кодера."""
+    src = FakeSource("MJPG", width=720, height=480)
+    src.square_pixels = lambda: ["videoscale", "!", "video/x-raw,width=640,height=480,pixel-aspect-ratio=1/1", "!"]
+    f = M.build_media(src, PROFILE, V4L2_PAIR).fragment
+    assert f.index("jpegdec") < f.index("videoscale") < f.index("format=I420")
+    assert "videoscale" not in M.build_media(FakeSource("MJPG"), PROFILE, V4L2_PAIR).fragment
