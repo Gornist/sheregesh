@@ -120,7 +120,8 @@ if [ "$SC" = buildhost ]; then
   eq "NTP (timesyncd)" "$(v sources)" "yes"
   eq "аппаратный сторож systemd" "$(v wdt)" "30s"
   case "$(v zram)" in *zram*) ok "zram-подкачка" "$(v zram)";; *) bad "zram-подкачка" "нет";; esac
-  if [ $FAIL != 0 ]; then echo "--- журналы упавших юнитов"; sed -n 's/^SHBOOT log //p' "$S" | tail -60; fi
+  if [ $FAIL != 0 ]; then echo "--- журналы упавших юнитов"; sed -n 's/^SHBOOT log //p' "$S" | tail -60
+    echo "--- сеть"; sed -n 's/^SHBOOT net //p' "$S" | tail -60; fi
   exit $FAIL
 fi
 allowed() { for a in $ALLOW_FAILED; do [ "$a" = "$1" ] && return 0; done; return 1; }

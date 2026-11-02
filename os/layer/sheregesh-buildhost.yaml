@@ -99,6 +99,6 @@ mmdebstrap:
       ln -sf /etc/systemd/system/shbuild-growroot.service $1/etc/systemd/system/multi-user.target.wants/shbuild-growroot.service
       # Прошивка EEPROM — только явной процедурой (docs/development/BUILDHOST-PI5.md), не при загрузке
       chroot $1 systemctl mask rpi-eeprom-update.service >/dev/null
-      for u in docker.service fstrim.timer; do
+      for u in docker.service fstrim.timer systemd-networkd.service; do
         chroot $1 systemctl enable "$u" >/dev/null
       done
