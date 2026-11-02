@@ -269,3 +269,27 @@ def test_network_source_state_follows_tx_service():
     assert status("idle", "streaming", "starting") == {"state": "streaming", "fps_actual": 25.2}
     assert status("idle", "starting", "starting")["state"] == "starting"
     assert status("no-device", "streaming", "no-device")["state"] == "no-device"
+
+
+def test_sighup_reload_starts_new_generation(tmp_path):
+    """Стенд 2026-11-02: SIGHUP менял источник только у видеоприёма, служба tx продолжала старое устройство.
+    Теперь смена источника по SIGHUP — новое поколение (vtx.on_select), как при video-select с пульта."""
+    from types import SimpleNamespace as NS
+    cfg = tmp_path / "video-input.json"
+    cfg.write_text('{"source": "synthetic"}')
+    calls = []
+
+    class Vtx:
+        async def on_select(self):
+            calls.append("select")
+
+    switched = []
+    agent = NS(args=NS(video_config=str(cfg), video_source=None, link_config=None),
+               video_spec={"source": "v4l2", "device": "534d:0021"}, video_rtsp=[], vtx=Vtx())
+    agent.apply_video_spec = lambda spec: switched.append(spec)
+
+    async def run():
+        agent_mod.Agent.reload_video(agent)
+        await asyncio.sleep(0)
+    asyncio.run(run())
+    assert switched == [{"source": "synthetic"}] and calls == ["select"]

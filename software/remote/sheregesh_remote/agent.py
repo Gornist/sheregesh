@@ -187,6 +187,12 @@ class Agent:
             return
         log(f"video source: {describe_spec(self.video_spec)} -> {describe_spec(spec)}")
         self.apply_video_spec(spec)
+        # SRTP: идущий поток служба tx держит со старым источником — новое поколение, как при video-select
+        # (стенд 2026-11-02: после SIGHUP служба 30 с и дольше держала прежнее устройство).
+        try:
+            asyncio.get_running_loop().create_task(self.vtx.on_select())
+        except RuntimeError:                         # нет цикла (вызов вне asyncio): поколение сменит tick
+            pass
 
     def apply_video_spec(self, spec):
         """Сменить источник: сетевой профиль — видеоприём (старый конвейер останавливается до запуска нового),
