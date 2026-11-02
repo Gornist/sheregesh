@@ -388,6 +388,7 @@ def test_switch_requires_confirmation_dialog(ui, out_dir, report):
     feed(ui, steps=5)
     assert b.peer.frames == []                           # пока диалог открыт — ничего
     check_screen(ui, "08-confirm-enable", out_dir, report)
+    QTest.keyClick(ui.window, Qt.Key_Backtab)          # фокус по умолчанию — «Отмена»; к «Включить передачу»
     QTest.keyClick(ui.window, Qt.Key_Return)
     pump(60)
     assert b.sticks.enabled and find(ui, "sticksEnableSwitch").property("checked") and not dlg.property("visible")

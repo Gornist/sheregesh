@@ -366,7 +366,15 @@ def test_sticks_transmission_enabled_only_through_confirmation_dialog(ui):
     pump(200)
     assert not sv.enabled
     tap(ui, "miniSticksToggle")
+    question = wfind(ui, "miniSticksQuestion")
+    assert wait_until(lambda: question.isVisible(), 3)
+    QTest.keyClick(ui.window, Qt.Key_Return)               # по умолчанию в фокусе «Отмена»: Enter — отказ
+    assert wait_until(lambda: not question.isVisible(), 3)
+    pump(200)
+    assert not sv.enabled
+    tap(ui, "miniSticksToggle")
     assert wait_until(lambda: wfind(ui, "miniSticksQuestion").isVisible(), 3)
+    QTest.keyClick(ui.window, Qt.Key_Backtab)              # к «Включить передачу», Enter — подтверждение
     QTest.keyClick(ui.window, Qt.Key_Return)
     assert wait_until(lambda: sv.enabled, 3)
     tap(ui, "miniSticksToggle")                            # выключение — без диалога

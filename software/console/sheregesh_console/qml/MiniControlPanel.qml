@@ -86,11 +86,11 @@ ColumnLayout {
         height: 260 * win.k                     // явная высота: иначе цикл привязок implicitHeight в Fusion Dialog
         standardButtons: Dialog.Ok | Dialog.Cancel
         title: qsTr("Enable command transmission?")
-        onOpened: standardButton(Dialog.Ok).forceActiveFocus()   // без сенсора: Enter — да, Esc — нет
+        onOpened: { sticksDialog.standardButton(Dialog.Ok).text = qsTr("Enable transmission"); sticksDialog.standardButton(Dialog.Cancel).forceActiveFocus() }   // действие с последствиями: по умолчанию — отказ
         Shortcut {
             sequences: ["Return", "Enter"]
             enabled: sticksDialog.opened
-            onActivated: sticksDialog.accept()
+            onActivated: sticksDialog.standardButton(Dialog.Ok).activeFocus ? sticksDialog.accept() : sticksDialog.reject()   // Enter — кнопка в фокусе
         }
         Label {
             objectName: "miniSticksQuestion"

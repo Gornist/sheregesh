@@ -76,9 +76,20 @@ RESULTS = {
     "remote-off": {"ru": "Удалённый блок выключается по команде пульта", "en": "The remote unit is shutting down on command"},
     "remote-dev": {"ru": "Удалённый блок: разрешена установка одного собственного образа ({reason})",
                    "en": "Remote unit: one own image may be installed ({reason})"},
-    "remote-failed": {"ru": "Удалённый блок: не выполнено ({result}{reason})",
-                      "en": "Remote unit: not done ({result}{reason})"},
+    "remote-failed": {"ru": "Удалённый блок: не выполнено — {result}{reason}",
+                      "en": "Remote unit: not done — {result}{reason}"},
 }
+# Коды итога команды блока (клиент канала, протокол 1.6) — текстом для оператора; неизвестный код — как есть
+REMOTE_CODES = {
+    "not-connected": {"ru": "нет связи с удалённым блоком", "en": "no link to the remote unit"},
+    "unsupported": {"ru": "блок не поддерживает команду (старая версия ПО)",
+                    "en": "the remote unit does not support the command (older software)"},
+    "busy": {"ru": "блок выполняет другую команду, повторите позже", "en": "the remote unit is busy, try again later"},
+    "timeout": {"ru": "блок не ответил вовремя", "en": "the remote unit did not answer in time"},
+    "bad-request": {"ru": "команда отклонена блоком", "en": "the remote unit rejected the command"},
+    "error": {"ru": "ошибка на блоке", "en": "error on the remote unit"},
+}
+REMOTE_GENERIC_ERRORS = {"no link to remote unit"}   # тексты клиента, которые код уже объясняет
 # Обслуживание блока (протокол 1.6): ожидание итога выгрузки журнала (journalctl + до 2 МБ по каналу) и выключения
 REMOTE_LOG_WAIT_S = 45.0
 REMOTE_OFF_WAIT_S = 10.0
@@ -247,6 +258,8 @@ class Backend(QObject):
         self._last_result = ""
         self._last_export = ""
         self._last_remote = ""                      # итог последней команды обслуживания блока (протокол 1.6)
+        self._ever_connected = False                # связь с блоком была с запуска пульта (оверлей «ожидание блока»)
+        self._remote_off = False                    # блок выключен командой с пульта и ещё не вернулся
         self.lastRemoteCode = ""                    # … её код (remote_command result) — для локального канала
         self._last_ok = False                       # итог последней операции с конфигурацией или файлами
         # Применение, резервная копия, восстановление и выгрузка журнала — вне потока интерфейса (configops.py):
@@ -412,9 +425,12 @@ class Backend(QObject):
                    "seq_gaps": 0}
         link = peer_link(s.peer_state, snap)
         self.videoops.on_link(s.peer_state, snap, vid, link)
+        if link == "CONNECTED":
+            self._ever_connected, self._remote_off = True, False
         return {
             "peerMode": ("network" if snap.get("secure") else "process") if self.client is not None else "emulated",
             "peerLink": link, "linkView": link_view(s.peer_state, link),
+            "linkEverConnected": self._ever_connected, "remoteOff": self._remote_off,
             "peerRole": peer_role(snap) if s.peer_state == "connected" else "",
             "linkAuthFailures": cnt.get("auth_failures", self._auth_episodes),
             "linkSecure": bool(snap.get("secure")), "linkTls": snap.get("tls") or "", "linkHost": snap.get("host") or "",
@@ -763,8 +779,11 @@ class Backend(QObject):
         self._last_ok = bool(r.get("ok"))
         self.lastRemoteCode = str(r.get("result") or ("ok" if self._last_ok else "error"))
         if not self._last_ok:
-            reason = f": {r['error']}" if r.get("error") else ""
-            self._last_result = self._result("remote-failed", result=r.get("result", "error"), reason=reason)
+            code = str(r.get("result") or "error")
+            err = str(r.get("error") or "")
+            reason = f" ({err})" if err and err not in REMOTE_GENERIC_ERRORS else ""
+            self._last_result = self._result("remote-failed", result=REMOTE_CODES.get(code, {}).get(self.lang, code),
+                                             reason=reason)
             self.log("warning", "remote", f"{op} {r.get('result')} {r.get('error', '')}".strip())
             self.message.emit("error", self._last_result)
         elif op == "remote-logs":
@@ -775,6 +794,7 @@ class Backend(QObject):
             self._last_result = self._result("remote-dev", reason=r.get("error") or "15 min")
             self.log("warning", "remote", f"remote unit developer mode armed: {r.get('error', '')}".strip())
         else:
+            self._remote_off = True                 # до следующей связи: «блок выключен оператором», не «потеряна»
             self._last_result = self._result("remote-off")
             self.log("warning", "remote", "remote unit accepted shutdown: link loss is expected")
             self.message.emit("info", self._last_result)

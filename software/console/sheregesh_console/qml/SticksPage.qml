@@ -411,12 +411,12 @@ Item {
         id: confirmDialog
         objectName: "sticksConfirmDialog"
         height: 320 * win.s          // явная высота: иначе цикл привязок implicitHeight в Fusion Dialog
-        // Без сенсора: фокус на «ОК», Enter подтверждает, Esc отменяет (REQ-P-003)
-        onOpened: standardButton(Dialog.Ok).forceActiveFocus()
+        // Без сенсора (REQ-P-003): фокус на «Отмене»; Tab — к подтверждению, Enter — кнопка в фокусе, Esc — отмена
+        onOpened: { confirmDialog.standardButton(Dialog.Ok).text = qsTr("Enable transmission"); confirmDialog.standardButton(Dialog.Cancel).forceActiveFocus() }   // действие с последствиями: по умолчанию — отказ
         Shortcut {
             sequences: ["Return", "Enter"]
             enabled: confirmDialog.opened
-            onActivated: confirmDialog.accept()
+            onActivated: confirmDialog.standardButton(Dialog.Ok).activeFocus ? confirmDialog.accept() : confirmDialog.reject()   // Enter — кнопка в фокусе
         }
         anchors.centerIn: Overlay.overlay
         modal: true

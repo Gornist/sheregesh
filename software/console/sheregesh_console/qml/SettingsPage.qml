@@ -230,7 +230,7 @@ Item {
     Dialog {
         id: confirm
         height: 340 * win.s          // явная высота: иначе цикл привязок implicitHeight в Fusion Dialog
-        // Без сенсора: фокус на «ОК», Enter подтверждает, Esc отменяет (REQ-P-003)
+        // Без сенсора: фокус на «ОК», Enter подтверждает, Esc отменяет (REQ-P-003); сбой проверки — автоматический откат
         onOpened: standardButton(Dialog.Ok) ? standardButton(Dialog.Ok).forceActiveFocus() : standardButton(Dialog.Cancel).forceActiveFocus()
         Shortcut {
             sequences: ["Return", "Enter"]
@@ -309,12 +309,12 @@ Item {
     Dialog {
         id: restoreDialog
         height: 340 * win.s          // явная высота: иначе цикл привязок implicitHeight в Fusion Dialog
-        // Без сенсора: фокус на «ОК», Enter подтверждает, Esc отменяет (REQ-P-003)
-        onOpened: standardButton(Dialog.Ok) ? standardButton(Dialog.Ok).forceActiveFocus() : standardButton(Dialog.Cancel).forceActiveFocus()
+        // Без сенсора (REQ-P-003): фокус на «Отмене»; Tab — к подтверждению, Enter — кнопка в фокусе, Esc — отмена
+        onOpened: { restoreDialog.standardButton(Dialog.Ok).text = qsTr("Restore"); restoreDialog.standardButton(Dialog.Cancel).forceActiveFocus() }   // действие с последствиями: по умолчанию — отказ
         Shortcut {
             sequences: ["Return", "Enter"]
             enabled: restoreDialog.opened
-            onActivated: restoreDialog.standardButton(Dialog.Ok) ? restoreDialog.accept() : restoreDialog.reject()
+            onActivated: restoreDialog.standardButton(Dialog.Ok).activeFocus ? restoreDialog.accept() : restoreDialog.reject()   // Enter — кнопка в фокусе
         }
         objectName: "restoreDialog"
         property var files: []

@@ -28,11 +28,35 @@ ConsoleWindow {
     readonly property bool linkDown: bar.origin === "remote" && bar.link !== "CONNECTED"
     // Несовместимая версия блока — не «нет связи»: связь есть, обмен не начат (REQ-SYS-008, сообщение с версиями)
     readonly property bool incompatible: linkDown && bar.pstate === "incompatible"
+    // Причина отсутствия связи — для текста поверх видео: что произошло и что делать оператору
+    readonly property string linkCause: !linkDown || incompatible ? ""
+        : bar.peerLink === "AUTH_FAILED" ? "auth"
+        : bar.remoteOff ? "off"
+        : bar.peerLink === "RECONNECTING" || bar.everConnected ? "lost" : "waiting"
+    function linkTitle() {
+        return linkCause === "auth" ? qsTr("REMOTE UNIT NOT AUTHORIZED")
+             : linkCause === "off" ? qsTr("REMOTE UNIT SWITCHED OFF")
+             : linkCause === "waiting" ? qsTr("WAITING FOR THE REMOTE UNIT") : qsTr("NO LINK TO THE REMOTE UNIT")
+    }
+    function linkHint() {
+        return linkCause === "auth"
+               ? qsTr("The console and the remote unit do not trust each other's certificates. The link will not recover by itself: pair the devices again (manual, section «Building»).")
+             : linkCause === "off"
+               ? qsTr("The remote unit was shut down from the console. Switch its power off and on; the link restores automatically.")
+             : linkCause === "waiting"
+               ? qsTr("No link since the console started. Check that the remote unit is powered and the Ethernet cable is connected; the console connects automatically.")
+               : qsTr("The link to the remote unit is lost; reconnecting automatically. Check the Ethernet cable and the remote unit power.")
+    }
+    // Активные ошибки (REQ-UI-003): полоса поверх видео с текстом и действием; потеря связи — уже в центре экрана
+    readonly property var activeErrors: backend.events.filter(function (e) {
+        return e.active && e.severity === "error" && !(win.linkDown && (e.code === "PEER-LOST" || e.code === "LINK-AUTH-FAIL"))
+    })
 
     function collect() {
         var sv = backend.sticks, mv = backend.module, vs = backend.videoSource, st = backend.status
         return {link: st.linkView, peerLink: st.peerLink, overall: st.overall, active: st.activeCount,
                 pstate: st.peerState, pproto: st.peerProtocol, lproto: st.localProtocol, pdetail: st.peerDetail,
+                remoteOff: !!st.remoteOff, everConnected: !!st.linkEverConnected,
                 ctl: sv.support, rstate: sv.remoteState, reason: sv.remoteReason, enabled: sv.enabled,
                 present: sv.present, device: sv.deviceName,
                 msup: mv.support, mstate: mv.state, profile: mv.profileName, mbackend: mv.backendSetting,
@@ -188,7 +212,7 @@ ConsoleWindow {
                 Label {
                     objectName: "videoMessageTitle"
                     text: win.incompatible ? qsTr("INCOMPATIBLE REMOTE UNIT VERSION")
-                          : win.linkDown ? qsTr("NO LINK TO THE REMOTE UNIT") : messages.title()
+                          : win.linkDown ? win.linkTitle() : messages.title()
                     color: "#e8eaed"
                     font.pixelSize: 22 * win.k
                     font.bold: true
@@ -199,9 +223,9 @@ ConsoleWindow {
                     text: win.incompatible
                           ? qsTr("Protocol: console %1, remote unit %2 (%3). The exchange does not start until the versions are compatible.")
                             .arg(win.bar.lproto).arg(win.bar.pproto || "?").arg(win.bar.pdetail)
-                          : win.linkDown ? qsTr("The link to the remote unit is lost; reconnecting automatically.") : messages.reason()
+                          : win.linkDown ? win.linkHint() : messages.reason()
                     color: "#b5bec6"
-                    font.pixelSize: 13 * win.k
+                    font.pixelSize: 15 * win.k
                     wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignHCenter
                     Layout.maximumWidth: field.width * 0.6 - 48 * win.k
@@ -210,6 +234,43 @@ ConsoleWindow {
             }
         }
         MiniVideoText { id: messages }
+        Rectangle {                                  // REQ-UI-003: активная ошибка видна поверх видео; тап — диагностика
+            objectName: "faultBanner"
+            visible: win.activeErrors.length > 0 && win.details === ""
+            anchors { left: parent.left; right: parent.right; top: parent.top; margins: 8 * win.k }
+            anchors.rightMargin: (win.section !== "" ? panel.width + 18 * win.k : 8 * win.k)
+            height: bannerCol.implicitHeight + 16 * win.k
+            radius: 6 * win.k
+            color: "#e6a3261f"
+            border.color: win.p.fault
+            z: 2
+            ColumnLayout {
+                id: bannerCol
+                anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 12 * win.k }
+                spacing: 2 * win.k
+                Label {
+                    objectName: "faultBannerText"
+                    text: win.activeErrors.length > 0 ? win.activeErrors[0].text
+                          + (win.activeErrors.length > 1 ? "  " + qsTr("(+%1 more)").arg(win.activeErrors.length - 1) : "") : ""
+                    color: "#ffffff"
+                    font.pixelSize: 16 * win.k
+                    font.bold: true
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Label {
+                    objectName: "faultBannerAction"
+                    text: win.activeErrors.length > 0 ? win.activeErrors[0].action : ""
+                    color: "#ffe9e6"
+                    font.pixelSize: 14 * win.k
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+            }
+            MouseArea { anchors.fill: parent; onClicked: win.open("diagnostics") }
+        }
         MouseArea {                                  // тап по видео закрывает панель
             anchors.fill: parent
             enabled: win.section !== ""

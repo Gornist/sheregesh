@@ -11,14 +11,22 @@ ColumnLayout {
     readonly property var st: backend.status
     readonly property var rx: backend.videoReceiver
     property string exportResult: ""
-    property bool exportWaiting: false     // выгрузка идёт в фоне: имя файла — по её завершении (lastExport)
+    property bool exportOk: true
+    property bool exportWaiting: false     // выгрузка идёт в фоне: итог — по её завершении (lastOk, lastExport)
     Connections {
         target: backend
         function onConfigBusyChanged() {
             if (panel.exportWaiting && !backend.configBusy) {
                 panel.exportWaiting = false
-                panel.exportResult = backend.lastExport
+                panel.exportOk = backend.lastOk           // неудача — текст причины, а не имя прошлого файла
+                panel.exportResult = backend.lastOk ? qsTr("Saved: %1").arg(backend.lastExport) : backend.lastResult
             }
+        }
+    }
+    function startExport(remote) {
+        if (remote ? backend.exportRemoteLogs() : backend.exportLogs()) {
+            panel.exportResult = ""
+            panel.exportWaiting = true
         }
     }
 
@@ -64,12 +72,28 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.preferredHeight: 44 * win.k
         enabled: !backend.configBusy
-        onClicked: if (backend.exportLogs()) { panel.exportResult = ""; panel.exportWaiting = true }
+        onClicked: panel.startExport(false)
+    }
+    Button {
+        objectName: "miniExportRemoteLogs"
+        text: qsTr("Export remote unit log")
+        font.pixelSize: 14 * win.k
+        Layout.fillWidth: true
+        Layout.preferredHeight: 44 * win.k
+        enabled: !backend.configBusy && panel.st.peerState === "connected"
+        onClicked: panel.startExport(true)
+    }
+    RowLayout {
+        visible: panel.exportWaiting
+        Layout.fillWidth: true
+        BusyIndicator { running: panel.exportWaiting; Layout.preferredWidth: 28 * win.k; Layout.preferredHeight: 28 * win.k }
+        Label { objectName: "miniExportBusy"; text: qsTr("Exporting…"); color: win.p.muted; font.pixelSize: 13 * win.k }
     }
     Label {
-        visible: panel.exportResult !== ""
-        text: qsTr("Saved: %1").arg(panel.exportResult)
-        color: win.p.muted
+        objectName: "miniExportResult"
+        visible: panel.exportResult !== "" && !panel.exportWaiting
+        text: panel.exportResult
+        color: panel.exportOk ? win.p.muted : win.p.fault
         font.pixelSize: 12 * win.k
         wrapMode: Text.WrapAnywhere
         Layout.fillWidth: true

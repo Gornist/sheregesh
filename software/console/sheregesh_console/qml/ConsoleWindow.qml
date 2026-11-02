@@ -66,6 +66,68 @@ ApplicationWindow {
     palette.dark: p.border
 
 
+    // Сообщения backend.message (итоги фоновых операций, откат настроек, выключение блока) — всплывающая строка
+    // поверх любого экрана; последние 20 — в notices. Касание закрывает.
+    id: cw
+    readonly property real uk: Math.min(width / 1280, height / 800)
+    property var notices: []
+    property var notice: null
+    Connections {
+        target: backend
+        function onMessage(level, text) {
+            cw.notice = {level: level, text: text, time: new Date()}
+            cw.notices = [cw.notice].concat(cw.notices).slice(0, 20)
+            toastTimer.interval = level === "error" ? 12000 : level === "warning" ? 8000 : 5000
+            toastTimer.restart()
+        }
+    }
+    Timer { id: toastTimer; onTriggered: cw.notice = null }
+    Rectangle {
+        objectName: "toast"
+        parent: Overlay.overlay
+        visible: cw.notice !== null
+        z: 900000
+        width: Math.min(toastText.implicitWidth + 40 * cw.uk, cw.width * 0.7)
+        height: toastText.implicitHeight + 24 * cw.uk
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: cw.height * 0.12
+        radius: 8 * cw.uk
+        color: !cw.notice ? cw.p.panel : cw.notice.level === "error" ? "#f0a3261f"
+             : cw.notice.level === "warning" ? "#f08a5a00" : "#f01f4f73"
+        border.color: "#80ffffff"
+        Label {
+            id: toastText
+            objectName: "toastText"
+            anchors.centerIn: parent
+            width: Math.min(implicitWidth, cw.width * 0.7 - 40 * cw.uk)
+            text: cw.notice ? cw.notice.text : ""
+            color: "#ffffff"
+            font.pixelSize: 16 * cw.uk
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
+        }
+        MouseArea { anchors.fill: parent; onClicked: cw.notice = null }
+    }
+
+    // Экранная клавиатура: редактируемое поле получило фокус касанием (не программно и не Tab — открытие настроек
+    // её не показывает); поле в нижней половине экрана — клавиатура сверху
+    function touchFocused(item) {
+        var c = item.focusReason !== undefined ? item : item.parent    // поле SpinBox: причина — у самого SpinBox
+        return c !== null && c.focusReason === Qt.MouseFocusReason
+    }
+    readonly property Item editTarget: activeFocusItem && activeFocusItem.cursorPosition !== undefined
+                                       && typeof activeFocusItem.insert === "function" && !activeFocusItem.readOnly
+                                       && touchFocused(activeFocusItem) ? activeFocusItem : null
+    OnScreenKeyboard {
+        parent: Overlay.overlay
+        z: 950000
+        visible: cw.editTarget !== null
+        target: cw.editTarget
+        k: cw.uk
+        width: cw.width
+        y: cw.editTarget && cw.editTarget.mapToItem(null, 0, 0).y > cw.height / 2 ? 0 : cw.height - height
+    }
+
     // REQ-UI-005: погашенный экран — чёрный слой поверх всего; ввод до пробуждения поглощает screenGuard
     Rectangle {
         objectName: "screenBlank"

@@ -53,9 +53,9 @@ class ConfigOps(QObject):
 
     def _finish(self, op, result):
         self._op = None
+        if not self._closed:                # сначала итог (lastOk, lastExport), затем «не занято»: QML читает итог
+            self.finished.emit(op, result)  # по busyChanged
         self.busyChanged.emit()
-        if not self._closed:
-            self.finished.emit(op, result)
 
     def close(self, timeout_s: float = 5.0) -> bool:
         """Новых операций нет; текущая — ждать до timeout_s. True — фоновых операций не осталось."""
