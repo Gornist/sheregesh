@@ -102,8 +102,15 @@ VERIFY=$?
 set -e
 
 echo "== артефакты"
-# Уровень 3: на Pi 5 уровень 10 стоил 118 с из 527 с сборки, уровень 3 — 38 с (файл на 12% больше, содержимое то же).
-zstd -q -T0 -"${SHEREGESH_ZSTD_LEVEL:-3}" -f "$IMG" -o "$OUT/$NAME.img.zst"
+# Образ уже сжат хуком deploy rpi-image-gen (deploy05-raw, zstd уровня 3, разреженно) — второй раз тот же образ не
+# сжимаем (≈38 с на Pi 5). Каталог deploy очищен перед сборкой, файл — этой сборки. Нет (POST_ONLY, другая схема
+# deploy) — сжимаем сами; уровень 3: на Pi 5 уровень 10 стоил 118 с из 527 с (файл на 12% больше, содержимое то же).
+if [[ -s "$DEPLOY/$NAME.img.zst" ]]; then
+  cp "$DEPLOY/$NAME.img.zst" "$OUT/$NAME.img.zst"
+  zstd -tq "$OUT/$NAME.img.zst"
+else
+  zstd -q -T0 -"${SHEREGESH_ZSTD_LEVEL:-3}" -f "$IMG" -o "$OUT/$NAME.img.zst"
+fi
 # SBOM — обязательный артефакт: нет у этой сборки — сборка падает (а не берёт чужой из прошлых)
 cp "$DEPLOY"/filesystem-*.sbom.zst "$OUT/$NAME.sbom.zst" 2>/dev/null
 [[ -s "$OUT/$NAME.sbom.zst" ]] || { echo "нет SBOM образа в $DEPLOY (rpi-image-gen)" >&2; exit 1; }

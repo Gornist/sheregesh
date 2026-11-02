@@ -74,6 +74,8 @@ class BuildhostImageTest(unittest.TestCase):
         self.assertIn('rm -rf "$WORK"/build/deploy-*', build)       # SBOM и манифест только этой сборки
         self.assertNotIn('sbom.zst" 2>/dev/null || true', build)
         self.assertIn("нет SBOM образа", build)
+        self.assertIn('"$DEPLOY/$NAME.img.zst"', build)             # образ, сжатый rpi-image-gen, не сжимается второй раз
+        self.assertIn('zstd -tq "$OUT/$NAME.img.zst"', build)       # но целостность копии проверяется
 
     def test_mbr_parse(self):
         with tempfile.NamedTemporaryFile() as f:
