@@ -57,7 +57,7 @@ QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software .venv/bin/python -m pytest -
 1. Закоммить изменение (сборка — из коммита, не из рабочего дерева). С Mac:
    `python3 tools/build/shbuild.py submit [РЕВИЗИЯ]` → id задания. Сервис на хосте сборки (`~/shbuild`) ставит его в
    очередь (одна сборка за раз) и проходит этапы preflight → checkout → tests → build → gates → boot. Хост по умолчанию
-   — devbox (≈ 37 мин); быстрее — Raspberry Pi 5 (10–12 мин): `SHBUILD_HOST=shbuild@pi5.local SHBUILD_BULK_HOST=shbuild@pi5.local`
+   — devbox (≈ 37 мин); быстрее — Raspberry Pi 5 (≈ 6 мин): `SHBUILD_HOST=shbuild@pi5.local SHBUILD_BULK_HOST=shbuild@pi5.local`
    перед командой. Образ сборочного хоста — `submit --config sheregesh-buildhost-pi5`. Устройство, выключатели,
    замеры и откат — [BUILD-SERVICE](BUILD-SERVICE.md).
 2. Ждать: `python3 tools/build/shbuild.py wait ID` (одна строка итога; код 0 — PASSED) или `status ID`;
