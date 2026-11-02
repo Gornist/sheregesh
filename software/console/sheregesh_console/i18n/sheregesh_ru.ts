@@ -750,7 +750,7 @@
     </message>
     <message>
         <location filename="../qml/MainMinimal.qml" line="98" />
-        <location filename="../qml/MainMinimal.qml" line="112" />
+        <location filename="../qml/MainMinimal.qml" line="114" />
         <source>no link</source>
         <translation>нет связи</translation>
     </message>
@@ -760,83 +760,113 @@
         <translation>не поддерживается</translation>
     </message>
     <message>
+        <location filename="../qml/MainMinimal.qml" line="100" />
+        <source>active</source>
+        <translation>активно</translation>
+    </message>
+    <message>
         <location filename="../qml/MainMinimal.qml" line="101" />
+        <source>idle</source>
+        <translation>ожидание</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="102" />
         <source>output: commands</source>
         <translation>выход: команды</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="101" />
+        <location filename="../qml/MainMinimal.qml" line="102" />
         <source>output: neutral</source>
         <translation>выход: нейтраль</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="102" />
+        <location filename="../qml/MainMinimal.qml" line="103" />
         <source>no output</source>
         <translation>нет выхода</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="103" />
-        <location filename="../qml/MainMinimal.qml" line="132" />
+        <location filename="../qml/MainMinimal.qml" line="104" />
+        <location filename="../qml/MainMinimal.qml" line="134" />
         <source>off</source>
         <translation>выкл.</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="111" />
+        <location filename="../qml/MainMinimal.qml" line="112" />
         <source>connected</source>
         <translation>на связи</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="111" />
+        <location filename="../qml/MainMinimal.qml" line="112" />
+        <source>%1 ms</source>
+        <translation>%1 мс</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="113" />
         <source>no link · reconnecting</source>
         <translation>нет связи · переподключение</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="112" />
+        <location filename="../qml/MainMinimal.qml" line="114" />
         <source>connecting</source>
         <translation>подключение</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="112" />
+        <location filename="../qml/MainMinimal.qml" line="114" />
         <source>error</source>
         <translation>ошибка</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="120" />
+        <location filename="../qml/MainMinimal.qml" line="122" />
         <source>FPS</source>
         <translation>к/с</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="121" />
+        <location filename="../qml/MainMinimal.qml" line="123" />
         <source>no video</source>
         <translation>нет видео</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="129" />
+        <location filename="../qml/MainMinimal.qml" line="131" />
         <source>no data</source>
         <translation>нет данных</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="130" />
+        <location filename="../qml/MainMinimal.qml" line="132" />
         <source>module</source>
         <translation>модуль</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="131" />
+        <location filename="../qml/MainMinimal.qml" line="133" />
         <source>ready</source>
         <translation>готов</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="131" />
+        <location filename="../qml/MainMinimal.qml" line="133" />
         <source>fault</source>
         <translation>неисправность</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="132" />
+        <location filename="../qml/MainMinimal.qml" line="134" />
         <source>absent</source>
         <translation>отсутствует</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="254" />
+        <location filename="../qml/MainMinimal.qml" line="135" />
+        <source>starting</source>
+        <translation>запуск</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="135" />
+        <source>recovering</source>
+        <translation>восстановление</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="136" />
+        <source>detected</source>
+        <translation>обнаружен</translation>
+    </message>
+    <message>
+        <location filename="../qml/MainMinimal.qml" line="259" />
         <source>(+%1 more)</source>
         <translation>(ещё %1)</translation>
     </message>
@@ -851,47 +881,47 @@
         <translation>Пульт и блок не признают сертификаты друг друга. Связь сама не восстановится: заново сопрягите устройства (руководство, раздел «Сборка»).</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="214" />
+        <location filename="../qml/MainMinimal.qml" line="219" />
         <source>INCOMPATIBLE REMOTE UNIT VERSION</source>
         <translation>НЕСОВМЕСТИМАЯ ВЕРСИЯ БЛОКА</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="224" />
+        <location filename="../qml/MainMinimal.qml" line="229" />
         <source>Protocol: console %1, remote unit %2 (%3). The exchange does not start until the versions are compatible.</source>
         <translation>Протокол: пульт %1, блок %2 (%3). Обмен не начнётся, пока версии несовместимы.</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="291" />
+        <location filename="../qml/MainMinimal.qml" line="296" />
         <source>← Back</source>
         <translation>← Назад</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="319" />
+        <location filename="../qml/MainMinimal.qml" line="324" />
         <source>CONTROL</source>
         <translation>УПРАВЛЕНИЕ</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="323" />
+        <location filename="../qml/MainMinimal.qml" line="328" />
         <source>UNIT</source>
         <translation>БЛОК</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="327" />
+        <location filename="../qml/MainMinimal.qml" line="332" />
         <source>VIDEO</source>
         <translation>ВИДЕО</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="332" />
+        <location filename="../qml/MainMinimal.qml" line="337" />
         <source>INPUT</source>
         <translation>ВВОД</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="333" />
+        <location filename="../qml/MainMinimal.qml" line="338" />
         <source>no device</source>
         <translation>нет устройства</translation>
     </message>
     <message>
-        <location filename="../qml/MainMinimal.qml" line="338" />
+        <location filename="../qml/MainMinimal.qml" line="343" />
         <source>MODULE</source>
         <translation>МОДУЛЬ</translation>
     </message>
@@ -1044,6 +1074,11 @@
         <translation>Частота · задержка</translation>
     </message>
     <message>
+        <location filename="../qml/MiniControlPanel.qml" line="113" />
+        <source>%1 Hz · %2 ms</source>
+        <translation>%1 Гц · %2 мс</translation>
+    </message>
+    <message>
         <location filename="../qml/MiniControlPanel.qml" line="115" />
         <source>Sticks</source>
         <translation>Стики</translation>
@@ -1070,82 +1105,87 @@
 <context>
     <name>MiniDiagPanel</name>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="35" />
+        <location filename="../qml/MiniDiagPanel.qml" line="39" />
         <source>Overall</source>
         <translation>Общее состояние</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="36" />
+        <location filename="../qml/MiniDiagPanel.qml" line="40" />
         <source>active events: %1</source>
         <translation>активных событий: %1</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="41" />
+        <location filename="../qml/MiniDiagPanel.qml" line="45" />
         <source>Remote unit (Ethernet)</source>
         <translation>Удалённый блок (Ethernet)</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="45" />
+        <location filename="../qml/MiniDiagPanel.qml" line="46" />
+        <source>latency %1 ms</source>
+        <translation>задержка %1 мс</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="49" />
         <source>Link security</source>
         <translation>Защита канала</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="47" />
+        <location filename="../qml/MiniDiagPanel.qml" line="51" />
         <source>Video</source>
         <translation>Видео</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="48" />
+        <location filename="../qml/MiniDiagPanel.qml" line="52" />
         <source>%1 · %2 fps shown · restarts %3</source>
         <translation>%1 · показано %2 к/с · перезапусков %3</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="48" />
+        <location filename="../qml/MiniDiagPanel.qml" line="52" />
         <source>playing</source>
         <translation>воспроизведение</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="52" />
+        <location filename="../qml/MiniDiagPanel.qml" line="56" />
         <source>USB input</source>
         <translation>USB-ввод</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="53" />
+        <location filename="../qml/MiniDiagPanel.qml" line="57" />
         <source>no device</source>
         <translation>нет устройства</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="56" />
+        <location filename="../qml/MiniDiagPanel.qml" line="60" />
         <source>Remote unit software</source>
         <translation>ПО блока</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="57" />
+        <location filename="../qml/MiniDiagPanel.qml" line="61" />
         <source>Console software</source>
         <translation>ПО пульта</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="63" />
+        <location filename="../qml/MiniDiagPanel.qml" line="67" />
         <source>Console service: %1</source>
         <translation>Служба пульта: %1</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="63" />
+        <location filename="../qml/MiniDiagPanel.qml" line="67" />
         <source>Remote unit service: %1</source>
         <translation>Служба блока: %1</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="64" />
+        <location filename="../qml/MiniDiagPanel.qml" line="68" />
         <source>%1 · restarts %2</source>
         <translation>%1 · перезапусков %2</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="57" />
+        <location filename="../qml/MiniDiagPanel.qml" line="61" />
         <source>protocol</source>
         <translation>протокол</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="70" />
+        <location filename="../qml/MiniDiagPanel.qml" line="74" />
         <source>Export logs</source>
         <translation>Выгрузить журнал</translation>
     </message>
@@ -1155,27 +1195,52 @@
         <translation>Сохранено: %1</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="79" />
+        <location filename="../qml/MiniDiagPanel.qml" line="27" />
+        <source>running</source>
+        <translation>работает</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="27" />
+        <source>failed</source>
+        <translation>сбой</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="27" />
+        <source>starting</source>
+        <translation>запуск</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="28" />
+        <source>stopped</source>
+        <translation>остановлена</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="28" />
+        <source>stopping</source>
+        <translation>останавливается</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniDiagPanel.qml" line="83" />
         <source>Export remote unit log</source>
         <translation>Выгрузить журнал блока</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="90" />
+        <location filename="../qml/MiniDiagPanel.qml" line="94" />
         <source>Exporting…</source>
         <translation>Идёт выгрузка…</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="102" />
+        <location filename="../qml/MiniDiagPanel.qml" line="106" />
         <source>Events</source>
         <translation>События</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="102" />
+        <location filename="../qml/MiniDiagPanel.qml" line="106" />
         <source>Units overview</source>
         <translation>Обзор блоков</translation>
     </message>
     <message>
-        <location filename="../qml/MiniDiagPanel.qml" line="103" />
+        <location filename="../qml/MiniDiagPanel.qml" line="107" />
         <source>Logs</source>
         <translation>Журналы</translation>
     </message>
@@ -1316,77 +1381,122 @@
 <context>
     <name>MiniSystemPanel</name>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="17" />
+        <location filename="../qml/MiniSystemPanel.qml" line="23" />
         <source>Console software</source>
         <translation>ПО пульта</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="17" />
+        <location filename="../qml/MiniSystemPanel.qml" line="23" />
         <source>protocol</source>
         <translation>протокол</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="18" />
+        <location filename="../qml/MiniSystemPanel.qml" line="24" />
         <source>Release</source>
         <translation>Выпуск</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="19" />
+        <location filename="../qml/MiniSystemPanel.qml" line="25" />
         <source>Previous release</source>
         <translation>Предыдущий выпуск</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="27" />
+        <location filename="../qml/MiniSystemPanel.qml" line="33" />
         <source>Slots</source>
         <translation>Слоты</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="28" />
+        <location filename="../qml/MiniSystemPanel.qml" line="34" />
         <source>active %1 · other %2</source>
         <translation>активный %1 · второй %2</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="30" />
+        <location filename="../qml/MiniSystemPanel.qml" line="36" />
         <source>System image</source>
         <translation>Образ системы</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="38" />
+        <location filename="../qml/MiniSystemPanel.qml" line="44" />
         <source>Display</source>
         <translation>Дисплей</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="38" />
+        <location filename="../qml/MiniSystemPanel.qml" line="44" />
         <source>scale</source>
         <translation>масштаб</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="39" />
+        <location filename="../qml/MiniSystemPanel.qml" line="45" />
         <source>Language · theme</source>
         <translation>Язык · тема</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="49" />
+        <location filename="../qml/MiniSystemPanel.qml" line="45" />
+        <source>light</source>
+        <translation>светлая</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="45" />
+        <source>dark</source>
+        <translation>тёмная</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="55" />
         <source>Settings</source>
         <translation>Настройки</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="49" />
+        <location filename="../qml/MiniSystemPanel.qml" line="55" />
         <source>Power</source>
         <translation>Питание</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="50" />
+        <location filename="../qml/MiniSystemPanel.qml" line="56" />
         <source>About</source>
         <translation>О системе</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="34" />
+        <location filename="../qml/MiniSystemPanel.qml" line="40" />
         <source>Developer mode</source>
         <translation>Режим разработчика</translation>
     </message>
     <message>
-        <location filename="../qml/MiniSystemPanel.qml" line="35" />
+        <location filename="../qml/MiniSystemPanel.qml" line="17" />
+        <source>confirmed</source>
+        <translation>подтверждено</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="17" />
+        <source>rolled back to the previous image</source>
+        <translation>откат на прежний образ</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="18" />
+        <source>installed, waiting for a trial boot</source>
+        <translation>установлено, ждёт пробной загрузки</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="18" />
+        <source>installing</source>
+        <translation>установка</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="19" />
+        <source>trial boot, waiting for confirmation</source>
+        <translation>пробная загрузка, ждёт подтверждения</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="20" />
+        <source>no update</source>
+        <translation>обновления нет</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="20" />
+        <source>error</source>
+        <translation>ошибка</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniSystemPanel.qml" line="41" />
         <source>one own image allowed</source>
         <translation>разрешён один собственный образ</translation>
     </message>
@@ -1442,6 +1552,11 @@
         <location filename="../qml/MiniVideoPanel.qml" line="114" />
         <source>Source mode</source>
         <translation>Режим источника</translation>
+    </message>
+    <message>
+        <location filename="../qml/MiniVideoPanel.qml" line="115" />
+        <source>%1×%2 · %3 fps</source>
+        <translation>%1×%2 · %3 к/с</translation>
     </message>
     <message>
         <location filename="../qml/MiniVideoPanel.qml" line="118" />
@@ -2536,12 +2651,12 @@
 <context>
     <name>OnScreenKeyboard</name>
     <message>
-        <location filename="../qml/OnScreenKeyboard.qml" line="95" />
+        <location filename="../qml/OnScreenKeyboard.qml" line="75" />
         <source>space</source>
         <translation>пробел</translation>
     </message>
     <message>
-        <location filename="../qml/OnScreenKeyboard.qml" line="97" />
+        <location filename="../qml/OnScreenKeyboard.qml" line="77" />
         <source>Done</source>
         <translation>Готово</translation>
     </message>

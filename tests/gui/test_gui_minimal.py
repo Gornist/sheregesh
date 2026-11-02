@@ -139,7 +139,7 @@ def test_gui01_minimal_starts_with_video_field(ui, out_dir):
 
 
 @pytest.mark.test_id("TEST-UI-002")
-@pytest.mark.parametrize("size,bar,nav", [((1280, 800), 28, 44), ((1920, 1200), 42, 66)])
+@pytest.mark.parametrize("size,bar,nav", [((1280, 800), 32, 44), ((1920, 1200), 48, 66)])
 def test_gui02_status_bar_one_line_and_geometry(ui, out_dir, size, bar, nav):
     ui.window.resize(*size)
     pump(200)
@@ -147,7 +147,7 @@ def test_gui02_status_bar_one_line_and_geometry(ui, out_dir, size, bar, nav):
     sb, field, nb = find(ui, "statusBar"), find(ui, "videoField"), find(ui, "navBar")
     assert geom(sb) == (0, 0, w, bar) and geom(nb) == (0, h - nav, w, nav)
     assert geom(field) == (0, bar, w, h - bar - nav)
-    assert field.height() / h >= 0.90, field.height() / h          # 728/800 = 91 %; кадр 16:9 — 720 строк
+    assert field.height() / h >= 0.90, field.height() / h          # 724/800 = 90,5 %; кадр 16:9 — 720 строк
     # пять полей в одну строку, без переноса и без наезда на метку LAB справа
     lab_x = geom(find(ui, "statusLab"))[0]
     for key in ("control", "link", "video", "input", "module"):
@@ -155,7 +155,7 @@ def test_gui02_status_bar_one_line_and_geometry(ui, out_dir, size, bar, nav):
         x, y, iw, ih = geom(item)
         assert status(ui, key), key
         assert ih == bar and x + iw <= lab_x, (key, x, iw, lab_x)
-    assert status(ui, "link") == "на связи" and "IDLE" in status(ui, "control")
+    assert status(ui, "link") == "на связи" and "ожидание" in status(ui, "control")
     shot(ui, out_dir, f"gui02-{w}x{h}-status")
 
 
@@ -348,8 +348,8 @@ def test_gui_diagnostics_lists_mandatory_services_of_both_devices(ui):
     tap(ui, "nav_diagnostics")
     assert wait_until(lambda: find_opt(ui, "miniSvc_video-tx") is not None, 3)
     rx, tx = find(ui, "miniSvc_video-rx"), find(ui, "miniSvc_video-tx")
-    assert rx.property("label") == "Служба пульта: video-rx" and rx.property("value") == "active · перезапусков 0"
-    assert tx.property("label") == "Служба блока: video-tx" and tx.property("value") == "failed · перезапусков 2"
+    assert rx.property("label") == "Служба пульта: video-rx" and rx.property("value") == "работает · перезапусков 0"
+    assert tx.property("label") == "Служба блока: video-tx" and tx.property("value") == "сбой · перезапусков 2"
 
 
 @pytest.mark.test_id("TEST-SYS-009")

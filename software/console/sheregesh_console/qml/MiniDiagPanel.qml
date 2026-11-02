@@ -23,6 +23,10 @@ ColumnLayout {
             }
         }
     }
+    function svcState(s) {
+        return s === "active" ? qsTr("running") : s === "failed" ? qsTr("failed") : s === "activating" ? qsTr("starting")
+             : s === "inactive" ? qsTr("stopped") : s === "deactivating" ? qsTr("stopping") : s
+    }
     function startExport(remote) {
         if (remote ? backend.exportRemoteLogs() : backend.exportLogs()) {
             panel.exportResult = ""
@@ -39,7 +43,7 @@ ColumnLayout {
     MiniRow {
         objectName: "miniDiagLink"
         label: qsTr("Remote unit (Ethernet)")
-        value: win.linkText(panel.st.linkView) + (panel.st.linkRttMs > 0 ? " · RTT %1 ms".arg(win.num(panel.st.linkRttMs, 1)) : "")
+        value: win.linkText(panel.st.linkView) + (panel.st.linkRttMs > 0 ? " · " + qsTr("latency %1 ms").arg(win.num(panel.st.linkRttMs, 1)) : "")
         valueColor: win.linkColor(panel.st.linkView)
     }
     MiniRow { label: qsTr("Link security"); value: panel.st.linkTls !== "" ? panel.st.linkTls + " · " + panel.st.linkHost : "—" }
@@ -61,7 +65,7 @@ ColumnLayout {
             required property var modelData
             objectName: "miniSvc_" + modelData.name
             label: (modelData.side === "console" ? qsTr("Console service: %1") : qsTr("Remote unit service: %1")).arg(modelData.name)
-            value: qsTr("%1 · restarts %2").arg(modelData.state).arg(modelData.restarts)
+            value: qsTr("%1 · restarts %2").arg(panel.svcState(modelData.state)).arg(modelData.restarts)
             valueColor: modelData.state === "active" ? win.p.ok : win.p.fault
         }
     }

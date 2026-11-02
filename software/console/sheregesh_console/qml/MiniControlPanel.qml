@@ -110,7 +110,7 @@ ColumnLayout {
     MiniRow { label: qsTr("Output"); value: panel.outputText() + (mv.support === "ok" && mv.backendSetting !== "crsf-uart" ? " · SIM" : "") }
     MiniRow {
         label: qsTr("Rate · latency")
-        value: sv.rateHz > 0 ? "%1 Hz · %2 ms".arg(win.num(sv.rateHz, 0)).arg(sv.latencyMs >= 0 ? win.num(sv.latencyMs, 0) : "—") : "—"
+        value: sv.rateHz > 0 ? qsTr("%1 Hz · %2 ms").arg(win.num(sv.rateHz, 0)).arg(sv.latencyMs >= 0 ? win.num(sv.latencyMs, 0) : "—") : "—"
     }
     Label { text: qsTr("Sticks"); color: win.p.muted; font.pixelSize: 11 * win.k; font.bold: true; Layout.topMargin: 4 * win.k }
     Repeater {

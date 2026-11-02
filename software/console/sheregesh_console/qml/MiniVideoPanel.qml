@@ -112,7 +112,7 @@ ColumnLayout {
     }
     MiniRow {
         label: qsTr("Source mode")
-        value: panel.vs.width > 0 ? "%1×%2 · %3 fps".arg(panel.vs.width).arg(panel.vs.height).arg(win.num(panel.vs.fps, 0)) : "—"
+        value: panel.vs.width > 0 ? qsTr("%1×%2 · %3 fps").arg(panel.vs.width).arg(panel.vs.height).arg(win.num(panel.vs.fps, 0)) : "—"
     }
     MiniRow {
         label: qsTr("Shown")

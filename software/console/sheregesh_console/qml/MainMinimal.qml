@@ -5,14 +5,14 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Sheregesh 1.0
 
-// Интерфейс Minimal: строка состояния 28, видео, нижнее меню 44 (база 1280×800, масштаб k по экрану).
+// Интерфейс Minimal: строка состояния 32, видео, нижнее меню 44 (база 1280×800, масштаб k по экрану).
 // Разделы открываются панелью справа поверх видео (поле видео не меняет размер); «Подробно» — прежняя страница
 // на месте видео, пока команды не идут на модуль. Строка состояния читает backend 4 раза в секунду (bar),
 // а не на каждое изменение стиков; панели создаются только открытыми (Loader).
 ConsoleWindow {
     id: win
-    readonly property real k: Math.min(width / 1280, height / 800)
-    readonly property real barH: Math.round(28 * k)
+    readonly property real k: Math.min(width / 1280, height / 800) * backend.uiScale / 100   // «Масштаб интерфейса»
+    readonly property real barH: Math.round(32 * k)
     readonly property real navH: Math.round(44 * k)
     property string section: ""            // открытый раздел: video | control | module | diagnostics | system | ""
     property string details: ""            // прежняя страница на месте видео: VideoPage | SticksPage | … | ""
@@ -62,7 +62,7 @@ ConsoleWindow {
                 msup: mv.support, mstate: mv.state, profile: mv.profileName, mbackend: mv.backendSetting,
                 output: mv.support === "ok" ? mv.output : "",
                 input: vs.input, display: vs.display, live: vs.live, origin: vs.origin,
-                fps: backend.videoReceiver.fps}
+                fps: backend.videoReceiver.fps, rtt: st.linkRttMs}
     }
     function open(key) {
         openStartedMs = Date.now()
@@ -97,7 +97,8 @@ ConsoleWindow {
     function ctlText() {
         if (bar.ctl === "no-link") return qsTr("no link")
         if (bar.ctl === "old-remote") return qsTr("not supported")
-        var s = bar.rstate === "ACTIVE" ? "ACTIVE" : bar.rstate === "FAILSAFE" ? "FAILSAFE" : bar.rstate === "IDLE" ? "IDLE" : "—"
+        var s = bar.rstate === "ACTIVE" ? qsTr("active") : bar.rstate === "FAILSAFE" ? "FAILSAFE"
+              : bar.rstate === "IDLE" ? qsTr("idle") : "—"
         var o = bar.output === "live" ? qsTr("output: commands") : bar.output === "neutral" ? qsTr("output: neutral")
               : bar.msup === "ok" ? qsTr("no output") : ""
         return (bar.enabled ? s : qsTr("off") + (s !== "—" ? " · " + s : "")) + (o !== "" ? " · " + o : "")
@@ -108,7 +109,8 @@ ConsoleWindow {
         return bar.rstate === "ACTIVE" ? p.ok : bar.ctl === "ok" ? p.info : p.muted
     }
     function linkValue() {           // переподключение после потери — «нет связи», а не «подключение» (первое)
-        return bar.link === "CONNECTED" ? qsTr("connected") : bar.peerLink === "RECONNECTING" ? qsTr("no link · reconnecting")
+        return bar.link === "CONNECTED" ? qsTr("connected") + (bar.rtt > 0 ? " · " + qsTr("%1 ms").arg(Math.round(bar.rtt)) : "")
+             : bar.peerLink === "RECONNECTING" ? qsTr("no link · reconnecting")
              : bar.link === "CONNECTING" ? qsTr("connecting") : bar.link === "ERROR" ? qsTr("error") : qsTr("no link")
     }
     function linkTone() {
@@ -130,7 +132,8 @@ ConsoleWindow {
         var n = bar.profile !== "" ? bar.profile.replace("RadioMaster ", "") : qsTr("module")
         var s = bar.mstate === "READY" ? qsTr("ready") : bar.mstate === "FAULT" ? qsTr("fault")
               : bar.mstate === "DISCONNECTED" ? qsTr("absent") : bar.mstate === "DISABLED" ? qsTr("off")
-              : bar.mstate.toLowerCase()
+              : bar.mstate === "INITIALIZING" ? qsTr("starting") : bar.mstate === "RECOVERING" ? qsTr("recovering")
+              : bar.mstate === "DETECTED" ? qsTr("detected") : bar.mstate.toLowerCase()
         return n + (moduleSim() ? " SIM" : "") + " · " + s
     }
     function moduleColor() {
@@ -139,6 +142,8 @@ ConsoleWindow {
     }
 
     Timer { interval: 250; running: true; repeat: true; onTriggered: win.bar = win.collect() }
+    property date clockNow: new Date()                 // часы в строке состояния: обновление раз в 5 с
+    Timer { interval: 5000; running: true; repeat: true; onTriggered: win.clockNow = new Date() }
 
     // Без сенсора: F1…F5 — разделы, Esc — закрыть (REQ-P-003)
     Repeater {
@@ -157,12 +162,12 @@ ConsoleWindow {
         property bool strong: false
         spacing: 6 * win.k
         height: win.barH
-        Rectangle { width: 7 * win.k; height: width; radius: width / 2; color: tone; anchors.verticalCenter: parent.verticalCenter }
-        Label { id: lab; color: win.p.muted; font.pixelSize: 11 * win.k; anchors.verticalCenter: parent.verticalCenter }
+        Rectangle { width: 10 * win.k; height: width; radius: width / 2; color: tone; anchors.verticalCenter: parent.verticalCenter }
+        Label { id: lab; color: win.p.muted; font.pixelSize: 12 * win.k; anchors.verticalCenter: parent.verticalCenter }
         Label {
             id: val
             color: strong ? tone : win.p.text
-            font.pixelSize: 12 * win.k
+            font.pixelSize: 15 * win.k
             font.bold: strong
             anchors.verticalCenter: parent.verticalCenter
         }
@@ -342,8 +347,9 @@ ConsoleWindow {
             objectName: "statusLab"
             anchors { right: parent.right; rightMargin: 12 * win.k; verticalCenter: parent.verticalCenter }
             text: "LAB" + (win.bar.overall === "fault" || win.bar.overall === "warning" ? " · " + win.stateText(win.bar.overall) : "")
+                  + "   " + Qt.formatTime(win.clockNow, "HH:mm")
             color: win.bar.overall === "fault" ? win.p.fault : win.bar.overall === "warning" ? win.p.warning : win.p.muted
-            font.pixelSize: 11 * win.k
+            font.pixelSize: 14 * win.k
         }
     }
 

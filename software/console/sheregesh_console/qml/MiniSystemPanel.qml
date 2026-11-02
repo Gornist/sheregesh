@@ -13,6 +13,12 @@ ColumnLayout {
     readonly property var st: backend.status
     onVisibleChanged: if (visible) systemInfo.refresh()        // команды OTA/выпуска — только при открытии
     Component.onCompleted: if (visible) systemInfo.refresh()
+    function otaText(state) {
+        return state === "COMMITTED" ? qsTr("confirmed") : state === "ROLLED_BACK" ? qsTr("rolled back to the previous image")
+             : state === "INSTALLED" ? qsTr("installed, waiting for a trial boot") : state === "INSTALLING" ? qsTr("installing")
+             : state === "TRYBOOT" || state === "HEALTH_PENDING" ? qsTr("trial boot, waiting for confirmation")
+             : state === "IDLE" ? qsTr("no update") : state === "FAILED" ? qsTr("error") : state
+    }
 
     MiniRow { label: qsTr("Console software"); value: "%1 · %2 %3".arg(panel.st.software).arg(qsTr("protocol")).arg(panel.st.localProtocol) }
     MiniRow { objectName: "miniSysRelease"; label: qsTr("Release"); value: panel.si.release !== "" ? panel.si.release : "—" }
@@ -20,7 +26,7 @@ ColumnLayout {
     MiniRow {
         objectName: "miniSysOta"
         label: "OTA"
-        value: panel.si.otaState !== "" ? panel.si.otaState + (panel.si.tryboot ? " · tryboot" : "") : (systemInfo.busy ? "…" : "—")
+        value: panel.si.otaState !== "" ? panel.otaText(panel.si.otaState) : (systemInfo.busy ? "…" : "—")
         valueColor: panel.si.otaState === "COMMITTED" ? win.p.ok : panel.si.otaState !== "" ? win.p.warning : win.p.text
     }
     MiniRow {
@@ -36,7 +42,7 @@ ColumnLayout {
         valueColor: win.p.warning
     }
     MiniRow { label: qsTr("Display"); value: "%1×%2 · %3 %4 %".arg(win.width).arg(win.height).arg(qsTr("scale")).arg(backend.uiScale) }
-    MiniRow { label: qsTr("Language · theme"); value: backend.language.toUpperCase() + " · " + backend.theme }
+    MiniRow { label: qsTr("Language · theme"); value: backend.language.toUpperCase() + " · " + (backend.theme === "light" ? qsTr("light") : qsTr("dark")) }
     Label {
         visible: panel.si.switching !== ""
         text: panel.si.switching

@@ -12,11 +12,11 @@ RowLayout {
     property alias valueObject: val
     Layout.fillWidth: true
     spacing: 10 * win.k
-    Label { id: key; color: win.p.muted; font.pixelSize: 13 * win.k; Layout.alignment: Qt.AlignTop }
+    Label { id: key; color: win.p.muted; font.pixelSize: 14 * win.k; Layout.alignment: Qt.AlignTop }
     Label {
         id: val
         color: valueColor
-        font.pixelSize: 13 * win.k
+        font.pixelSize: 14 * win.k
         font.bold: true
         horizontalAlignment: Text.AlignRight
         wrapMode: Text.WordWrap
