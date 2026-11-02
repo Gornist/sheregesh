@@ -86,6 +86,15 @@ class BuildhostImageTest(unittest.TestCase):
                 self.assertIn(needle, text)
         self.assertIn("idp_enable: n", (ROOT / "os/config/sheregesh-lab-pi4.yaml").read_text())
 
+    def test_deb_cache_keeps_apt_verification_and_is_bounded(self):
+        base = (ROOT / "os/layer/sheregesh-base.yaml").read_text()
+        self.assertIn("cache/debs", base)
+        self.assertIn("var/cache/apt/archives", base)
+        self.assertIn("cp -n", base)                                # не перезаписывает существующие
+        self.assertIn("-mtime +21 -delete", base)                   # старое уходит
+        self.assertIn("-gt 3072", base)                             # размер ограничен
+        self.assertNotIn("--allow-unauthenticated", base)           # кэш не отключает проверку подлинности
+
     def test_mbr_parse(self):
         with tempfile.NamedTemporaryFile() as f:
             f.write(mbr())
