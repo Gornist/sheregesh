@@ -21,3 +21,7 @@ layer:
   base: sheregesh-base
   app: sheregesh-lab
   net: sheregesh-net-lab
+
+# Выход rpi-image-gen не сжимаем: образ сжимает os/build.sh сам, сжатие в deploy-hook — лишние ≈26 с (откат: удалить).
+deploy:
+  compression: none

@@ -101,7 +101,12 @@ set -e
 echo "== артефакты"
 # Уровень 3: на Pi 5 уровень 10 стоил 118 с из 527 с сборки, уровень 3 — 38 с (файл на 12% больше, содержимое то же).
 zstd -q -T0 -"${SHEREGESH_ZSTD_LEVEL:-3}" -f "$IMG" -o "$OUT/$NAME.img.zst"
-cp "$DEPLOY"/filesystem-*.sbom.zst "$OUT/$NAME.sbom.zst" 2>/dev/null || true
+# SBOM: rpi-image-gen кладёт его сжатым (deploy.compression: zstd) или как есть (none — быстрее: образ не сжимается дважды)
+if ls "$DEPLOY"/filesystem-*.sbom.zst >/dev/null 2>&1; then
+  cp "$DEPLOY"/filesystem-*.sbom.zst "$OUT/$NAME.sbom.zst"
+elif ls "$DEPLOY"/filesystem-*.sbom >/dev/null 2>&1; then
+  zstd -q -T0 -3 -f "$(ls "$DEPLOY"/filesystem-*.sbom | head -n1)" -o "$OUT/$NAME.sbom.zst"
+fi
 if [[ -n "$BUILDHOST" ]]; then
   (cd "$OUT" && sha256sum "$NAME.img.zst" "$NAME.packages.tsv" verify.json $(ls "$NAME.sbom.zst" 2>/dev/null) > SHA256SUMS)
 else
