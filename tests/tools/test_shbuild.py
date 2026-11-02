@@ -326,6 +326,29 @@ class ShbuildTest(unittest.TestCase):
         self.assertEqual(len(lines), len(files))
         self.assertRegex(lines[0], r"^[0-9a-f]{64}  shbuild/bin/")
 
+    def test_wait_survives_connection_loss(self):
+        # хост перезагрузился во время wait (ssh 255) — повтор, а не ложный «провал»; без хоста — явная ошибка
+        calls, codes = [], iter([255, 255, 0])
+        real_run, real_sleep = sb.subprocess.run, sb.time.sleep
+
+        class R:
+            def __init__(self, rc):
+                self.returncode = rc
+        sb.subprocess.run = lambda cmd, **kw: (calls.append(cmd), R(next(codes)))[1]
+        sb.time.sleep = lambda s: None
+        try:
+            self.assertEqual(sb.remote_wait("job1"), 0)
+            self.assertEqual(len(calls), 3)
+            self.assertIn("ServerAliveInterval=15", calls[0])
+            codes = iter([255] * 5)
+            calls.clear()
+            self.assertEqual(sb.remote_wait("job1", tries=3), 255)          # недоступен — явный ненулевой итог
+            self.assertEqual(len(calls), 3)
+            codes = iter([1])
+            self.assertEqual(sb.remote_wait("job1"), 1)                      # настоящий провал задания — как есть
+        finally:
+            sb.subprocess.run, sb.time.sleep = real_run, real_sleep
+
     def test_old_jobs_without_config_build_product_image(self):
         p = sb.Pipeline(self.root, self.job())
         self.assertEqual((p.cfg, p.buildhost), (sb.CFG, False))

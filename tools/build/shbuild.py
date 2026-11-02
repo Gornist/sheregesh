@@ -658,6 +658,23 @@ def remote(cmd, *args, check_rc=True):
     return ssh(f"python3 {REMOTE_BIN} {cmd} " + shlex.join(args), check_rc=check_rc)
 
 
+def remote_wait(jid, tries=60, pause=10):
+    """wait с переживанием обрыва связи: ssh с keepalive, при коде 255 (связь пропала, хост перезагружается) — повтор
+    до tries×pause секунд, потом явная ошибка «хост недоступен», а не молчаливый код провала. Задание живёт на хосте и
+    не зависит от этого клиента."""
+    cmd = f"python3 {REMOTE_BIN} wait {shlex.quote(jid)}"
+    for i in range(tries):
+        r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
+                            BUILD_HOST, cmd])
+        if r.returncode != 255:
+            return r.returncode
+        print(f"{jid}: связь с {BUILD_HOST} потеряна, повтор {i + 1}/{tries}…", file=sys.stderr, flush=True)
+        time.sleep(pause)
+    print(f"{jid}: ERROR хост {BUILD_HOST} недоступен {tries * pause} с; состояние задания — status {jid} после возврата хоста",
+          file=sys.stderr)
+    return 255
+
+
 def installed_files():
     """Файлы сервиса: (локальный путь, путь на хосте относительно ~). Одни и те же для install и проверки версии."""
     here = Path(__file__).resolve().parent
@@ -777,7 +794,9 @@ def main(argv=None):
             return m_submit(a)
         if a.cmd == "fetch":
             return m_fetch(a)
-        if a.cmd in ("status", "wait", "cancel"):
+        if a.cmd == "wait":
+            return remote_wait(a.id)
+        if a.cmd in ("status", "cancel"):
             return remote(a.cmd, *([a.id] if a.id else []), check_rc=False).returncode
         if a.cmd == "logs":
             return remote("logs", a.id, *([a.stage] if a.stage else []), "-n", str(a.lines), check_rc=False).returncode
