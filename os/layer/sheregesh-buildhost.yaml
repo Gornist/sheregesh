@@ -124,3 +124,17 @@ mmdebstrap:
       for u in docker.service fstrim.timer systemd-networkd.service; do
         chroot $1 systemctl enable "$u" >/dev/null
       done
+    - |-
+      # Скачанные пакеты — в кэш рабочего тома до очистки apt (cleanup50-apt-cache); хук последний в слое, когда всё уже
+      # установлено. Подложенные в setup-hook файлы apt проверяет по подписанному индексу. Старше 21 дня удаляются,
+      # размер кэша ограничен ≈ 3 ГБ. Нет рабочего тома (сборка вне сервиса) — пропуск.
+      cache="${SHEREGESH_WORK:-/work}/cache/debs"
+      if [ -d "${SHEREGESH_WORK:-/work}/cache" ] && ls $1/var/cache/apt/archives/*.deb >/dev/null 2>&1; then
+        mkdir -p "$cache"
+        cp -n $1/var/cache/apt/archives/*.deb "$cache"/
+        find "$cache" -name '*.deb' -mtime +21 -delete
+        while [ "$(du -sm "$cache" | cut -f1)" -gt 3072 ]; do
+          oldest=$(ls -tr "$cache"/*.deb | head -n1); [ -n "$oldest" ] || break; rm -f "$oldest"
+        done
+        echo "debs-cache: в кэше $(ls "$cache"/*.deb | wc -l) пакетов, $(du -sm "$cache" | cut -f1) МиБ"
+      fi

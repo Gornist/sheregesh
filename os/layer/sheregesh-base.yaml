@@ -27,17 +27,3 @@ mmdebstrap:
         cp -n "$cache"/*.deb $1/var/cache/apt/archives/
         echo "debs-cache: подложено $(ls "$cache"/*.deb | wc -l) пакетов"
       fi
-  customize-hooks:
-    - |-
-      # Скачанные пакеты — в кэш до очистки apt (cleanup50-apt-cache). Собственный пакет проекта не кэшируем (он из
-      # tmp, не из репозитория). Старше 21 дня — удаляются, общий размер ограничен ≈ 3 ГБ.
-      cache="${SHEREGESH_WORK:-/work}/cache/debs"
-      if [ -d "${SHEREGESH_WORK:-/work}/cache" ] && ls $1/var/cache/apt/archives/*.deb >/dev/null 2>&1; then
-        mkdir -p "$cache"
-        cp -n $1/var/cache/apt/archives/*.deb "$cache"/
-        find "$cache" -name '*.deb' -mtime +21 -delete
-        while [ "$(du -sm "$cache" | cut -f1)" -gt 3072 ]; do
-          oldest=$(ls -tr "$cache"/*.deb | head -n1); [ -n "$oldest" ] || break; rm -f "$oldest"
-        done
-        echo "debs-cache: в кэше $(ls "$cache"/*.deb | wc -l) пакетов, $(du -sm "$cache" | cut -f1) МиБ"
-      fi
