@@ -15,14 +15,19 @@
 set -euo pipefail
 IMG="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; RUNS="${2:-8}"
 W=$(mktemp -d "$(dirname "$IMG")/.order.XXXXXX"); trap 'rm -rf "$W"' EXIT   # распаковка — рядом с образом
-docker run --rm --privileged -e DEBIAN_FRONTEND=noninteractive -e RUNS="$RUNS" -v "$IMG":/img.zst:ro -v "$W":/w \
-  debian:trixie bash -euo pipefail -c '
-  apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends zstd fdisk systemd >/dev/null
-  zstd -qdc /img.zst > /w/img
-  read -r start size < <(sfdisk -d /w/img | awk -F"[=,]" "/name=\"system_a\"/{gsub(/ /,\"\"); print \$2, \$4}")
+# SHBOOT_RAW — образ задания, уже распакованный сервисом (разреженно, один раз на все этапы); образ инструментов
+# shbuild-qemu (zstd, fdisk, systemd) собран заранее. Нет того или другого — как раньше (debian:trixie + apt + распаковка).
+RAWARGS=(); [ -n "${SHBOOT_RAW:-}" ] && [ -s "$SHBOOT_RAW" ] && RAWARGS=(-v "$SHBOOT_RAW":/img.raw:ro)
+TOOLS=debian:trixie; docker image inspect shbuild-qemu >/dev/null 2>&1 && TOOLS=shbuild-qemu
+docker run --rm --privileged -e DEBIAN_FRONTEND=noninteractive -e RUNS="$RUNS" -v "$IMG":/img.zst:ro -v "$W":/w ${RAWARGS[@]+"${RAWARGS[@]}"} \
+  "$TOOLS" bash -euo pipefail -c '
+  command -v sfdisk >/dev/null && command -v zstd >/dev/null && command -v systemd-analyze >/dev/null \
+    || { apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends zstd fdisk systemd >/dev/null; }
+  if [ -e /img.raw ]; then F=/img.raw; else zstd -qdf --sparse /img.zst -o /w/img; F=/w/img; fi
+  read -r start size < <(sfdisk -d $F | awk -F"[=,]" "/name=\"system_a\"/{gsub(/ /,\"\"); print \$2, \$4}")
   [ -n "$start" ] && [ -n "$size" ]
   mkdir -p /lo /ov /r && mount -t tmpfs tmpfs /ov && mkdir -p /ov/up /ov/wk
-  mount -o ro,noload,loop,offset=$((start*512)),sizelimit=$((size*512)) /w/img /lo
+  mount -o ro,noload,loop,offset=$((start*512)),sizelimit=$((size*512)) $F /lo
   mount -t overlay overlay -o lowerdir=/lo,upperdir=/ov/up,workdir=/ov/wk /r   # verify пишет служебное в корень
   echo "$(systemd-analyze --version | head -1); прогонов: $RUNS"
   # Корень настоящий? Без default.target проверка ничего не прочитала бы и «не нашла бы» циклов.

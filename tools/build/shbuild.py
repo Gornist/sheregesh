@@ -222,10 +222,21 @@ class Pipeline:
         self.abort = job.dir / "abort"                       # параллельный этап упал — остановить соседний
         self.flags = host_flags(root)
         self.lock = threading.Lock()
+        self.raw_lock = threading.Lock()                   # распаковка образа не должна блокировать запись состояния
         self.sde = None
 
     def sh(self, stage, cmd, kind="FAILED", **kw):
         check(cmd, self.job.log(stage), TIMEOUTS[stage], kind=kind, cancel_file=_AnyExists(self.cancel, self.abort), **kw)
+
+    def image_raw(self, stage, img):
+        """Образ задания, распакованный один раз (разреженный файл в каталоге задания): им пользуются гейты и boot.
+        Под замком — этапы могут идти параллельно; удаляется в finish."""
+        raw = self.job.dir / "image.raw"
+        with self.raw_lock:
+            if not (raw.exists() and (self.job.dir / "image.raw.ok").exists()):
+                self.sh(stage, ["zstd", "-qdf", "--sparse", str(img), "-o", str(raw)])
+                (self.job.dir / "image.raw.ok").touch()
+        return raw
 
     # 0
     def preflight(self):
@@ -325,22 +336,24 @@ class Pipeline:
             return
         # order_check (~30 с) и owners_check (~30 с) независимы — идут вместе; строки их журналов могут чередоваться,
         # провал любого из них останавливает задание (result() ниже ждёт и поднимает Fail)
+        raw = self.image_raw("gates", img)
+        env = dict(os.environ, SHBOOT_RAW=str(raw))
         order_cmd = ["bash", self.bin / "order_check.sh", img, "8"]
         if self.flags["parallel_gates"] != "1":
-            self.owners_gate(img, log)
-            self.sh("gates", order_cmd)
+            self.owners_gate(img, log, env)
+            self.sh("gates", order_cmd, env=env)
             return
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            order = pool.submit(self.sh, "gates", order_cmd)
+            order = pool.submit(self.sh, "gates", order_cmd, env=env)
             try:
-                self.owners_gate(img, log)
+                self.owners_gate(img, log, env)
             finally:
                 order.result()
 
-    def owners_gate(self, img, log):
+    def owners_gate(self, img, log, env=None):
         owners = self.art / "owners.txt"
         with open(owners, "w") as f:
-            rc = subprocess.run(["bash", self.bin / "owners_check.sh", img], stdout=f,
+            rc = subprocess.run(["bash", self.bin / "owners_check.sh", img], stdout=f, env=env,
                                 stderr=open(log, "a"), timeout=TIMEOUTS["gates"]).returncode
         if rc != 0:
             raise Fail(f"owners_check: код {rc}", "ERROR")
@@ -376,15 +389,12 @@ class Pipeline:
     # 5
     def boot(self):
         img = next(self.art.glob("*.img.zst"))
-        # образ распаковывается один раз на все сценарии (разреженный файл), сценарии берут его только для чтения
-        raw = self.job.dir / "boot.raw"
-        self.sh("boot", ["zstd", "-qdf", "--sparse", str(img), "-o", str(raw)])
+        # образ распаковывается один раз на задание (разреженный файл, им пользуются и гейты), сценарии берут его только
+        # для чтения; файл удаляется в finish
+        raw = self.image_raw("boot", img)
         env = dict(os.environ, SHBOOT_RAW=str(raw))
-        try:
-            for sc in (BUILDHOST_SCENARIOS if self.buildhost else BOOT_SCENARIOS):
-                self.sh("boot", ["bash", self.bin / "boot_check.sh", img, sc, self.job.id], env=env)
-        finally:
-            raw.unlink(missing_ok=True)
+        for sc in (BUILDHOST_SCENARIOS if self.buildhost else BOOT_SCENARIOS):
+            self.sh("boot", ["bash", self.bin / "boot_check.sh", img, sc, self.job.id], env=env)
 
     def run_stage(self, stage):
         """Один этап: запись в состояние задания (под замком — этапы могут идти параллельно), → (статус, причина)."""
@@ -452,6 +462,8 @@ class Pipeline:
         return self.finish("PASSED", None, None)
 
     def finish(self, state, stage, reason):
+        for f in ("image.raw", "image.raw.ok", "boot.raw"):
+            (self.job.dir / f).unlink(missing_ok=True)
         st = self.job.update(state=state, failed_stage=stage, reason=reason, ended=now())
         report = {k: st.get(k) for k in ("id", "commit", "state", "failed_stage", "reason", "source_date_epoch",
                                          "created", "started", "ended", "stages")}
