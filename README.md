@@ -4,7 +4,17 @@
 
 **Статус:** на стенде проверены пульт Minimal, стики и CRSF с эмулятором ELRS, видео SRTP (HDMI 1280×720@60, «захват → декодирован» ≈ 43 мс), OTA A/B с откатом, службы и события в диагностике; потери и перестановка пакетов — в контейнере под tc netem. Железо (корпуса, питание, дисплей) отложено до конца программной части. Релизный гейт — NO-GO. Подробно — [состояние проекта](docs/development/PROJECT-STATE.md).
 
-Руководство пользователя (сборка, обслуживание, восстановление): [RU](docs/user/ru/build.md), [EN](docs/user/en/build.md).
+Руководство пользователя — начните со «Сборки»: путь с нуля до работающей пары плат.
+
+| | RU | EN |
+|---|---|---|
+| Сборка и первая настройка | [build](docs/user/ru/build.md) | [build](docs/user/en/build.md) |
+| Обслуживание и обновления | [support](docs/user/ru/support.md) | [support](docs/user/en/support.md) |
+| Восстановление | [recovery](docs/user/ru/recovery.md) | [recovery](docs/user/en/recovery.md) |
+| Вопросы и термины | [faq](docs/user/ru/faq.md) | [faq](docs/user/en/faq.md) |
+
+*Sheregesh is an open reproducible DIY platform (console + remote unit on Raspberry Pi 4B). The user manual is available
+in English — start with [Building](docs/user/en/build.md).*
 Точка входа для разработки: [AGENTS.md](AGENTS.md), [процесс](docs/development/AGENT-WORKFLOW.md), [последнее подтверждённое состояние](docs/development/PROJECT-STATE.md).
 
 ## Где что лежит

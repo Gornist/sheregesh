@@ -4,7 +4,7 @@
 """Smoke Test выпуска на стенде (REQ-REL-003/004/005): протоколы TEST-SMOKE-P (пульт), TEST-SMOKE-R (удалённый блок)
 и TEST-SMOKE-S (совместная работа) по пунктам реестра. С машины владельца по SSH.
 
-  python3 tools/probe/smoke.py --console 192.168.1.94 --remote 192.168.1.173 --out DIR [--suite P,R,S]
+  python3 tools/probe/smoke.py --out DIR [--console auto] [--remote auto] [--suite P,R,S]
                                [--interactive | --manual FILE.json] [--exchange-s 300] [--shutdown-remote]
 
 Пункты, которые проверяются с машины владельца, — автоматически; пункты рук и глаз оператора (касание, физические
@@ -25,6 +25,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/probe"))
 import check_video_link as cvl  # noqa: E402
+
+sys.path.insert(0, str(ROOT / "tools"))
+from stand import boards  # noqa: E402  — адреса плат по реестру (tools/stand/boards.py)
 
 UI, C_STATUS = cvl.UI, cvl.C_STATUS
 MANDATORY = {"console": ("console", "video-rx"), "remote": ("remote-net", "video-tx")}
@@ -319,8 +322,7 @@ def protocol_md(meta, results, by):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--console", required=True)
-    ap.add_argument("--remote", required=True)
+    boards.add_args(ap)
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--suite", default="P,R,S")
     ap.add_argument("--interactive", action="store_true")
@@ -329,6 +331,7 @@ def main(argv=None):
     ap.add_argument("--shutdown-remote", action="store_true",
                     help="R6: выключить блок командой с пульта (последним пунктом; включает блок оператор)")
     a = ap.parse_args(argv)
+    boards.resolve_args(a)
     suites = [s.strip().upper() for s in a.suite.split(",") if s.strip()]
     answers = json.loads(a.manual.read_text()) if a.manual else {}
     a.out.mkdir(parents=True, exist_ok=True)

@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "docs/user"
 LANGS = ("ru", "en")
-PAGES = ("build", "support", "recovery")
+PAGES = ("build", "support", "recovery", "faq")
 TITLE = {"ru": "«Шерегеш» — руководство", "en": "Sheregesh manual"}
 VERSION_LABEL = {"ru": "Версия ПО", "en": "Software version"}
 STYLE = ("body{font-family:sans-serif;max-width:52em;margin:2em auto;padding:0 1em;line-height:1.5}"
