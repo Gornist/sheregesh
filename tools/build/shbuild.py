@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""shbuild — сервис сборки образов «Шерегеша» на devbox (ADR-0018). Один файл: команды Mac и исполнитель devbox.
+"""shbuild — сервис сборки образов «Шерегеша» на хосте сборки (ADR-0018, ADR-0019). Один файл: команды Mac и исполнитель.
+Устройство, хосты, выключатели, замеры и откат — docs/development/BUILD-SERVICE.md.
 
-С Mac (проксируется на devbox по SSH; на Mac ничего не собирается):
-  python3 tools/build/shbuild.py install              поставить/обновить сервис на devbox (bin, каталоги, сборщик,
-                                                      открытые ключи --dev-key/--deploy-key)
-
-Машина сборки: Linux x86-64 с Docker, qemu-user-static (binfmt aarch64), ≥ 40 ГБ диска и ≥ 6 ГБ памяти, вход по SSH
-по ключу. Имена хоста — SHBUILD_HOST (команды, по умолчанию devbox) и SHBUILD_BULK_HOST (передачи, devbox-lan);
-одна машина — оба одинаковые.
+С Mac (проксируется на хост сборки по SSH; на Mac ничего не собирается):
+  python3 tools/build/shbuild.py install              поставить/обновить сервис на хосте (bin, каталоги, набор машины
+                                                      загрузочного теста, открытые ключи --dev-key/--deploy-key)
   python3 tools/build/shbuild.py submit [РЕВИЗИЯ]     отправить коммит (по умолчанию HEAD) — печатает id задания;
                                                       --config sheregesh-buildhost-pi5 — образ сборочного хоста (ADR-0019)
   python3 tools/build/shbuild.py status [ID]          очередь или одно задание (этапы, время, итог)
@@ -18,9 +15,15 @@
   python3 tools/build/shbuild.py cancel ID            отменить (сборка останавливается, контейнер тоже)
   python3 tools/build/shbuild.py fetch ID [КАТАЛОГ]   забрать артефакты PASSED на Mac (только для записи карты)
 
-На devbox (вызывается командами выше): enqueue, worker, status, wait, logs, cancel.
+Хост сборки — Linux с Docker, ≥ 40 ГБ диска, ОЗУ + свободная подкачка на диске ≥ 6 ГБ (ОЗУ ≥ 1 ГБ): x86-64 с
+qemu-user-static (binfmt aarch64, загрузочный тест в эмуляции) или arm64 (Raspberry Pi 5: нативно, загрузочный тест на KVM).
+Хост выбирают SHBUILD_HOST (команды, по умолчанию devbox) и SHBUILD_BULK_HOST (передачи, devbox-lan); одна машина —
+оба одинаковые. Вход по SSH по ключу.
 
-Этапы задания: preflight → checkout → tests → build → gates → boot → (итог). Любой провал останавливает задание.
+На хосте (вызывается командами выше): enqueue, worker, status, wait, logs, cancel.
+
+Этапы задания: preflight → checkout → tests → build → gates → boot → (итог). Пары tests‖build и gates‖boot идут вместе
+(выключатели parallel_tests/parallel_boot в ~/shbuild/host.conf — откат без переустановки); любой провал останавливает задание.
 Конечные состояния всегда явные: PASSED, FAILED (дефект кода/образа), ERROR (среда), CANCELLED, TIMEOUT.
 Одно задание за раз (flock); остальные ждут в очереди."""
 import argparse

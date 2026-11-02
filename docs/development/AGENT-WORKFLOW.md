@@ -55,8 +55,11 @@ QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software .venv/bin/python -m pytest -
 заблокированы в коде (`os/docker-build.sh`, `shdeploy ota-build`, `tools/image/flash_sd.py`, `tools/build/gate.py`).
 
 1. Закоммить изменение (сборка — из коммита, не из рабочего дерева). С Mac:
-   `python3 tools/build/shbuild.py submit [РЕВИЗИЯ]` → id задания. Сервис на devbox (`~/shbuild`) ставит его в
-   очередь (одна сборка за раз) и проходит этапы preflight → checkout → tests → build → gates → boot.
+   `python3 tools/build/shbuild.py submit [РЕВИЗИЯ]` → id задания. Сервис на хосте сборки (`~/shbuild`) ставит его в
+   очередь (одна сборка за раз) и проходит этапы preflight → checkout → tests → build → gates → boot. Хост по умолчанию
+   — devbox (≈ 37 мин); быстрее — Raspberry Pi 5 (≈ 10 мин): `SHBUILD_HOST=shbuild@pi5.local SHBUILD_BULK_HOST=shbuild@pi5.local`
+   перед командой. Образ сборочного хоста — `submit --config sheregesh-buildhost-pi5`. Устройство, выключатели,
+   замеры и откат — [BUILD-SERVICE](BUILD-SERVICE.md).
 2. Ждать: `python3 tools/build/shbuild.py wait ID` (одна строка итога; код 0 — PASSED) или `status ID`;
    журнал этапа — `logs ID [этап]`. Итог всегда явный: PASSED, FAILED, ERROR, CANCELLED, TIMEOUT. Отслеживая
    задание монитором, лови все конечные состояния, а не только успех.
@@ -71,9 +74,10 @@ QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software .venv/bin/python -m pytest -
    `ota-enable` → `ota-tryboot`; в пробной загрузке — `compare --mode trial`, имя, время, `check_link`,
    `check_video_link`; только затем `ota-confirm` → `ota-disable` → контрольная перезагрузка. Пример с
    доказательствами — [hostname-root](../acceptance/hostname-root/REPORT.md).
-6. Сервис ставится и обновляется с Mac: `python3 tools/build/shbuild.py install`.
+6. Сервис ставится и обновляется с Mac на каждый хост отдельно: `python3 tools/build/shbuild.py install` (после
+   изменения `tools/build/` — на оба; при идущем задании не ставить).
 
-Загрузочный тест (QEMU virt, ядро Debian arm64) проверяет systemd образа, имя, DHCP, время, root, `/var`;
+Загрузочный тест (QEMU virt, ядро Debian arm64; на Pi 5 — под KVM) проверяет systemd образа, имя, DHCP, время, root, `/var`;
 не проверяет ядро Pi, прошивку, tryboot, VideoCore, дисплей, GPIO/UART — это остаётся за платами.
 На платах DEV-образа есть root по SSH только по ключу: если ограничение доступа мешает работе — скажи владельцу
 сразу, не обходи молча.

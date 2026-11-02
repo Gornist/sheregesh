@@ -45,30 +45,25 @@ zstd -dc build/image/buildhost-*/sheregesh-buildhost-pi5.img.zst | sudo dd of=/d
 
 ## 5. Перенос shbuild на хост
 
-Только после того, как хост опознан и стабилен (приёмка — отдельным отчётом):
+Сделано 2026-11-02 (хост принят: загрузка с NVMe, корень 238 ГБ, Docker, подкачка 8 ГБ, `/dev/kvm`; продуктовый образ
+собран за ≈ 10 мин). Установка и обновление — с Mac:
 
 ```sh
-SHBUILD_HOST=pi5 SHBUILD_BULK_HOST=pi5 python3 tools/build/shbuild.py install
+export SHBUILD_HOST=shbuild@pi5.local SHBUILD_BULK_HOST=shbuild@pi5.local
+python3 tools/build/shbuild.py install          # код, каталоги, набор машины, ключи dev.pub/deploy.pub
+python3 tools/build/shbuild.py submit           # сборка на Pi 5; без переменных — devbox
 ```
 
-Эталон owners и ключи копируются с devbox (`~/shbuild/baseline`, `~/shbuild/keys`). Пока `SHBUILD_HOST` не задан,
-сервис devbox остаётся единственным путём (ADR-0018 не меняется).
+Пока `SHBUILD_HOST` не задан, сервис devbox остаётся единственным путём по умолчанию (ADR-0018 не меняется).
+После любого изменения в `tools/build/` — `install` на оба хоста.
 
-## 6. Ускорения конвейера и откат
+## 6. Эксплуатация
 
-Базовая точка — метка `shbuild-baseline-748s` (коммит e79bf91, на Pi 5 весь конвейер 748 с, `PASSED`). Каждое
-ускорение — отдельный коммит и, где возможно, выключатель в `~/shbuild/host.conf` на хосте сборки (строки
-`имя=значение`, `#` — комментарий; нет строки — значение по умолчанию). Журнал задания хранит действовавшие значения
-(`state.json`, поле `flags`).
-
-| Ускорение | Выключатель | Откат |
-|---|---|---|
-| Сжатие образа `zstd -3` вместо `-10` | `zstd_level` (3) | `zstd_level=10` |
-| `owners_check` и `order_check` параллельно | `parallel_gates` (1) | `parallel_gates=0` |
-| `tests` параллельно с `build` | `parallel_tests` (1) | `parallel_tests=0` |
-| `gates` параллельно с `boot` | `parallel_boot` (1) | `parallel_boot=0` |
-| Образ распаковывается один раз на задание, KVM, ожидание пробы по условию | — (коммиты e79bf91, 5a7dced) | `SHBOOT_NO_KVM=1` — только TCG; остальное — откат коммита |
-
-Откат без обращения к коду: `ssh shbuild@pi5 'echo parallel_tests=0 >> ~/shbuild/host.conf'` — действует со следующего
-задания, сервис не переустанавливается. Полный откат кода: `git revert <коммит>` и `python3 tools/build/shbuild.py
-install` (на оба хоста); метка `shbuild-baseline-748s` — точка, к которой можно вернуться целиком.
+- Адрес — DHCP, закреплён в роутере (2026-11-02 — 192.168.1.194); `ssh shbuild@pi5.local`. Спасательная карта
+  (Raspberry Pi OS, пользователь `pilot`, имя `pi5`) в плате не нужна: порядок загрузки SD → NVMe — вставленная карта
+  загрузит систему с неё.
+- Состояние: `df -h /`, `free -m`, `cat /proc/swaps`, `sudo nvme smart-log /dev/nvme0` (износ `percentage_used`),
+  `vcgencmd measure_temp`, `shbuild.py status`. Журналы сервиса — `~/shbuild/worker.log`, заданий — `shbuild.py logs`.
+- Выключатели, замеры, откат ускорений и причины провалов — [BUILD-SERVICE](BUILD-SERVICE.md).
+- Обновление образа хоста: `submit --config sheregesh-buildhost-pi5`, запись нового образа на NVMe только с
+  согласия владельца (диск перезаписывается целиком; сначала убедиться, что в очереди нет заданий).
