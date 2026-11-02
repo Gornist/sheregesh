@@ -17,8 +17,9 @@
 
 Хост сборки — Linux с Docker, ≥ 40 ГБ диска, ОЗУ + свободная подкачка на диске ≥ 6 ГБ (ОЗУ ≥ 1 ГБ): x86-64 с
 qemu-user-static (binfmt aarch64, загрузочный тест в эмуляции) или arm64 (Raspberry Pi 5: нативно, загрузочный тест на KVM).
-Хост выбирают SHBUILD_HOST (команды, по умолчанию devbox) и SHBUILD_BULK_HOST (передачи, devbox-lan); одна машина —
-оба одинаковые. Вход по SSH по ключу.
+Хост по умолчанию — Raspberry Pi 5 (shbuild@pi5.local, ADR-0019); другой выбирают SHBUILD_HOST (команды) и
+SHBUILD_BULK_HOST (передачи, по умолчанию тот же). Вход по SSH по ключу. submit отказывает, если на хосте стоит другая версия
+сервиса, чем в этом репозитории (лечится install).
 
 На хосте (вызывается командами выше): enqueue, worker, status, wait, logs, cancel.
 
@@ -45,15 +46,16 @@ import uuid
 from pathlib import Path
 
 HOME = Path(os.environ.get("SHBUILD_HOME", Path.home() / "shbuild"))
-DEVBOX = os.environ.get("SHBUILD_HOST", "devbox")            # команды
-DEVBOX_BULK = os.environ.get("SHBUILD_BULK_HOST", "devbox-lan")   # большие передачи (пакет git, артефакты)
+DEFAULT_HOST = "shbuild@pi5.local"                          # хост сборки по умолчанию: Raspberry Pi 5 (ADR-0019)
+BUILD_HOST = os.environ.get("SHBUILD_HOST", DEFAULT_HOST)   # команды
+BUILD_HOST_BULK = os.environ.get("SHBUILD_BULK_HOST", BUILD_HOST)   # большие передачи (пакет git, артефакты)
 REMOTE_BIN = "shbuild/bin/shbuild.py"
 CFG = "sheregesh-lab-dev-pi4"
 TERMINAL = ("PASSED", "FAILED", "ERROR", "CANCELLED", "TIMEOUT")
 STAGES = ("preflight", "checkout", "tests", "build", "gates", "boot")
 TIMEOUTS = {"preflight": 60, "checkout": 300, "tests": 900, "build": 5400, "gates": 1800, "boot": 1800}
 MIN_DISK_GB = 40          # образ 7 ГБ, корень в tar, persistent, рабочий том сборки
-MIN_MEM_GB = 6            # OOM devbox во время сборки (s5-ota/DEVBOX-REBOOT.md): ОЗУ + свободная подкачка на диске
+MIN_MEM_GB = 6            # OOM при сборке на прежнем хосте (s5-ota/DEVBOX-REBOOT.md): ОЗУ + свободная подкачка на диске
 MIN_RAM_GB = 1.0          # ниже — не помогает никакая подкачка (Pi 5 на 2 ГБ с подкачкой на NVMe, ADR-0019)
 KEEP_PASSED = 5           # артефакты последних PASSED; задания с keep — всегда
 BOOT_SCENARIOS = ("console", "remote", "fresh", "offline")
@@ -589,7 +591,7 @@ def line(st):
     return f"{st['id']} {st['state']} [{' '.join(parts)}]{tail}"
 
 
-# ---------------------------------------------------------------- команды devbox
+# ---------------------------------------------------------------- команды хоста сборки
 def d_enqueue(a):
     opts = {k: v for k, v in (("builder_image", a.builder), ("config", a.config)) if v}
     j = new_job(HOME, a.commit, Path(a.bundle).resolve(), opts or None)
@@ -645,7 +647,7 @@ def d_cancel(a):
 
 # ---------------------------------------------------------------- команды Mac
 def ssh(*args, bulk=False, check_rc=True, capture=False):
-    r = subprocess.run(["ssh", "-o", "BatchMode=yes", DEVBOX_BULK if bulk else DEVBOX, *args],
+    r = subprocess.run(["ssh", "-o", "BatchMode=yes", BUILD_HOST_BULK if bulk else BUILD_HOST, *args],
                        capture_output=capture, text=True)
     if check_rc and r.returncode != 0:
         raise SystemExit(r.returncode)
@@ -656,38 +658,59 @@ def remote(cmd, *args, check_rc=True):
     return ssh(f"python3 {REMOTE_BIN} {cmd} " + shlex.join(args), check_rc=check_rc)
 
 
-def m_install(a):
+def installed_files():
+    """Файлы сервиса: (локальный путь, путь на хосте относительно ~). Одни и те же для install и проверки версии."""
     here = Path(__file__).resolve().parent
     repo = here.parents[1]
-    ssh("mkdir -p shbuild/bin shbuild/jobs shbuild/artifacts shbuild/inbox shbuild/keys shbuild/baseline && "
-        "(test -d shbuild/repo.git || git init -q --bare shbuild/repo.git)")
-    files = [here / "shbuild.py", here / "boot_check.sh", here / "make_builder.sh", repo / "tools/image/owners_check.sh",
-             repo / "tools/image/order_check.sh"]
-    subprocess.run(["scp", "-q", *map(str, files), f"{DEVBOX_BULK}:shbuild/bin/"], check=True)
-    ssh("mkdir -p shbuild/bin/vm")
+    bin_files = [here / "shbuild.py", here / "boot_check.sh", here / "make_builder.sh",
+                 repo / "tools/image/owners_check.sh", repo / "tools/image/order_check.sh"]
     vm = [here / "vm" / f for f in ("init", "probe.sh", "make_vmkit.sh")]
-    subprocess.run(["scp", "-q", *map(str, vm), f"{DEVBOX_BULK}:shbuild/bin/vm/"], check=True)
+    return [(f, f"shbuild/bin/{f.name}") for f in bin_files] + [(f, f"shbuild/bin/vm/{f.name}") for f in vm]
+
+
+def installed_manifest():
+    import hashlib
+    return "".join(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {dst}\n" for f, dst in installed_files())
+
+
+def check_installed():
+    """Версия сервиса на хосте = версия в этом репозитории (хеши файлов). Иначе сборка шла бы старым кодом: гейты и
+    выключатели ушли вперёд, а хост их не знает (так старый сервис на прежнем хосте собрал бы образ по-старому)."""
+    r = subprocess.run(["ssh", "-o", "BatchMode=yes", BUILD_HOST, "sha256sum -c --quiet -"], input=installed_manifest(),
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(f"сервис на {BUILD_HOST} не совпадает с репозиторием (или недоступен):\n"
+                         f"{(r.stdout + r.stderr).strip()[:600]}\nпоставьте: python3 tools/build/shbuild.py install")
+
+
+def m_install(a):
+    ssh("mkdir -p shbuild/bin/vm shbuild/jobs shbuild/artifacts shbuild/inbox shbuild/keys shbuild/baseline && "
+        "(test -d shbuild/repo.git || git init -q --bare shbuild/repo.git)")
+    # те же файлы, что сверяет check_installed (submit): не расходятся
+    for f, dst in installed_files():
+        subprocess.run(["scp", "-q", str(f), f"{BUILD_HOST_BULK}:{dst}"], check=True)
     ssh("bash shbuild/bin/vm/make_vmkit.sh >/dev/null && echo 'набор машины: ~/shbuild/vm'")
     ssh("chmod +x shbuild/bin/*")
     # Открытые ключи, которые сборка вшивает в DEV-образ: вход (dev.pub — SSH sheregesh-ui и root) и проверка
     # подписи выпусков shdeploy (deploy.pub). Закрытые ключи не покидают эту машину.
     for name, local in (("dev", a.dev_key), ("deploy", a.deploy_key)):
         local = Path(local).expanduser()
-        have = subprocess.run(["ssh", DEVBOX, f"test -s shbuild/keys/{name}.pub"]).returncode == 0
+        have = subprocess.run(["ssh", BUILD_HOST, f"test -s shbuild/keys/{name}.pub"]).returncode == 0
         if local.is_file():
             if not have or a.replace_keys:
-                subprocess.run(["scp", "-q", str(local), f"{DEVBOX_BULK}:shbuild/keys/{name}.pub"], check=True)
+                subprocess.run(["scp", "-q", str(local), f"{BUILD_HOST_BULK}:shbuild/keys/{name}.pub"], check=True)
                 print(f"ключ {name}.pub ← {local}")
         elif not have:
             print(f"НЕТ ключа {name}.pub: создайте {local.with_suffix('')} — "
                   f"ssh-keygen -t ed25519 -f {local.with_suffix('')} -C sheregesh-{name} — и повторите install")
     ssh("ls shbuild/keys; test -s shbuild/baseline/owners.txt && echo 'эталон owners: локальный (переопределение)' "
         "|| echo 'эталон owners: из ревизии (tools/image/owners-baseline.txt)'")
-    print(f"установлено: {DEVBOX}:~/shbuild")
+    print(f"установлено: {BUILD_HOST}:~/shbuild")
     return 0
 
 
 def m_submit(a):
+    check_installed()
     sha = subprocess.run(["git", "rev-parse", a.rev + "^{commit}"], capture_output=True, text=True, check=True).stdout.strip()
     tmp = Path(os.environ.get("TMPDIR", "/tmp")) / f"shbuild-{sha[:12]}-{uuid.uuid4().hex[:6]}.bundle"
     ref = f"refs/shbuild/submit-{sha[:12]}"
@@ -696,7 +719,7 @@ def m_submit(a):
         subprocess.run(["git", "bundle", "create", "-q", str(tmp), ref], check=True)
     finally:
         subprocess.run(["git", "update-ref", "-d", ref], check=True)
-    subprocess.run(["scp", "-q", str(tmp), f"{DEVBOX_BULK}:shbuild/inbox/"], check=True)
+    subprocess.run(["scp", "-q", str(tmp), f"{BUILD_HOST_BULK}:shbuild/inbox/"], check=True)
     tmp.unlink()
     args = ["enqueue", sha, f"shbuild/inbox/{tmp.name}"] + (["--builder", a.builder] if a.builder else []) \
         + (["--config", a.config] if a.config else [])
@@ -712,7 +735,7 @@ def m_fetch(a):
     name = art_name(st)
     dest = Path(a.dest or f"build/image/{name[:12] if name == st['commit'] else name.replace('sheregesh-', '')[:60]}")
     dest.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["rsync", "-a", f"{DEVBOX_BULK}:shbuild/artifacts/{name}/", f"{dest}/"], check=True)
+    subprocess.run(["rsync", "-a", f"{BUILD_HOST_BULK}:shbuild/artifacts/{name}/", f"{dest}/"], check=True)
     print(dest)
     return 0
 
@@ -758,7 +781,7 @@ def main(argv=None):
             return remote(a.cmd, *([a.id] if a.id else []), check_rc=False).returncode
         if a.cmd == "logs":
             return remote("logs", a.id, *([a.stage] if a.stage else []), "-n", str(a.lines), check_rc=False).returncode
-        raise SystemExit(f"{a.cmd}: только на devbox")
+        raise SystemExit(f"{a.cmd}: только на хосте сборки")
     HOME.mkdir(parents=True, exist_ok=True)
     return {"enqueue": d_enqueue, "worker": lambda a: worker(HOME), "status": d_status, "wait": d_wait,
             "logs": d_logs, "cancel": d_cancel}[a.cmd](a)

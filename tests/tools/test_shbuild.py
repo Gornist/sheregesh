@@ -311,6 +311,21 @@ class ShbuildTest(unittest.TestCase):
         finally:
             sb.subprocess.run = real
 
+    def test_default_host_is_pi5_and_submit_checks_installed_version(self):
+        # все образы собираются на хосте по умолчанию (Pi 5); сервис другой версии (старый хост) задание не принимает
+        self.assertEqual(sb.DEFAULT_HOST, "shbuild@pi5.local")
+        text = (ROOT / "tools/build/shbuild.py").read_text()
+        self.assertNotIn('"devbox"', text)                                  # нет жёсткого devbox в коде
+        self.assertIn("check_installed()", text.split("def m_submit")[1].split("def m_fetch")[0])
+        files = dict((str(dst), f) for f, dst in sb.installed_files())
+        for need in ("shbuild/bin/shbuild.py", "shbuild/bin/boot_check.sh", "shbuild/bin/order_check.sh",
+                     "shbuild/bin/owners_check.sh", "shbuild/bin/vm/probe.sh", "shbuild/bin/vm/init"):
+            self.assertIn(need, files)
+            self.assertTrue(files[need].exists())
+        lines = sb.installed_manifest().splitlines()
+        self.assertEqual(len(lines), len(files))
+        self.assertRegex(lines[0], r"^[0-9a-f]{64}  shbuild/bin/")
+
     def test_old_jobs_without_config_build_product_image(self):
         p = sb.Pipeline(self.root, self.job())
         self.assertEqual((p.cfg, p.buildhost), (sb.CFG, False))
