@@ -62,7 +62,7 @@ CONFIGS = (CFG, "sheregesh-buildhost-pi5")
 
 # Выключатели оптимизаций конвейера (быстрый откат без переустановки и без коммита): файл ~/shbuild/host.conf, строки
 # «имя=значение»; нет файла или строки — значение по умолчанию. Откат любой оптимизации — поставить 0 (zstd_level=10).
-FLAG_DEFAULTS = {"parallel_tests": "1", "parallel_gates": "1", "parallel_boot": "1", "boot_jobs": "2", "zstd_level": "3"}
+FLAG_DEFAULTS = {"parallel_tests": "1", "parallel_gates": "1", "parallel_boot": "1", "zstd_level": "3"}
 
 
 def host_flags(root):
@@ -370,34 +370,9 @@ class Pipeline:
         raw = self.job.dir / "boot.raw"
         self.sh("boot", ["zstd", "-qdf", "--sparse", str(img), "-o", str(raw)])
         env = dict(os.environ, SHBOOT_RAW=str(raw))
-        scenarios = BUILDHOST_SCENARIOS if self.buildhost else BOOT_SCENARIOS
-        jobs_n = max(1, min(int(self.flags["boot_jobs"]), len(scenarios)))
         try:
-            if jobs_n == 1:
-                for sc in scenarios:
-                    self.sh("boot", ["bash", self.bin / "boot_check.sh", img, sc, self.job.id], env=env)
-                return
-            # сценарии независимы (своя машина, сеть и каталог в контейнере): по jobs_n одновременно, журнал каждого —
-            # отдельным файлом boot-<сценарий>.log, потом по порядку в boot.log (строки не перемешаны)
-            def one(sc):
-                log = self.job.dir / "logs" / f"boot-{sc}.log"
-                try:
-                    check(["bash", self.bin / "boot_check.sh", img, sc, self.job.id], log, TIMEOUTS["boot"],
-                          cancel_file=_AnyExists(self.cancel, self.abort), env=env)
-                    return None
-                except (Fail, TimeoutError, InterruptedError) as e:
-                    return e
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=jobs_n) as pool:
-                results = list(pool.map(one, scenarios))
-            with open(self.job.log("boot"), "a") as out:
-                for sc in scenarios:
-                    out.write(f"===== сценарий {sc}\n")
-                    p = self.job.dir / "logs" / f"boot-{sc}.log"
-                    out.write(p.read_text(errors="replace") if p.exists() else "(нет журнала)\n")
-            for sc, err in zip(scenarios, results):
-                if err is not None:
-                    raise err
+            for sc in (BUILDHOST_SCENARIOS if self.buildhost else BOOT_SCENARIOS):
+                self.sh("boot", ["bash", self.bin / "boot_check.sh", img, sc, self.job.id], env=env)
         finally:
             raw.unlink(missing_ok=True)
 
