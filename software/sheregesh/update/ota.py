@@ -263,7 +263,19 @@ class AgentConfig:
     tryboot_cmd: tuple = ("systemctl", "reboot", "--reboot-argument=0 tryboot")
     root: Path = Path("/")                                  # для отпечатков expect_from_board (испытания — каталог)
     probe: object = None                                    # confirm.Probe; испытания подставляют свой
-    lab_video: bool = True                                  # стенд S3.1-VIDEO: видео — обязательный критерий
+    lab_video: bool | None = None                           # видео — обязательный критерий; None — из settings.json
+    settings_name: str = "settings.json"                    # в state_dir: {"require_video": false} — стенд без камеры
+
+    def require_video(self):
+        """Видео при подтверждении обязательно, если не выключено явно: lab_video (испытания) или settings.json
+        в каталоге состояния OTA (общий для слотов; правит root). Битый файл — критерий остаётся обязательным."""
+        if self.lab_video is not None:
+            return self.lab_video
+        try:
+            v = json.loads((Path(self.state_dir) / self.settings_name).read_text()).get("require_video", True)
+        except (OSError, ValueError, AttributeError):
+            return True
+        return v is not False
 
 
 class Agent:
@@ -434,7 +446,7 @@ class Agent:
             return {"result": "REJECTED", "reason": f"подтверждать можно только на пробной загрузке нового слота "
                                                     f"(состояние {u.s.state}, tryboot={layout.tryboot})"}
         probe = self.cfg.probe or confirm.Probe(self.cfg.root, self.run)
-        ok, checks = confirm.gates(layout, u.s, probe, lab_video=self.cfg.lab_video)
+        ok, checks = confirm.gates(layout, u.s, probe, lab_video=self.cfg.require_video())
         failed = [c["id"] for c in checks if c["mandatory"] and c["status"] != "PASS"]
         u.b = slots.BlockSlots(layout, self.cfg.paths)
         u.on_health("PASS" if ok else "FAIL", layout.active.name.upper())
@@ -564,14 +576,23 @@ def on_boot_main(agent):
 def client_main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     actions = ("status", "install", "enable", "disable", "tryboot", "confirm", "abort", "dev-arm", "dev-disarm")
+    usage = (f"использование: sheregesh-ota-client {{{'|'.join(actions)}}}\n"
+             "  status — состояние слотов и обновления; install — пакет .shota со stdin в неактивный слот;\n"
+             "  enable/disable — подписанное разрешение переключать слоты (stdin); tryboot — пробная загрузка;\n"
+             "  confirm — проверить и подтвердить новый слот; abort — вернуться в рабочий слот;\n"
+             "  dev-arm/dev-disarm — разовый режим разработчика (только из службы пульта или блока).\n"
+             "  С машины владельца удобнее: tools/deploy/shdeploy.py ota-update ПЛАТА --payload … --sha256 …")
+    if argv in (["-h"], ["--help"], ["help"]):
+        print(usage)
+        return 0
     if len(argv) != 1 or argv[0] not in actions:
-        print(f"использование: sheregesh-ota-client {{{'|'.join(actions)}}}", file=sys.stderr)
+        print(usage, file=sys.stderr)
         return 2
     try:
         return client(argv[0], sys.stdin.buffer if argv[0] == "install" else sys.stdin, sys.stdout)
     except OSError as e:
-        print(f"sheregesh-ota-client: агент недоступен ({e}); OTA есть только в dev-образе S3.1-DEPLOY",
-              file=sys.stderr)
+        print(f"sheregesh-ota-client: агент обновления недоступен ({e}); проверьте сокет агента "
+              f"(systemctl status sheregesh-ota.socket)", file=sys.stderr)
         return 1
 
 

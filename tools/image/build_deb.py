@@ -65,6 +65,7 @@ WRAPPERS = {   # команда → модуль (-m) или скрипт из /
     "usr/bin/sheregesh-deployd": "sheregesh.deploy.installer",    # установщик выпусков, root (S3.1-DEPLOY)
     "usr/bin/sheregesh-ota-agent": "sheregesh.update.ota",        # агент обновления A/B, root (S3.1-DEPLOY)
     "usr/bin/sheregesh-ota-client": "sheregesh.update.ota_client",  # клиент агента для sheregesh-ui
+    "usr/bin/sheregesh-remotectl": "sheregesh.link.remotectl",    # обслуживание блока с пульта (протокол 1.6)
 }
 # Помощники root: межсетевой экран видео (ADR-0016, юнит sheregesh-video-allow@), источники времени chrony
 # (ADR-0017, юниты sheregesh-time-role и sheregesh-time-peer@) и имя системы по роли (юнит sheregesh-hostname).

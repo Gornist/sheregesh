@@ -9,6 +9,7 @@
   python3 tools/deploy/shdeploy.py factory pi1|pi2           заводской код образа (/usr/lib/sheregesh)
   python3 tools/deploy/shdeploy.py build --out DIR           только собрать (и подписать с --sign) пакет
   python3 tools/deploy/shdeploy.py ota-build --image IMG --build-report JSON --out DIR   (только артефакты shbuild PASSED)
+  python3 tools/deploy/shdeploy.py ota-update pi1 --payload FILE.shota --sha256 SHA   обновить систему одной командой
   python3 tools/deploy/shdeploy.py ota-status|ota-install|ota-enable|ota-disable|ota-tryboot|ota-confirm|ota-abort pi2
 
 Плата за раз — одна (вторая продолжает работать). Адрес: --host, переменная SHEREGESH_PI1_HOST/SHEREGESH_PI2_HOST,
@@ -26,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -396,6 +398,53 @@ def cmd_ota(a):
     return rc
 
 
+def _ota_step(a, action, **kw):
+    ns = argparse.Namespace(**{**vars(a), "command": f"ota-{action}", **kw})
+    print(f"== ota-{action}", flush=True)
+    return cmd_ota(ns)
+
+
+def cmd_ota_update(a, sleep=time.sleep, clock=time.monotonic, remote=None):
+    """Обновление системы одной командой: install → enable → tryboot → ожидание платы → confirm (проверки агента:
+    службы, связь, видео) → disable. Сбой до подтверждения — ota-abort (рабочий слот) и ota-disable.
+    Плата, не вернувшаяся после пробной загрузки, — выключить и включить питание: прошивка загрузит рабочий слот."""
+    remote = remote or resolve(a.board, a.host)
+    if _ota_step(a, "install") != 0:
+        print("установка не выполнена — рабочий слот не изменён")
+        return 1
+
+    def back_out(why):
+        print(f"STOP: {why} — возврат в рабочий слот")
+        _ota_step(a, "abort")
+        _ota_step(a, "disable")
+        return 1
+    if _ota_step(a, "enable") != 0:
+        return back_out("разрешение на переключение слотов не принято")
+    _ota_step(a, "tryboot")                       # плата уходит в перезагрузку: ответ может оборваться
+    sleep(30)
+    deadline = clock() + a.wait
+    up = False
+    while clock() < deadline:
+        try:
+            up = remote.run("true", timeout=15)[0] == 0
+        except subprocess.TimeoutExpired:
+            up = False
+        if up:
+            break
+        sleep(10)
+    if not up:
+        print(f"STOP: {a.board} не вернулась за {a.wait} с после пробной загрузки — выключите и включите питание: "
+              f"прошивка загрузит рабочий слот; затем shdeploy ota-status {a.board}")
+        return 2
+    print(f"{a.board}: на связи; службы запускаются {a.settle} с", flush=True)
+    sleep(a.settle)
+    if _ota_step(a, "confirm") != 0:
+        return back_out("критерии подтверждения не пройдены (shdeploy ota-status — подробно)")
+    _ota_step(a, "disable")
+    print(f"{a.board}: обновление подтверждено (COMMITTED)")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="shdeploy", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="command", required=True)
@@ -426,8 +475,18 @@ def main(argv=None):
         p.add_argument("--key")
         p.add_argument("--payload")
         p.add_argument("--sha256", help="ota-install: утверждённый SHA-256 потока; иное — отказ до передачи")
+    u = sub.add_parser("ota-update", help="обновить систему одной командой (install → … → confirm → disable)")
+    u.add_argument("board", choices=list(BOARDS))
+    u.add_argument("--host")
+    u.add_argument("--key")
+    u.add_argument("--payload", required=True, help="пакет .shota (ota-build)")
+    u.add_argument("--sha256", required=True, help="утверждённый SHA-256 пакета")
+    u.add_argument("--wait", type=int, default=420, help="ожидание платы после пробной загрузки, с")
+    u.add_argument("--settle", type=int, default=120, help="пауза на запуск служб перед подтверждением, с")
     a = ap.parse_args(argv)
     try:
+        if a.command == "ota-update":
+            return cmd_ota_update(a)
         if a.command == "build":
             return cmd_build(a)
         if a.command == "status":

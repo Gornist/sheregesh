@@ -66,6 +66,37 @@ class BoardsTest(unittest.TestCase):
             boards.resolve_args(a)
         self.assertEqual((a.console, a.remote, a.other), ("10.0.0.1", "10.0.0.2", "x"))
 
+    def test_registry_replaces_reference_stand(self):
+        """Свои платы — из реестра: серийный номер и MAC читаются с платы; эталонный стенд больше не действует."""
+        reg = Path(self.tmp.name) / "reg.json"
+        self.assertEqual(boards.load(reg)["pi1"]["source"], "reference")       # файла нет — эталонный стенд
+        seen = {"10.0.0.7": ("abc123", "AA:BB:CC:00:00:01"), "10.0.0.8": ("def456", "aa:bb:cc:00:00:02")}
+
+        def run(host, cmd):
+            serial, mac = seen[host]
+            return 0, mac if cmd == boards.MAC_CMD else serial
+        saved = dict(boards.BOARDS)
+        try:
+            with mock.patch.object(boards, "_remember"):
+                boards.register("bench-console", "10.0.0.7", "console", path=reg, run=run)
+                boards.register("bench-unit", "10.0.0.8", "remote", path=reg, run=run)
+                with self.assertRaisesRegex(boards.BoardNotFound, "уже записана как bench-console"):
+                    boards.register("dup", "10.0.0.7", "remote", path=reg, run=run)
+            got = boards.load(reg)
+            self.assertEqual(set(got), {"bench-console", "bench-unit"})
+            self.assertEqual(got["bench-console"]["mac"], "aa:bb:cc:00:00:01")
+            self.assertEqual(boards.arg_board(got), {"console": "bench-console", "remote": "bench-unit"})
+            self.assertEqual(boards.ARG_BOARD, {"console": "bench-console", "remote": "bench-unit"})
+        finally:
+            boards.BOARDS.clear()
+            boards.BOARDS.update(saved)
+            boards.ARG_BOARD.clear()
+            boards.ARG_BOARD.update(boards.arg_board())
+
+    def test_reference_board_not_found_suggests_add(self):
+        with self.assertRaisesRegex(boards.BoardNotFound, "boards.py add pi1 --host АДРЕС --role console"):
+            self.resolve("pi1")
+
     def test_no_script_keeps_a_board_address_by_default(self):
         hits = subprocess.run(["git", "grep", "-n", "-E", r'"--(console|remote|host)", default="192\.168\.',
                                "--", "tools"], cwd=ROOT, capture_output=True, text=True).stdout

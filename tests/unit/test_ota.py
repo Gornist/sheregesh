@@ -544,3 +544,16 @@ def test_on_boot_failure_is_unit_failure_only_during_update(tmp_path, capsys):
     agent.detect = lambda p: (_ for _ in ()).throw(UpdateError("нет by-slot"))
     assert ota.on_boot_main(agent) == 1                      # пробная загрузка в процессе: сбой виден
     assert "слоты не определены" in capsys.readouterr().err
+
+
+def test_video_criterion_configurable_but_required_by_default(tmp_path):
+    """Видео при подтверждении обязательно по умолчанию; выключается только явно (settings.json, стенд без камеры)."""
+    cfg = ota.AgentConfig(state_dir=tmp_path)
+    assert cfg.require_video() is True                                     # файла нет
+    (tmp_path / "settings.json").write_text("{не json")
+    assert cfg.require_video() is True                                     # битый — не ослабляет критерий
+    (tmp_path / "settings.json").write_text('{"require_video": "no"}')
+    assert cfg.require_video() is True                                     # только явное false
+    (tmp_path / "settings.json").write_text('{"require_video": false}')
+    assert cfg.require_video() is False
+    assert ota.AgentConfig(state_dir=tmp_path, lab_video=True).require_video() is True

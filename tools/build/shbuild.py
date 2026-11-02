@@ -4,7 +4,12 @@
 """shbuild — сервис сборки образов «Шерегеша» на devbox (ADR-0018). Один файл: команды Mac и исполнитель devbox.
 
 С Mac (проксируется на devbox по SSH; на Mac ничего не собирается):
-  python3 tools/build/shbuild.py install              поставить/обновить сервис на devbox (bin, каталоги, сборщик)
+  python3 tools/build/shbuild.py install              поставить/обновить сервис на devbox (bin, каталоги, сборщик,
+                                                      открытые ключи --dev-key/--deploy-key)
+
+Машина сборки: Linux x86-64 с Docker, qemu-user-static (binfmt aarch64), ≥ 40 ГБ диска и ≥ 6 ГБ памяти, вход по SSH
+по ключу. Имена хоста — SHBUILD_HOST (команды, по умолчанию devbox) и SHBUILD_BULK_HOST (передачи, devbox-lan);
+одна машина — оба одинаковые.
   python3 tools/build/shbuild.py submit [РЕВИЗИЯ]     отправить коммит (по умолчанию HEAD) — печатает id задания;
                                                       --config sheregesh-buildhost-pi5 — образ сборочного хоста (ADR-0019)
   python3 tools/build/shbuild.py status [ID]          очередь или одно задание (этапы, время, итог)
@@ -277,7 +282,13 @@ class Pipeline:
                                 stderr=open(log, "a"), timeout=TIMEOUTS["gates"]).returncode
         if rc != 0:
             raise Fail(f"owners_check: код {rc}", "ERROR")
+        # эталон — в репозитории рядом с рецептом (tools/image/owners-baseline.txt); файл машины сборки — переопределение
         base = self.root / "baseline/owners.txt"
+        if not base.exists():
+            base = self.src / "tools/image/owners-baseline.txt"
+        if not base.exists():
+            raise Fail("нет эталона владельцев: tools/image/owners-baseline.txt в ревизии или ~/shbuild/baseline/owners.txt",
+                       "ERROR")
         diff = subprocess.run(["diff", base, owners], capture_output=True, text=True)
         with open(log, "a") as f:
             f.write(f"owners против {base}:\n{diff.stdout or 'совпадает'}\n")
@@ -504,10 +515,22 @@ def m_install(a):
     vm = [here / "vm" / f for f in ("init", "probe.sh", "make_vmkit.sh")]
     subprocess.run(["scp", "-q", *map(str, vm), f"{DEVBOX_BULK}:shbuild/bin/vm/"], check=True)
     ssh("bash shbuild/bin/vm/make_vmkit.sh >/dev/null && echo 'набор машины: ~/shbuild/vm'")
-    ssh("chmod +x shbuild/bin/*; for k in dev deploy; do test -s shbuild/keys/$k.pub || cp shimg/in/$k.pub "
-        "shbuild/keys/; done; ls shbuild/keys; test -s shbuild/baseline/owners.txt && echo 'эталон owners есть' "
-        "|| echo 'НЕТ эталона owners: shbuild/baseline/owners.txt'")
-    print("установлено: devbox:~/shbuild")
+    ssh("chmod +x shbuild/bin/*")
+    # Открытые ключи, которые сборка вшивает в DEV-образ: вход (dev.pub — SSH sheregesh-ui и root) и проверка
+    # подписи выпусков shdeploy (deploy.pub). Закрытые ключи не покидают эту машину.
+    for name, local in (("dev", a.dev_key), ("deploy", a.deploy_key)):
+        local = Path(local).expanduser()
+        have = subprocess.run(["ssh", DEVBOX, f"test -s shbuild/keys/{name}.pub"]).returncode == 0
+        if local.is_file():
+            if not have or a.replace_keys:
+                subprocess.run(["scp", "-q", str(local), f"{DEVBOX_BULK}:shbuild/keys/{name}.pub"], check=True)
+                print(f"ключ {name}.pub ← {local}")
+        elif not have:
+            print(f"НЕТ ключа {name}.pub: создайте {local.with_suffix('')} — "
+                  f"ssh-keygen -t ed25519 -f {local.with_suffix('')} -C sheregesh-{name} — и повторите install")
+    ssh("ls shbuild/keys; test -s shbuild/baseline/owners.txt && echo 'эталон owners: локальный (переопределение)' "
+        "|| echo 'эталон owners: из ревизии (tools/image/owners-baseline.txt)'")
+    print(f"установлено: {DEVBOX}:~/shbuild")
     return 0
 
 
@@ -546,6 +569,9 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     on_mac = platform.system() == "Darwin"
     s = sub.add_parser("install")
+    s.add_argument("--dev-key", default="~/.ssh/id_ed25519.pub", help="открытый ключ входа на платы DEV-образа")
+    s.add_argument("--deploy-key", default="~/.ssh/sheregesh-deploy.pub", help="открытый ключ подписи выпусков shdeploy")
+    s.add_argument("--replace-keys", action="store_true", help="заменить ключи, уже лежащие на машине сборки")
     s = sub.add_parser("submit")
     s.add_argument("rev", nargs="?", default="HEAD")
     s.add_argument("--builder", help="образ контейнера-сборщика (SHEREGESH_BUILDER_IMAGE)")
