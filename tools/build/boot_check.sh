@@ -35,10 +35,18 @@ cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true
 trap cleanup EXIT
 cp "$HERE/vm/init" "$HERE/vm/probe.sh" "$W/"
 
-echo "== $(date -u +%T) машина: $SC"
+# Ускорение: на arm64-хосте с /dev/kvm (Pi 5, ADR-0019) гость идёт на реальном процессоре; иначе (devbox x86) —
+# эмуляция TCG, как раньше. SHBOOT_NO_KVM=1 — принудительно TCG (сравнение, отладка). Контейнер без расширенных прав:
+# устройство передаётся явно.
+KVMDEV=(); QM=virt; QCPU=cortex-a72; QACCEL=tcg
+if [ -z "${SHBOOT_NO_KVM:-}" ] && [ "$(uname -m)" = aarch64 ] && [ -c /dev/kvm ]; then
+  KVMDEV=(--device /dev/kvm); QM=virt,gic-version=host; QCPU=host; QACCEL=kvm
+fi
+echo "== $(date -u +%T) машина: $SC (ускорение $QACCEL)"
 set +e
-docker run --rm --name "$NAME" --cap-add NET_ADMIN --device /dev/net/tun \
-  -v "$IMG":/img.zst:ro -v "$KIT":/kit:ro -v "$W":/w -e SC="$VMSC" -e OFFLINE="$([ "$SC" = offline ] && echo 1)" shbuild-qemu bash -euo pipefail -c '
+docker run --rm --name "$NAME" --cap-add NET_ADMIN --device /dev/net/tun ${KVMDEV[@]+"${KVMDEV[@]}"} \
+  -v "$IMG":/img.zst:ro -v "$KIT":/kit:ro -v "$W":/w -e SC="$VMSC" -e OFFLINE="$([ "$SC" = offline ] && echo 1)" \
+  -e QM="$QM" -e QCPU="$QCPU" -e QACCEL="$QACCEL" shbuild-qemu bash -euo pipefail -c '
   ver=$(cat /kit/kernel.version)
   zstd -qdc /img.zst > /w/disk.img
   qemu-img create -q -f qcow2 -F raw -b /w/disk.img /w/overlay.qcow2
@@ -62,7 +70,7 @@ docker run --rm --name "$NAME" --cap-add NET_ADMIN --device /dev/net/tun \
   dnsmasq --no-daemon --user=root --interface=br0 --bind-interfaces --port=0 --dhcp-range=172.30.77.100,172.30.77.150,2m \
     $nogw --log-dhcp --log-facility=/w/dnsmasq.log 2>/dev/null &
   tcpdump -q -n -U -i br0 -w /w/net.pcap 2>/dev/null & TD=$!
-  timeout 1500 qemu-system-aarch64 -M virt -cpu cortex-a72 -smp 4 -m 3072 -no-reboot \
+  timeout 1500 qemu-system-aarch64 -M "$QM" -cpu "$QCPU" -accel "$QACCEL" -smp 4 -m 3072 -no-reboot \
     -kernel /kit/vmlinuz -initrd /w/initrd.gz -append "console=ttyAMA0 shboot.scenario=$SC panic=-1 systemd.show_status=0" \
     -drive if=virtio,format=qcow2,file=/w/overlay.qcow2 -drive if=virtio,format=raw,file=/kit/modules.ext4,readonly=on \
     -netdev tap,id=n0,ifname=tap0,script=no,downscript=no -device virtio-net-pci,netdev=n0,romfile= \

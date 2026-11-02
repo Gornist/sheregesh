@@ -150,7 +150,9 @@ class ShbuildTest(unittest.TestCase):
         init = (ROOT / "tools/build/vm/init").read_text()
         self.assertEqual(sb.BOOT_SCENARIOS, ("console", "remote", "fresh", "offline"))
         self.assertNotIn("--privileged", text)
-        self.assertIn("qemu-system-aarch64 -M virt", text)
+        self.assertIn('qemu-system-aarch64 -M "$QM"', text)
+        self.assertIn("--device /dev/kvm", text)                 # KVM на arm64-хосте с /dev/kvm; --privileged по-прежнему нет
+        self.assertIn("SHBOOT_NO_KVM", text)
         self.assertIn("readonly=on", text)                       # модули — только чтение; образ — через оверлей
         self.assertIn("qcow2 -F raw -b", text)
         for check in ("имя после продления DHCP", "имя в запросах DHCP", "источник времени", "упавшие юниты",
