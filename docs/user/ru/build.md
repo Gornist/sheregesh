@@ -41,7 +41,7 @@ ssh-keygen -t ed25519 -f ~/.ssh/sheregesh-deploy -C sheregesh-deploy  # подп
 тест в эмуляторе, в том числе первую загрузку без сети.
 
 ```sh
-export SHBUILD_HOST=сборка SHBUILD_BULK_HOST=сборка   # имя машины сборки в ~/.ssh/config (по умолчанию devbox)
+export SHBUILD_HOST=сборка SHBUILD_BULK_HOST=сборка   # имя машины сборки в ~/.ssh/config (по умолчанию — хост сборки на Raspberry Pi 5, shbuild@pi5.local)
 python3 tools/build/shbuild.py install          # один раз: сервис, сборщик и ваши открытые ключи
 python3 tools/build/shbuild.py submit           # отправить текущий коммит, будет напечатан номер задания
 python3 tools/build/shbuild.py wait ЗАДАНИЕ     # дождаться итога: PASSED или причина отказа

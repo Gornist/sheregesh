@@ -14,7 +14,7 @@
   затем `wait`/`status`/`fetch`. Никаких ручных `os/docker-build.sh`, сборок на Mac, Docker/colima на Mac и обходов:
   `docker-build.sh` без задания shbuild отказывает, а `shdeploy ota-build` и `flash_sd.py` не принимают образ без
   `shbuild-report.json` с итогом PASSED. На платы (OTA или карта) — только такой образ. Подробно —
-  [процесс разработки](docs/development/AGENT-WORKFLOW.md#сборка-образа-и-раскатка); устройство сервиса, хосты (devbox, Pi 5),
+  [процесс разработки](docs/development/AGENT-WORKFLOW.md#сборка-образа-и-раскатка); устройство сервиса, хост сборки (Raspberry Pi 5, по умолчанию),
   выключатели и откат — [BUILD-SERVICE](docs/development/BUILD-SERVICE.md).
 - Сведения из памяти и чатов сверяй с датированными отчётами.
 - При передаче задачи используй `docs/development/SESSION-HANDOFF.md`.

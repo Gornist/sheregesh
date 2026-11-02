@@ -19,7 +19,7 @@
 | [ADR-0015](ADR-0015-video-frames-gpu-path.md) | Кадр видео пульта мимо Python: dmabuf по unixfd → qml6glsink | Принято (pi1, образ db36670; дисплей не проверен) |
 | [ADR-0016](ADR-0016-srtp-video-udp.md) | Видео блок → пульт: SRTP по UDP внутри GStreamer, ключи по SHRG-LAB (mTLS); видео — отдельная служба | Реализовано; платы: уровни 0–1 PASS, потери — NOT TESTED |
 | [ADR-0017](ADR-0017-time-sync-offline.md) | Время между платами без интернета: пульт — источник времени блока (chrony) | Предложено; в исходниках, платы — после OTA |
-| [ADR-0018](ADR-0018-build-service.md) | Сервис сборки образов на devbox: очередь, гейты до железа (загрузочный тест), раскатка только проверенного | Принято; `tools/build/` |
+| [ADR-0018](ADR-0018-build-service.md) | Сервис сборки образов (хост — Raspberry Pi 5): очередь, гейты до железа (загрузочный тест), раскатка только проверенного | Принято; `tools/build/` |
 | [ADR-0019](ADR-0019-build-host-pi5.md) | Сборочный хост shbuild на Raspberry Pi 5 с NVMe: образ хоста, профиль shbuild | Принято; `os/config/sheregesh-buildhost-pi5.yaml` |
 
 ADR не меняет требования. Если решение затрагивает требование, оно оформляется записью CHG в `docs/requirements/requirements.json`.

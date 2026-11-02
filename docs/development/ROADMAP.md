@@ -64,7 +64,7 @@ RadioMaster Nomad по CRSF на UART3 (ADR-0014, `docs/hardware/NOMAD-WIRING.md
 - Критерий ctl-loss «нет видео ≤ 3 с» меряет тайм-аут heartbeat 3 с — пересмотреть критерий или замер.
 - `Ingest` агента: убрать мёртвый путь attach, отображение VID-05 «starting».
 - Нестабильные тесты.
-- Сборка shbuild на Raspberry Pi 5 с NVMe: образ хоста готов к приёмке (ADR-0019, `BUILDHOST-PI5.md`); остаются запись на NVMe, приёмка на плате и перенос сервиса.
+- ~~Сборка shbuild на Raspberry Pi 5 с NVMe~~ — сделано 2026-11-02 (ADR-0019): все образы собираются на pi5, ≈ 6 мин.
 - Карта pi3 и mediamtx.
 
 ## После программной части (железо, отложено)

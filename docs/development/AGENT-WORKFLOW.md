@@ -56,9 +56,10 @@ QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software .venv/bin/python -m pytest -
 
 1. Закоммить изменение (сборка — из коммита, не из рабочего дерева). С Mac:
    `python3 tools/build/shbuild.py submit [РЕВИЗИЯ]` → id задания. Сервис на хосте сборки (`~/shbuild`) ставит его в
-   очередь (одна сборка за раз) и проходит этапы preflight → checkout → tests → build → gates → boot. Хост по умолчанию
-   — devbox (≈ 37 мин); быстрее — Raspberry Pi 5 (≈ 6 мин): `SHBUILD_HOST=shbuild@pi5.local SHBUILD_BULK_HOST=shbuild@pi5.local`
-   перед командой. Образ сборочного хоста — `submit --config sheregesh-buildhost-pi5`. Устройство, выключатели,
+   очередь (одна сборка за раз) и проходит этапы preflight → checkout → tests → build → gates → boot. Все образы
+   собирает **Raspberry Pi 5** (`shbuild@pi5.local`, хост по умолчанию, ≈ 6 мин); переменные окружения не нужны.
+   `submit` отказывает, если версия сервиса на хосте не совпадает с репозиторием (тогда `install`). Образ сборочного хоста
+   — `submit --config sheregesh-buildhost-pi5`. Устройство, выключатели,
    замеры и откат — [BUILD-SERVICE](BUILD-SERVICE.md).
 2. Ждать: `python3 tools/build/shbuild.py wait ID` (одна строка итога; код 0 — PASSED) или `status ID`;
    журнал этапа — `logs ID [этап]`. Итог всегда явный: PASSED, FAILED, ERROR, CANCELLED, TIMEOUT. Отслеживая
@@ -69,7 +70,7 @@ QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software .venv/bin/python -m pytest -
 4. На железо — только PASSED и только с согласия владельца на конкретную раскатку. Артефакты на Mac —
    `shbuild.py fetch ID` (нужны для подписи пакета OTA и записи карты), после раскатки удалить.
 5. OTA (одна плата за раз, пульт первым; аренда — `tools/dev/stand_lease.py`): `shdeploy ota-build` дважды и `cmp`;
-   L3 — `tools/deploy/ota-check/run.py --base-remote <образ плат на devbox>` (без `--agent-rev`, если код агента
+   L3 — `tools/deploy/ota-check/run.py --base-remote <образ плат на devbox: артефакт pi5 → `fetch` → копия на devbox>` (без `--agent-rev`, если код агента
    на платах совпадает с кандидатом); `slot_guard.py snap` до; `ota-install --sha256` → `compare --mode install`;
    `ota-enable` → `ota-tryboot`; в пробной загрузке — `compare --mode trial`, имя, время, `check_link`,
    `check_video_link`; только затем `ota-confirm` → `ota-disable` → контрольная перезагрузка. Пример с

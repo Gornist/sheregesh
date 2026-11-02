@@ -43,7 +43,7 @@ Images are built only by the shbuild service on the build machine: every image p
 a boot test in an emulator, including a first boot without network.
 
 ```sh
-export SHBUILD_HOST=builder SHBUILD_BULK_HOST=builder   # build machine name in ~/.ssh/config (default devbox)
+export SHBUILD_HOST=builder SHBUILD_BULK_HOST=builder   # build machine name in ~/.ssh/config (default: the Raspberry Pi 5 build host, shbuild@pi5.local)
 python3 tools/build/shbuild.py install          # once: the service, the builder and your public keys
 python3 tools/build/shbuild.py submit           # submit the current commit; prints the job id
 python3 tools/build/shbuild.py wait JOB         # wait for the result: PASSED or the reason of failure

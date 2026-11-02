@@ -4,7 +4,8 @@
 # Сборочный хост на Raspberry Pi 5 (NVMe)
 
 Решение — [ADR-0019](../adr/ADR-0019-build-host-pi5.md). Железо владельца: Raspberry Pi 5, Waveshare M.2 HAT C,
-NVMe Hynix 256 ГБ. Образ собирает devbox (shbuild), на Mac — только запись носителя.
+NVMe Hynix 256 ГБ. Плата — хост сборки **всех образов проекта** (shbuild, хост по умолчанию); на Mac — только запись
+носителя. Образ самого хоста собирает тот же сервис (на самом хосте).
 
 ## 1. Получить образ
 
@@ -14,7 +15,7 @@ python3 tools/build/shbuild.py wait ID                                   # PASSE
 python3 tools/build/shbuild.py fetch ID                                  # → build/image/buildhost-…/
 ```
 
-Ключ входа в образ — `~/shbuild/keys/dev.pub` на devbox (тот же, что у DEV-образов плат). Образ не содержит паролей.
+Ключ входа в образ — `~/shbuild/keys/dev.pub` на хосте сборки (тот же, что у DEV-образов плат). Образ не содержит паролей.
 
 ## 2. Записать на NVMe
 
@@ -46,16 +47,15 @@ zstd -dc build/image/buildhost-*/sheregesh-buildhost-pi5.img.zst | sudo dd of=/d
 ## 5. Перенос shbuild на хост
 
 Сделано 2026-11-02 (хост принят: загрузка с NVMe, корень 238 ГБ, Docker, подкачка 8 ГБ, `/dev/kvm`; продуктовый образ
-собран за ≈ 10 мин). Установка и обновление — с Mac:
+собран за ≈ 6 мин). Установка и обновление — с Mac:
 
 ```sh
-export SHBUILD_HOST=shbuild@pi5.local SHBUILD_BULK_HOST=shbuild@pi5.local
 python3 tools/build/shbuild.py install          # код, каталоги, набор машины, ключи dev.pub/deploy.pub
-python3 tools/build/shbuild.py submit           # сборка на Pi 5; без переменных — devbox
+python3 tools/build/shbuild.py submit           # сборка на Pi 5 (хост по умолчанию: shbuild@pi5.local)
 ```
 
-Пока `SHBUILD_HOST` не задан, сервис devbox остаётся единственным путём по умолчанию (ADR-0018 не меняется).
-После любого изменения в `tools/build/` — `install` на оба хоста.
+Переменные `SHBUILD_HOST`/`SHBUILD_BULK_HOST` нужны только для другого хоста. Прежний хост (devbox) выведен из обращения:
+сервис на нём устарел, `submit` на него отказывает (проверка версии). После любого изменения в `tools/build/` — `install`.
 
 ## 6. Эксплуатация
 
