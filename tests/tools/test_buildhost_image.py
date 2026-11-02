@@ -40,7 +40,7 @@ class BuildhostImageTest(unittest.TestCase):
         self.assertNotIn("lab-pi4", CONFIG)                         # ни пульта, ни A/B, ни пакета sheregesh
 
     def test_layer_provides_what_verifier_checks(self):
-        for needle in ("docker.io", "docker-cli", "git", "zstd", "rsync", "python3", "cloud-guest-utils", "nvme-cli",
+        for needle in ("docker.io", "docker-cli", "iproute2", "git", "zstd", "rsync", "python3", "cloud-guest-utils", "nvme-cli",
                        "dtparam=pciex1", "PermitRootLogin prohibit-password", "RuntimeWatchdogSec=30s",
                        "Storage=persistent", "shbuild-growroot.service", "90-sheregesh-buildhost",
                        "mask rpi-eeprom-update.service", "BUILDHOST-MODE"):

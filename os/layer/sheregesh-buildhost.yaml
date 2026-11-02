@@ -36,6 +36,7 @@ mmdebstrap:
     - systemd-zram-generator
     - avahi-daemon
     - sudo
+    - iproute2
     - tmux
     - htop
     - less
