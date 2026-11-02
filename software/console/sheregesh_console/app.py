@@ -257,8 +257,9 @@ class Ui:
         QGuiApplication.processEvents()
 
     def find(self, name):
+        """Элемент QML по objectName; после close() окна нет — None (сигналы бэкенда ещё приходят при остановке)."""
         from PySide6.QtCore import QObject
-        return self.window.findChild(QObject, name)
+        return self.window.findChild(QObject, name) if self.window is not None else None
 
     def grab(self, path):
         QGuiApplication.processEvents()
@@ -384,6 +385,8 @@ def main(argv=None):
         ui.count_frames()
 
         def dump_ui():
+            if ui.window is None:            # окно уже закрыто: остановка пульта, писать нечего
+                return
             st = backend.status
             label = ui.find("peerValue")
             detail = ui.find("peerDetail")

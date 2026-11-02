@@ -280,3 +280,13 @@ def test_backup_and_restore_through_ui(ui):
     assert ui.backend.backups() == [name]
     assert ui.backend.restore(name, False) is False and ui.backend.theme == "light"
     assert finish(ui.backend, ui.backend.restore(name, True)) and ui.backend.theme == "dark"
+
+
+def test_find_after_close_returns_none(qapp, tmp_path):
+    """При остановке пульта сигналы бэкенда приходят после close(): find не должен падать на закрытом окне."""
+    compile_translations()
+    u = Ui(Backend(tmp_path / "data", demo=True, autostart=False))
+    qapp.processEvents()
+    assert u.find("peerValue") is not None
+    u.close()
+    assert u.window is None and u.find("peerValue") is None
