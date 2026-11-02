@@ -209,6 +209,18 @@ class ShbuildTest(unittest.TestCase):
             finally:
                 sb.Path = real
 
+    def test_worker_path_has_sbin_for_debugfs(self):
+        import os
+        old = os.environ.get("PATH")
+        os.environ["PATH"] = "/usr/bin:/bin"
+        try:
+            parts = sb.worker_env()["PATH"].split(os.pathsep)
+        finally:
+            os.environ["PATH"] = old
+        self.assertEqual(parts[:2], ["/usr/bin", "/bin"])
+        self.assertIn("/usr/sbin", parts)
+        self.assertIn("/sbin", parts)
+
     def test_old_jobs_without_config_build_product_image(self):
         p = sb.Pipeline(self.root, self.job())
         self.assertEqual((p.cfg, p.buildhost), (sb.CFG, False))

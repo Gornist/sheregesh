@@ -436,8 +436,18 @@ def worker(root, once=False):
             return 0
 
 
+def worker_env():
+    """Окружение исполнителя: запущенный по SSH процесс получает PATH без sbin (Debian: debugfs, mke2fs, losetup
+    лежат в /usr/sbin) — тесты и гейты ищут их через PATH (Pi 5, ADR-0019)."""
+    parts = os.environ.get("PATH", "").split(os.pathsep)
+    for d in ("/usr/local/sbin", "/usr/sbin", "/sbin"):
+        if d not in parts:
+            parts.append(d)
+    return dict(os.environ, PATH=os.pathsep.join(p for p in parts if p))
+
+
 def spawn_worker(root):
-    subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "worker"], start_new_session=True,
+    subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "worker"], start_new_session=True, env=worker_env(),
                      stdout=open(root / "worker.log", "a"), stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
 
 
