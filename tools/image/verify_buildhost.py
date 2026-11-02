@@ -25,7 +25,7 @@ from pathlib import Path
 MiB = 1024 * 1024
 SECTOR = 512
 BOOT_MIN, ROOT_MIN = 512 * MiB, 6144 * MiB
-HOSTNAME = "shbuild-pi5"
+HOSTNAME = "pi5"
 USER = "shbuild"
 TOOLS = ("usr/sbin/dockerd", "usr/bin/docker", "usr/bin/git", "usr/bin/zstd", "usr/bin/rsync", "usr/bin/python3",
          "usr/bin/growpart", "usr/sbin/resize2fs", "usr/sbin/nvme", "usr/bin/tmux")

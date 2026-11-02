@@ -19,7 +19,7 @@
 # Отличия от платы (не проверяются): ядро Pi, прошивка, tryboot, VideoCore, дисплей, GPIO/UART, Bluetooth.
 set -euo pipefail
 IMG="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; SC=${2:?console|remote|fresh}; LABEL=${3:-$$}
-case "$SC" in console) WANT=pi1;; remote) WANT=pi2;; fresh|offline) WANT=;; buildhost) WANT=shbuild-pi5;;
+case "$SC" in console) WANT=pi1;; remote) WANT=pi2;; fresh|offline) WANT=;; buildhost) WANT=pi5;;
   *) echo "сценарий: console|remote|fresh|offline|buildhost" >&2; exit 2;; esac
 VMSC=$SC; [ "$SC" = offline ] && VMSC=fresh
 HERE=$(cd "$(dirname "$0")" && pwd)

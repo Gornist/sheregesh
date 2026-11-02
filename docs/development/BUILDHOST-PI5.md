@@ -36,7 +36,7 @@ zstd -dc build/image/buildhost-*/sheregesh-buildhost-pi5.img.zst | sudo dd of=/d
 
 ## 4. Первая загрузка
 
-- Адрес — по DHCP, имя `shbuild-pi5` (`ssh shbuild@shbuild-pi5.local` или `ssh root@…`); хост-ключи SSH создаются
+- Адрес — по DHCP, имя `pi5` (`ssh shbuild@pi5.local` или `ssh root@…`); хост-ключи SSH создаются
   при первой загрузке.
 - Корень сам растёт до конца NVMe (`systemctl status shbuild-growroot`, `df -h /`).
 - Проверка носителя: `lsblk`, `sudo nvme smart-log /dev/nvme0`, `sudo smartctl -a /dev/nvme0`; скорость PCIe —
@@ -48,7 +48,7 @@ zstd -dc build/image/buildhost-*/sheregesh-buildhost-pi5.img.zst | sudo dd of=/d
 Только после того, как хост опознан и стабилен (приёмка — отдельным отчётом):
 
 ```sh
-SHBUILD_HOST=shbuild-pi5 SHBUILD_BULK_HOST=shbuild-pi5 python3 tools/build/shbuild.py install
+SHBUILD_HOST=pi5 SHBUILD_BULK_HOST=pi5 python3 tools/build/shbuild.py install
 ```
 
 Эталон owners и ключи копируются с devbox (`~/shbuild/baseline`, `~/shbuild/keys`). Пока `SHBUILD_HOST` не задан,

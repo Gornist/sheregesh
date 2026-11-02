@@ -7,7 +7,7 @@
 # владельца 2026-10-30 для DEV-образов. Ключ передаётся при сборке (в репозиторий не попадает).
 device:
   layer: rpi5
-  hostname: shbuild-pi5
+  hostname: pi5
   user1: shbuild
   storage_type: nvme
 

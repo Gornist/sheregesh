@@ -16,7 +16,7 @@
    монтируется и ядром Pi 5, и ядром Debian загрузочного теста.
 2. **Состав:** Docker (`docker.io`, `docker-cli`), git, rsync, zstd, python3, `nvme-cli`, `smartmontools`, `rpi-eeprom`
    (обновление EEPROM замаскировано — только явной процедурой), zram-подкачка, аппаратный сторож systemd, журнал на
-   диске, mDNS (`shbuild-pi5.local`). Вход — только по ключу (root тоже, как у DEV-образов, решение 2026-10-30);
+   диске, mDNS (`pi5.local`). Вход — только по ключу (root тоже, как у DEV-образов, решение 2026-10-30);
    пользователь `shbuild` в `docker` и `sudo`. PCIe x1 для NVMe включён в `config.txt` (`dtparam=pciex1`, Gen 2:
    для сборочной машины устойчивость важнее скорости).
 3. **Собирается только через shbuild** (правило ADR-0018 не меняется): `shbuild.py submit --config
@@ -25,7 +25,7 @@
    юнитов, имя, DHCP, расширение корня, sshd по ключу, Docker отвечает, инструменты). Гейты owners-эталона и порядка
    юнитов относятся к A/B-образу «Шерегеша» и к хосту не применяются; SBOM образа обязателен.
 4. **Сервис переносится, а не дублируется:** на arm64-хосте `preflight` не требует `binfmt qemu-aarch64`; остальной
-   код сервиса тот же. Установка — `SHBUILD_HOST=shbuild-pi5 SHBUILD_BULK_HOST=shbuild-pi5 python3
+   код сервиса тот же. Установка — `SHBUILD_HOST=pi5 SHBUILD_BULK_HOST=pi5 python3
    tools/build/shbuild.py install`. Переключение с devbox — отдельный шаг после приёмки хоста на железе.
 
 ## Не проверено (остаётся за платой)
