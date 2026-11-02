@@ -59,6 +59,35 @@ BUILDHOST_SCENARIOS = ("buildhost",)
 CONFIGS = (CFG, "sheregesh-buildhost-pi5")
 
 
+# Выключатели оптимизаций конвейера (быстрый откат без переустановки и без коммита): файл ~/shbuild/host.conf, строки
+# «имя=значение»; нет файла или строки — значение по умолчанию. Откат любой оптимизации — поставить 0 (zstd_level=10).
+FLAG_DEFAULTS = {"parallel_tests": "1", "parallel_gates": "1", "zstd_level": "3"}
+
+
+def host_flags(root):
+    flags = dict(FLAG_DEFAULTS)
+    try:
+        for ln in (Path(root) / "host.conf").read_text().splitlines():
+            ln = ln.split("#", 1)[0].strip()
+            if "=" in ln:
+                k, v = (x.strip() for x in ln.split("=", 1))
+                if k in FLAG_DEFAULTS and v:
+                    flags[k] = v
+    except OSError:
+        pass
+    return flags
+
+
+class _AnyExists:
+    """Файл отмены пользователя или внутренний «прервать» (параллельный этап упал): run_logged зовёт .exists()."""
+
+    def __init__(self, *paths):
+        self.paths = paths
+
+    def exists(self):
+        return any(p.exists() for p in self.paths)
+
+
 def art_name(st):
     """Каталог артефактов задания: коммит (продуктовый образ) или коммит.конфигурация (другой образ того же коммита)."""
     cfg = (st.get("options") or {}).get("config") or CFG
@@ -185,10 +214,13 @@ class Pipeline:
         self.buildhost = self.cfg.startswith(BUILDHOST_PREFIX)
         self.art = root / "artifacts" / art_name(self.st)
         self.cancel = job.dir / "cancel"
+        self.abort = job.dir / "abort"                       # параллельный этап упал — остановить соседний
+        self.flags = host_flags(root)
+        self.lock = threading.Lock()
         self.sde = None
 
     def sh(self, stage, cmd, kind="FAILED", **kw):
-        check(cmd, self.job.log(stage), TIMEOUTS[stage], kind=kind, cancel_file=self.cancel, **kw)
+        check(cmd, self.job.log(stage), TIMEOUTS[stage], kind=kind, cancel_file=_AnyExists(self.cancel, self.abort), **kw)
 
     # 0
     def preflight(self):
@@ -237,7 +269,8 @@ class Pipeline:
         env = dict(os.environ, SHEREGESH_SRC=str(self.src), SHEREGESH_BUNDLE=str(self.job.dir / "src.bundle"),
                    SOURCE_DATE_EPOCH=str(self.sde), SHEREGESH_BUILD_AS_ROOT="1",
                    SSH_PUBKEY=str(self.root / "keys/dev.pub"), DEPLOY_PUBKEY=str(self.root / "keys/deploy.pub"),
-                   SHEREGESH_CONTAINER_NAME=f"shbuild-{self.job.id}", SHBUILD_JOB=self.job.id)
+                   SHEREGESH_CONTAINER_NAME=f"shbuild-{self.job.id}", SHBUILD_JOB=self.job.id,
+                   SHEREGESH_ZSTD_LEVEL=self.flags["zstd_level"])
         builder = self.st.get("options", {}).get("builder_image")
         script = (self.src / "os/docker-build.sh").read_text()
         if not builder and "SHEREGESH_BUILDER_IMAGE" in script:     # старые коммиты сборщик не умеют — как раньше
@@ -281,8 +314,13 @@ class Pipeline:
             return
         # order_check (~30 с) и owners_check (~30 с) независимы — идут вместе; строки их журналов могут чередоваться,
         # провал любого из них останавливает задание (result() ниже ждёт и поднимает Fail)
+        order_cmd = ["bash", self.bin / "order_check.sh", img, "8"]
+        if self.flags["parallel_gates"] != "1":
+            self.owners_gate(img, log)
+            self.sh("gates", order_cmd)
+            return
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            order = pool.submit(self.sh, "gates", ["bash", self.bin / "order_check.sh", img, "8"])
+            order = pool.submit(self.sh, "gates", order_cmd)
             try:
                 self.owners_gate(img, log)
             finally:
@@ -337,33 +375,66 @@ class Pipeline:
         finally:
             raw.unlink(missing_ok=True)
 
-    def run(self):
-        st = self.job.update(state="RUNNING", started=now())
-        for stage in STAGES:
-            if self.cancel.exists():
-                return self.finish("CANCELLED", stage, "отменено")
-            rec = {"name": stage, "started": now()}
+    def run_stage(self, stage):
+        """Один этап: запись в состояние задания (под замком — этапы могут идти параллельно), → (статус, причина)."""
+        rec = {"name": stage, "started": now()}
+        with self.lock:
             st = self.job.load()
             st["stage"] = stage
             st["stages"].append(rec)
             self.job.save(st)
-            t0 = time.monotonic()
-            status, reason = "PASS", None
-            try:
-                getattr(self, stage)()
-            except Fail as e:
-                status, reason = e.kind, str(e)
-            except TimeoutError as e:
-                status, reason = "TIMEOUT", str(e)
-            except InterruptedError:
-                status, reason = "CANCELLED", "отменено"
-            except Exception as e:                                  # непредвиденное — тоже явный конец, не обрыв
-                status, reason = "ERROR", f"{type(e).__name__}: {e}"
+        t0 = time.monotonic()
+        status, reason = "PASS", None
+        try:
+            getattr(self, stage)()
+        except Fail as e:
+            status, reason = e.kind, str(e)
+        except TimeoutError as e:
+            status, reason = "TIMEOUT", str(e)
+        except InterruptedError:
+            status, reason = "CANCELLED", "отменено"
+        except Exception as e:                                  # непредвиденное — тоже явный конец, не обрыв
+            status, reason = "ERROR", f"{type(e).__name__}: {e}"
+        with self.lock:
             st = self.job.load()
-            st["stages"][-1].update(status=status, seconds=round(time.monotonic() - t0, 1), ended=now())
+            mine = next(x for x in reversed(st["stages"]) if x["name"] == stage)
+            mine.update(status=status, seconds=round(time.monotonic() - t0, 1), ended=now())
             self.job.save(st)
-            if status != "PASS":
-                return self.finish(status, stage, reason)
+        return status, reason
+
+    def run_parallel(self, names):
+        """Этапы одновременно; провал одного прерывает остальные. → [(имя, статус, причина)] в порядке names."""
+        out = {}
+
+        def one(n):
+            out[n] = self.run_stage(n)
+            if out[n][0] != "PASS":
+                self.abort.touch()
+
+        threads = [threading.Thread(target=one, args=(n,)) for n in names]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return [(n, *out[n]) for n in names]
+
+    def run(self):
+        self.job.update(state="RUNNING", started=now(), flags=self.flags)
+        self.abort.unlink(missing_ok=True)
+        i = 0
+        while i < len(STAGES):
+            stage = STAGES[i]
+            if self.cancel.exists():
+                return self.finish("CANCELLED", stage, "отменено")
+            # tests не зависят от build (оба читают одно дерево, только чтение): идут вместе, экономия ≈ время tests
+            if stage == "tests" and self.flags["parallel_tests"] == "1" and STAGES[i + 1:i + 2] == ("build",):
+                results, i = self.run_parallel(("tests", "build")), i + 2
+            else:
+                results, i = [(stage, *self.run_stage(stage))], i + 1
+            for name, status, reason in results:
+                if status != "PASS":
+                    # провал tests важнее «отменено» соседнего build, которое вызвал он сам
+                    return self.finish(status, name, reason)
         return self.finish("PASSED", None, None)
 
     def finish(self, state, stage, reason):

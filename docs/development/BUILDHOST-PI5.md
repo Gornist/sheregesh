@@ -53,3 +53,21 @@ SHBUILD_HOST=pi5 SHBUILD_BULK_HOST=pi5 python3 tools/build/shbuild.py install
 
 Эталон owners и ключи копируются с devbox (`~/shbuild/baseline`, `~/shbuild/keys`). Пока `SHBUILD_HOST` не задан,
 сервис devbox остаётся единственным путём (ADR-0018 не меняется).
+
+## 6. Ускорения конвейера и откат
+
+Базовая точка — метка `shbuild-baseline-748s` (коммит e79bf91, на Pi 5 весь конвейер 748 с, `PASSED`). Каждое
+ускорение — отдельный коммит и, где возможно, выключатель в `~/shbuild/host.conf` на хосте сборки (строки
+`имя=значение`, `#` — комментарий; нет строки — значение по умолчанию). Журнал задания хранит действовавшие значения
+(`state.json`, поле `flags`).
+
+| Ускорение | Выключатель | Откат |
+|---|---|---|
+| Сжатие образа `zstd -3` вместо `-10` | `zstd_level` (3) | `zstd_level=10` |
+| `owners_check` и `order_check` параллельно | `parallel_gates` (1) | `parallel_gates=0` |
+| `tests` параллельно с `build` | `parallel_tests` (1) | `parallel_tests=0` |
+| Образ распаковывается один раз на задание, KVM, ожидание пробы по условию | — (коммиты e79bf91, 5a7dced) | `SHBOOT_NO_KVM=1` — только TCG; остальное — откат коммита |
+
+Откат без обращения к коду: `ssh shbuild@pi5 'echo parallel_tests=0 >> ~/shbuild/host.conf'` — действует со следующего
+задания, сервис не переустанавливается. Полный откат кода: `git revert <коммит>` и `python3 tools/build/shbuild.py
+install` (на оба хоста); метка `shbuild-baseline-748s` — точка, к которой можно вернуться целиком.

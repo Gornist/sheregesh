@@ -224,6 +224,40 @@ class ShbuildTest(unittest.TestCase):
         self.assertIn("/usr/sbin", parts)
         self.assertIn("/sbin", parts)
 
+    def test_host_flags_default_and_rollback(self):
+        # быстрый откат оптимизаций: host.conf рядом с заданиями, без переустановки сервиса
+        self.assertEqual(sb.host_flags(self.root), sb.FLAG_DEFAULTS)
+        (self.root / "host.conf").write_text("# откат\nparallel_tests=0\nzstd_level = 10  # как раньше\nмусор=1\nparallel_gates=\n")
+        f = sb.host_flags(self.root)
+        self.assertEqual((f["parallel_tests"], f["zstd_level"], f["parallel_gates"]), ("0", "10", "1"))
+        self.assertNotIn("мусор", f)
+
+    def test_tests_and_build_run_together_and_tests_failure_wins(self):
+        p, state, st = self.run_fake({})
+        self.assertEqual(state, "PASSED")
+        self.assertEqual([s["name"] for s in st["stages"] if s["name"] in ("tests", "build")].count("tests"), 1)
+        self.assertEqual(st["flags"]["parallel_tests"], "1")
+        # tests упали: build шёл рядом и тоже записан, итог — FAILED@tests, а не безымянная отмена
+        p, state, st = self.run_fake({"tests": sb.Fail("тест красный")})
+        self.assertEqual((state, st["failed_stage"]), ("FAILED", "tests"))
+        self.assertIn("build", p.ran)
+        self.assertEqual({s["name"]: s["status"] for s in st["stages"]}["build"], "PASS")
+        self.assertNotIn("gates", p.ran)                                   # дальше задание не идёт
+
+    def test_parallel_tests_off_is_sequential(self):
+        (self.root / "host.conf").write_text("parallel_tests=0\n")
+        p, state, st = self.run_fake({"tests": sb.Fail("тест красный")})
+        self.assertEqual((state, st["failed_stage"]), ("FAILED", "tests"))
+        self.assertNotIn("build", p.ran)                                   # как раньше: build после tests
+        self.assertEqual(st["flags"]["parallel_tests"], "0")
+
+    def test_abort_file_stops_stage_commands(self):
+        p = sb.Pipeline(self.root, self.job())
+        self.assertFalse(sb._AnyExists(p.cancel, p.abort).exists())
+        p.abort.parent.mkdir(parents=True, exist_ok=True)
+        p.abort.touch()
+        self.assertTrue(sb._AnyExists(p.cancel, p.abort).exists())
+
     def test_old_jobs_without_config_build_product_image(self):
         p = sb.Pipeline(self.root, self.job())
         self.assertEqual((p.cfg, p.buildhost), (sb.CFG, False))

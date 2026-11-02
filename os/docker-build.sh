@@ -48,7 +48,7 @@ docker volume create sheregesh-image-work >/dev/null
 NAMEARGS=(); [[ -n "${SHEREGESH_CONTAINER_NAME:-}" ]] && NAMEARGS=(--name "$SHEREGESH_CONTAINER_NAME")
 exec docker run --rm --privileged --platform linux/arm64 ${NAMEARGS[@]+"${NAMEARGS[@]}"} \
   -v "$ROOT":/src:ro -v "$ROOT/build/image":/out -v sheregesh-image-work:/work ${KEYARGS[@]+"${KEYARGS[@]}"} \
-  -e CFG="$CFG" -e SHEREGESH_POST_ONLY="${SHEREGESH_POST_ONLY:-}" -e SHEREGESH_BUILD_AS_ROOT="${SHEREGESH_BUILD_AS_ROOT:-}" -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+  -e CFG="$CFG" -e SHEREGESH_ZSTD_LEVEL="${SHEREGESH_ZSTD_LEVEL:-}" -e SHEREGESH_POST_ONLY="${SHEREGESH_POST_ONLY:-}" -e SHEREGESH_BUILD_AS_ROOT="${SHEREGESH_BUILD_AS_ROOT:-}" -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
   "${SHEREGESH_BUILDER_IMAGE:-debian:trixie}" bash -euo pipefail -c '
     export DEBIAN_FRONTEND=noninteractive
     # Скачанные пакеты контейнера сборки и syft — в постоянном томе /work/cache: повторная сборка их не качает
@@ -109,6 +109,6 @@ exec docker run --rm --privileged --platform linux/arm64 ${NAMEARGS[@]+"${NAMEAR
       # (1000 = sheregesh-ui на плате) остался бы на /etc, /usr и юнитах (OTA CLOSURE, цикл 1; tools/image/owners_check.sh)
       AS=""; chown -R root:root /work/src /work/rpi-image-gen
     fi
-    $AS env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" SSH_PUBKEY="${SSH_PUBKEY:-}" DEPLOY_PUBKEY="${DEPLOY_PUBKEY:-}" SHEREGESH_POST_ONLY="$SHEREGESH_POST_ONLY" \
+    $AS env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" SHEREGESH_ZSTD_LEVEL="${SHEREGESH_ZSTD_LEVEL:-}" SSH_PUBKEY="${SSH_PUBKEY:-}" DEPLOY_PUBKEY="${DEPLOY_PUBKEY:-}" SHEREGESH_POST_ONLY="$SHEREGESH_POST_ONLY" \
       SHEREGESH_WORK=/work OUT=/out/$CFG /work/src/os/build.sh "$CFG"
   '
