@@ -283,6 +283,26 @@ def test_service_rgbx_args_take_dmabuf(monkeypatch):
     gl = V.service_rgbx_args("/run/x.sock", 640, 360)
     assert gl[:3] == ["env", "GST_GL_WINDOW=surfaceless", "GST_GL_PLATFORM=egl"] and "glupload" in gl
     assert "videoscale" not in gl and "video/x-raw,format=RGBx,width=640,height=360" in gl
+    monkeypatch.setattr(gst, "has_element", lambda name: name == "v4l2convert")
+    copy = V.service_rgbx_args("/run/x.sock", 640, 360, import_dmabuf=False)
+    assert "output-io-mode=auto" in copy and "output-io-mode=dmabuf-import" not in copy
+
+
+def test_service_falls_back_to_copy_when_isp_cannot_import(qapp, monkeypatch, tmp_path):
+    """Стенд 2026-11-02, аналоговый вход 720×480: ISP пульта не импортирует dmabuf декодера, процесс выходит без единого
+    кадра. Следующий запуск — v4l2convert с копированием; новый сеанс службы снова пробует импорт."""
+    monkeypatch.setattr(gst, "has_element", lambda name: name == "v4l2convert")
+    rx, spawned = _receiver(monkeypatch, tmp_path, FakeGl(ready=False), cmd=[sys.executable, "-c", "import sys; sys.exit(1)"])
+    sock = _sock(tmp_path)
+    rx.configure_service("h264", sock, _stats)
+    try:
+        assert wait_until(lambda: len(spawned) >= 2, 6), len(spawned)
+        assert "output-io-mode=dmabuf-import" in spawned[0][0]
+        assert "output-io-mode=auto" in spawned[1][0]
+        rx.configure_service("h264", _sock(tmp_path, "other.sock"), _stats)
+        assert "output-io-mode=dmabuf-import" in spawned[-1][0]
+    finally:
+        rx.stop()
 
 
 

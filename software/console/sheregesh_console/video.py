@@ -68,15 +68,17 @@ def exit_reason(proc):
     return " | ".join(x for x in getattr(proc, "err_tail", ()) if x)[-200:]
 
 
-def service_rgbx_args(path, width, height):
+def service_rgbx_args(path, width, height, import_dmabuf=True):
     """Кадры службы rx без дисплея → RGBx в stdout. Служба отдаёт dmabuf v4l2h264dec (caps memory:DMABuf, DMA_DRM),
     их не принимают программные videoscale/videoconvert (not-negotiated). На Pi 4 — ISP: v4l2convert импортирует
-    dmabuf и сам уменьшает кадр (pi1: 30 к/с, CPU 11 %); иначе — GPU без окна (EGL surfaceless, 28 %)."""
+    dmabuf и сам уменьшает кадр (pi1: 30 к/с, CPU 11 %); иначе — GPU без окна (EGL surfaceless, 28 %).
+    import_dmabuf=False — ISP с копированием кадра: кадр 720×480 (аналоговый вход, стенд 2026-11-02) ISP
+    импортировать не может («cannot import buffers from upstream»), а с копированием показывает 25 к/с."""
     src = [gst.GST_LAUNCH, "-q", "unixfdsrc", f"socket-path={path}", "!"]
     tail = ["videoconvert", "!", f"video/x-raw,format=RGBx,width={width},height={height}", "!", "fdsink", "fd=1",
             "sync=false"]
     if gst.has_element("v4l2convert"):
-        return [*src, "v4l2convert", "output-io-mode=dmabuf-import", "!",
+        return [*src, "v4l2convert", f"output-io-mode={'dmabuf-import' if import_dmabuf else 'auto'}", "!",
                 f"video/x-raw,format=BGRx,width={width},height={height}", "!", *tail]
     return ["env", "GST_GL_WINDOW=surfaceless", "GST_GL_PLATFORM=egl", *src, "glupload", "!", "glcolorconvert", "!",
             "glcolorscale", "!", f"video/x-raw(memory:GLMemory),format=RGBA,width={width},height={height}", "!",
@@ -96,6 +98,7 @@ class VideoReceiver(QObject):
         self._service = None               # ((кодек, путь сокета кадров), stats()) — кадры службы rx (SRTP)
         self._svc_pending = False          # сокета кадров службы ещё нет: ждём и повторяем
         self._svc_dead = False             # приёмник GL службы упал (нет процесса, который можно убить)
+        self._svc_copy = False             # ISP не импортирует кадры службы (dmabuf) — путь RGBx с копированием
         self._local = None                 # (ключ, opener() → VideoSource) — локальный видеовход пульта (S3.3)
         self._source = None                # текущий VideoSource локального входа
         self._decoded = deque(maxlen=300)
@@ -221,6 +224,7 @@ class VideoReceiver(QObject):
             return
         self.stop()
         self._backoff = 0
+        self._svc_copy = False
         self._local = self._source = None
         self._service, self._codec, self._port = ((codec, sock_path), stats), codec, None
         if self._command is None and not gst.available():
@@ -277,7 +281,7 @@ class VideoReceiver(QObject):
             return
         gl_on = self._use_gl()
         if not gl_on:
-            args = self._command or service_rgbx_args(path, FRAME_W, FRAME_H)
+            args = self._command or service_rgbx_args(path, FRAME_W, FRAME_H, import_dmabuf=not self._svc_copy)
             try:
                 self._proc = spawn_logged(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
             except OSError as e:
@@ -527,6 +531,10 @@ class VideoReceiver(QObject):
             tail = exit_reason(self._proc)
             self._error = (f"{'capture' if self._local else 'decoder'} exited with code {self._proc.returncode}"
                            + (f": {tail}" if tail else ""))
+            with self._lock:
+                no_frames = self._last_frame_t is None
+            if self._service is not None and not self._svc_copy and no_frames:
+                self._svc_copy = True               # ни одного кадра через импорт dmabuf — дальше с копированием
             self.stop()
             self._schedule_restart()
             return
