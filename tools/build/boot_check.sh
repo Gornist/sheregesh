@@ -44,12 +44,17 @@ if [ -z "${SHBOOT_NO_KVM:-}" ] && [ "$(uname -m)" = aarch64 ] && [ -c /dev/kvm ]
 fi
 echo "== $(date -u +%T) машина: $SC (ускорение $QACCEL)"
 set +e
-docker run --rm --name "$NAME" --cap-add NET_ADMIN --device /dev/net/tun ${KVMDEV[@]+"${KVMDEV[@]}"} \
+# Образ распаковывается один раз на задание (shbuild.boot → SHBOOT_RAW, разреженный файл) — сценарии берут его
+# только для чтения как основу оверлея; без SHBOOT_RAW (ручной запуск) распаковка своя, тоже разреженная.
+RAWARGS=(); [ -n "${SHBOOT_RAW:-}" ] && [ -s "$SHBOOT_RAW" ] && RAWARGS=(-v "$SHBOOT_RAW":/disk.raw:ro)
+docker run --rm --name "$NAME" --cap-add NET_ADMIN --device /dev/net/tun ${KVMDEV[@]+"${KVMDEV[@]}"} ${RAWARGS[@]+"${RAWARGS[@]}"} \
   -v "$IMG":/img.zst:ro -v "$KIT":/kit:ro -v "$W":/w -e SC="$VMSC" -e OFFLINE="$([ "$SC" = offline ] && echo 1)" \
   -e QM="$QM" -e QCPU="$QCPU" -e QACCEL="$QACCEL" shbuild-qemu bash -euo pipefail -c '
   ver=$(cat /kit/kernel.version)
-  zstd -qdc /img.zst > /w/disk.img
-  qemu-img create -q -f qcow2 -F raw -b /w/disk.img /w/overlay.qcow2
+  tm() { echo "   +${SECONDS}с $1"; }
+  if [ -e /disk.raw ]; then BASE=/disk.raw; tm "образ общий на задание"
+  else zstd -qdf --sparse /img.zst -o /w/disk.img; BASE=/w/disk.img; tm "образ распакован"; fi
+  qemu-img create -q -f qcow2 -F raw -b $BASE /w/overlay.qcow2
   # initramfs: busybox, модули для дисков и сети (по зависимостям, распакованные), init, проба
   mkdir -p /w/ird/bin /w/ird/mods /w/ird/proc /w/ird/sys /w/ird/dev /w/mods/lib/modules
   tar -C /w/mods/lib/modules -xf /kit/modules.tar
@@ -63,20 +68,21 @@ docker run --rm --name "$NAME" --cap-add NET_ADMIN --device /dev/net/tun ${KVMDE
     echo "$b" >> /w/ird/modules.order
   done
   (cd /w/ird && find . | cpio -o -H newc --quiet | gzip -1) > /w/initrd.gz
-  rm -rf /w/mods /w/ird
+  rm -rf /w/mods /w/ird; tm "initramfs готов"
   ip link add br0 type bridge; ip addr add 172.30.77.1/24 dev br0; ip link set br0 up
   ip tuntap add tap0 mode tap; ip link set tap0 master br0; ip link set tap0 up
   nogw=; [ -n "$OFFLINE" ] && nogw="--dhcp-option=3 --dhcp-option=6"   # без маршрута и DNS (REQ-SYS-004)
   dnsmasq --no-daemon --user=root --interface=br0 --bind-interfaces --port=0 --dhcp-range=172.30.77.100,172.30.77.150,2m \
     $nogw --log-dhcp --log-facility=/w/dnsmasq.log 2>/dev/null &
   tcpdump -q -n -U -i br0 -w /w/net.pcap 2>/dev/null & TD=$!
+  tm "сеть и dnsmasq готовы, старт машины"
   timeout 1500 qemu-system-aarch64 -M "$QM" -cpu "$QCPU" -accel "$QACCEL" -smp 4 -m 3072 -no-reboot \
     -kernel /kit/vmlinuz -initrd /w/initrd.gz -append "console=ttyAMA0 shboot.scenario=$SC panic=-1 systemd.show_status=0" \
     -drive if=virtio,format=qcow2,file=/w/overlay.qcow2 -drive if=virtio,format=raw,file=/kit/modules.ext4,readonly=on \
     -netdev tap,id=n0,ifname=tap0,script=no,downscript=no -device virtio-net-pci,netdev=n0,romfile= \
     -device virtio-serial-pci -chardev file,id=pr,path=/w/probe.log -device virtserialport,chardev=pr,name=shboot \
     -serial file:/w/serial.log -monitor none -display none
-  echo "qemu код $?"
+  echo "qemu код $?"; tm "машина остановлена"
   sleep 1; kill $TD 2>/dev/null; wait $TD 2>/dev/null || true
   # трафик машины (172.30.77.100–150) за пределы подсети стенда: IPv4 кроме broadcast/multicast, IPv6 кроме
   # link-local/multicast; DNS — 53 и 853 в любую сторону

@@ -12,7 +12,7 @@ if grep -q 'shboot.scenario=buildhost' /proc/cmdline; then
   # сборочный хост (ADR-0019): те же строки «SHBOOT ключ=значение», другой набор
   timeout 900 systemctl is-system-running --wait >/dev/null 2>&1
   out "state=$(systemctl is-system-running)"
-  sleep 20                                        # DHCP, расширение корня, docker
+  for _ in $(seq 60); do ip -4 -o addr show scope global 2>/dev/null | grep -q . && break; sleep 1; done; sleep 5   # DHCP, docker
   out "failed=$(systemctl list-units --failed --no-legend --plain | awk '{print $1}' | tr '\n' ' ')"
   out "hostname=$(hostname)"
   out "growroot=$(systemctl show -p Result --value shbuild-growroot.service)/$(test -e /var/lib/shbuild-growroot.done && echo done || echo none)"
@@ -44,13 +44,14 @@ if grep -q 'shboot.scenario=buildhost' /proc/cmdline; then
 fi
 timeout 900 systemctl is-system-running --wait >/dev/null 2>&1
 out "state=$(systemctl is-system-running)"
-sleep 20                                          # DHCP, systemd-hostnamed, роль chrony
+# DHCP, systemd-hostnamed, роль chrony: ждём адрес (до 60 с) и ещё 5 с на применение имени и роли — не фиксированные 20 с
+for _ in $(seq 60); do ip -4 -o addr show scope global 2>/dev/null | grep -q . && break; sleep 1; done; sleep 5
 out "failed=$(systemctl list-units --failed --no-legend --plain | awk '{print $1}' | tr '\n' ' ')"
 out "hostname1=$(hostname)"
 out "static=$(hostnamectl --static 2>/dev/null)"
-systemctl restart systemd-hostnamed; sleep 3
+systemctl restart systemd-hostnamed; sleep 1
 out "hostname2=$(hostname)"
-networkctl renew eth0 >/dev/null 2>&1; sleep 10
+networkctl renew eth0 >/dev/null 2>&1; sleep 5
 out "hostname3=$(hostname)"
 out "default=$(cat /usr/share/sheregesh/hostname.default 2>/dev/null || echo sheregesh-dev)"
 out "sources=$(cat /run/sheregesh-time/sources/*.sources 2>/dev/null | grep -E '^(pool|server) ' | tr '\n' ';')"

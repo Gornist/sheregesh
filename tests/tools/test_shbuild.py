@@ -196,7 +196,8 @@ class ShbuildTest(unittest.TestCase):
         self.assertTrue(all("owners_check.sh" not in str(c[1]) and "order_check.sh" not in str(c[1]) for c in calls))
         calls.clear()
         p.boot()
-        self.assertEqual([c[1][-2] for c in calls], ["buildhost"])
+        self.assertEqual(calls[0][1][:3], ["zstd", "-qdf", "--sparse"])             # образ распаковывается один раз
+        self.assertEqual([c[1][-2] for c in calls[1:]], ["buildhost"])
         self.assertEqual(sb.BUILDHOST_SCENARIOS, ("buildhost",))
 
     def test_swap_free_counts_disk_swap_not_zram(self):

@@ -317,8 +317,15 @@ class Pipeline:
     # 5
     def boot(self):
         img = next(self.art.glob("*.img.zst"))
-        for sc in (BUILDHOST_SCENARIOS if self.buildhost else BOOT_SCENARIOS):
-            self.sh("boot", ["bash", self.bin / "boot_check.sh", img, sc, self.job.id])
+        # образ распаковывается один раз на все сценарии (разреженный файл), сценарии берут его только для чтения
+        raw = self.job.dir / "boot.raw"
+        self.sh("boot", ["zstd", "-qdf", "--sparse", str(img), "-o", str(raw)])
+        env = dict(os.environ, SHBOOT_RAW=str(raw))
+        try:
+            for sc in (BUILDHOST_SCENARIOS if self.buildhost else BOOT_SCENARIOS):
+                self.sh("boot", ["bash", self.bin / "boot_check.sh", img, sc, self.job.id], env=env)
+        finally:
+            raw.unlink(missing_ok=True)
 
     def run(self):
         st = self.job.update(state="RUNNING", started=now())
