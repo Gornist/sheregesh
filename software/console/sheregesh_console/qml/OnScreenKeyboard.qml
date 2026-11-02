@@ -43,27 +43,6 @@ Rectangle {
             target.focus = false           // editingFinished: поле и SpinBox применяют введённое
     }
 
-    component Key: AbstractButton {
-        id: key
-        property string label: text
-        property real units: 1
-        focusPolicy: Qt.NoFocus            // поле ввода остаётся в фокусе
-        Layout.preferredWidth: kb.keyH * 1.15 * units
-        Layout.preferredHeight: kb.keyH
-        contentItem: Label {
-            text: key.label
-            color: "#e8eaed"
-            font.pixelSize: 20 * kb.k
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-        }
-        background: Rectangle {
-            radius: 4 * kb.k
-            color: key.pressed ? "#4a5a66" : (key.checked ? "#2f6f9f" : "#2a333b")
-            border.color: "#3a4650"
-        }
-    }
-
     ColumnLayout {
         id: col
         anchors { horizontalCenter: parent.horizontalCenter; top: parent.top; topMargin: 8 * kb.k }
@@ -76,8 +55,9 @@ Rectangle {
                 spacing: 6 * kb.k
                 Repeater {
                     model: modelData.split("")
-                    delegate: Key {
+                    delegate: OskKey {
                         required property string modelData
+                        k: kb.k; keyH: kb.keyH
                         objectName: "osk_" + modelData
                         label: kb.shift ? modelData.toUpperCase() : modelData
                         onClicked: kb.type(modelData)
@@ -88,13 +68,13 @@ Rectangle {
         RowLayout {
             Layout.alignment: Qt.AlignHCenter
             spacing: 6 * kb.k
-            Key { objectName: "osk_shift"; label: "⇧"; units: 1.4; checkable: true; checked: kb.shift; onClicked: kb.shift = !kb.shift }
-            Key { objectName: "osk_lang"; label: kb.ru ? "EN" : "RU"; units: 1.4; onClicked: kb.ru = !kb.ru }
-            Key { label: ":"; onClicked: kb.type(":") }
-            Key { label: "_"; onClicked: kb.type("_") }
-            Key { objectName: "osk_space"; label: qsTr("space"); units: 4; onClicked: kb.type(" ") }
-            Key { objectName: "osk_backspace"; label: "⌫"; units: 1.6; onClicked: kb.backspace() }
-            Key { objectName: "osk_done"; label: qsTr("Done"); units: 2.2; onClicked: kb.done() }
+            OskKey { k: kb.k; keyH: kb.keyH; objectName: "osk_shift"; label: "⇧"; units: 1.4; checkable: true; checked: kb.shift; onClicked: kb.shift = !kb.shift }
+            OskKey { k: kb.k; keyH: kb.keyH; objectName: "osk_lang"; label: kb.ru ? "EN" : "RU"; units: 1.4; onClicked: kb.ru = !kb.ru }
+            OskKey { k: kb.k; keyH: kb.keyH; label: ":"; onClicked: kb.type(":") }
+            OskKey { k: kb.k; keyH: kb.keyH; label: "_"; onClicked: kb.type("_") }
+            OskKey { k: kb.k; keyH: kb.keyH; objectName: "osk_space"; label: qsTr("space"); units: 4; onClicked: kb.type(" ") }
+            OskKey { k: kb.k; keyH: kb.keyH; objectName: "osk_backspace"; label: "⌫"; units: 1.6; onClicked: kb.backspace() }
+            OskKey { k: kb.k; keyH: kb.keyH; objectName: "osk_done"; label: qsTr("Done"); units: 2.2; onClicked: kb.done() }
         }
     }
 }
