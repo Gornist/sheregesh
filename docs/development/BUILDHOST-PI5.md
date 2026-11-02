@@ -67,6 +67,7 @@ SHBUILD_HOST=pi5 SHBUILD_BULK_HOST=pi5 python3 tools/build/shbuild.py install
 | `owners_check` и `order_check` параллельно | `parallel_gates` (1) | `parallel_gates=0` |
 | `tests` параллельно с `build` | `parallel_tests` (1) | `parallel_tests=0` |
 | `gates` параллельно с `boot` | `parallel_boot` (1) | `parallel_boot=0` |
+| Два загрузочных сценария одновременно | `boot_jobs` (2) | `boot_jobs=1` |
 | Образ распаковывается один раз на задание, KVM, ожидание пробы по условию | — (коммиты e79bf91, 5a7dced) | `SHBOOT_NO_KVM=1` — только TCG; остальное — откат коммита |
 
 Откат без обращения к коду: `ssh shbuild@pi5 'echo parallel_tests=0 >> ~/shbuild/host.conf'` — действует со следующего

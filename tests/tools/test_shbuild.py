@@ -257,6 +257,32 @@ class ShbuildTest(unittest.TestCase):
         p, state, st = self.run_fake({"gates": sb.Fail("владельцы")})
         self.assertNotIn("boot", p.ran)
 
+    def test_boot_scenarios_in_parallel_logs_in_order_and_failure_raised(self):
+        p = sb.Pipeline(self.root, self.job())
+        p.art.mkdir(parents=True)
+        (p.art / "img.img.zst").write_text("x")
+        p.sh = lambda stage, cmd, **kw: None                                # распаковка образа — не здесь
+        seen = []
+        real = sb.check
+
+        def fake_check(cmd, log, timeout, **kw):
+            sc = cmd[-2]
+            seen.append(sc)
+            Path(log).write_text(f"лог {sc}\n")
+            if sc == "remote":
+                raise sb.Fail("boot_check.sh … код 1")
+        sb.check = fake_check
+        try:
+            with self.assertRaises(sb.Fail):
+                p.boot()
+        finally:
+            sb.check = real
+        self.assertEqual(sorted(seen), sorted(sb.BOOT_SCENARIOS))           # остальные доехали до конца
+        text = p.job.log("boot").read_text()
+        order = [text.index(f"===== сценарий {sc}") for sc in sb.BOOT_SCENARIOS]
+        self.assertEqual(order, sorted(order))                              # журналы в порядке сценариев
+        self.assertIn("лог remote", text)
+
     def test_parallel_tests_off_is_sequential(self):
         (self.root / "host.conf").write_text("parallel_tests=0\n")
         p, state, st = self.run_fake({"tests": sb.Fail("тест красный")})
