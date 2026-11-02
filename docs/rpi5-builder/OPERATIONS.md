@@ -25,6 +25,7 @@ python3 tools/build/shbuild.py install            # код, каталоги, н
 | `parallel_tests` (1) | этап `tests` одновременно со `build` | `parallel_tests=0` |
 | `parallel_gates` (1) | `owners_check` одновременно с `order_check` | `parallel_gates=0` |
 | `parallel_boot` (**0**) | `gates` одновременно с `boot` (на Pi 5 даёт ENOMEM у KVM) | включить: `parallel_boot=1` |
+| `fstrim` (1) | TRIM файловой системы хоста после каждого задания (NVMe без DRAM деградирует без него: +15–70 с на `build`) | `fstrim=0` |
 | `zstd_level` (3) | уровень сжатия итогового образа | `zstd_level=10` (меньше файл, +80 с на Pi 5) |
 
 ```sh

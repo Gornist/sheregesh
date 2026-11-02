@@ -66,7 +66,7 @@ CONFIGS = (CFG, "sheregesh-buildhost-pi5")
 # parallel_boot по умолчанию 0: рядом с гейтами на Pi 5 (2 ГБ) старт KVM даёт ENOMEM (KVM_CREATE_VM) — флак хуже выигрыша ≈ 20 с.
 # Выключатели оптимизаций конвейера (быстрый откат без переустановки и без коммита): файл ~/shbuild/host.conf, строки
 # «имя=значение»; нет файла или строки — значение по умолчанию. Откат любой оптимизации — поставить 0 (zstd_level=10).
-FLAG_DEFAULTS = {"parallel_tests": "1", "parallel_gates": "1", "parallel_boot": "0", "zstd_level": "3"}
+FLAG_DEFAULTS = {"parallel_tests": "1", "parallel_gates": "1", "parallel_boot": "0", "zstd_level": "3", "fstrim": "1"}
 
 
 def host_flags(root):
@@ -523,6 +523,19 @@ def cleanup(root, job, keep_artifacts):
 
 
 # ---------------------------------------------------------------- исполнитель
+def trim_disk(root):
+    """После задания — TRIM файловой системы хоста. NVMe без DRAM после десятков ГиБ записи за задание без него
+    деградирует: те же фазы dpkg вырастали на 15–40 с (на Pi 5: сборка 519 с до fstrim, 445 с после). Ошибка не
+    фатальна (нет sudo без пароля, нет поддержки discard): задание уже закончено. Выключатель fstrim=0."""
+    if host_flags(root)["fstrim"] != "1":
+        return
+    try:
+        r = subprocess.run(["sudo", "-n", "fstrim", "-v", "/"], capture_output=True, text=True, timeout=300)
+        print(f"fstrim: {(r.stdout or r.stderr).strip()[:200]}", flush=True)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"fstrim пропущен: {e}", flush=True)
+
+
 def worker(root, once=False):
     lock = open(root / "worker.lock", "w")
     try:
@@ -534,6 +547,7 @@ def worker(root, once=False):
         if not q:
             return 0
         Pipeline(root, q[0]).run()
+        trim_disk(root)
         if once:
             return 0
 

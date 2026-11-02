@@ -293,6 +293,24 @@ class ShbuildTest(unittest.TestCase):
                 p.gates()
             self.assertIn(text, str(e.exception))
 
+    def test_fstrim_after_job_is_best_effort_and_switchable(self):
+        calls = []
+        real = sb.subprocess.run
+
+        def fake(cmd, **kw):
+            calls.append(cmd)
+            raise OSError("нет sudo")
+        sb.subprocess.run = fake
+        try:
+            sb.trim_disk(self.root)                                          # ошибка не поднимается
+            self.assertEqual(calls[0][:3], ["sudo", "-n", "fstrim"])
+            (self.root / "host.conf").write_text("fstrim=0\n")
+            calls.clear()
+            sb.trim_disk(self.root)
+            self.assertEqual(calls, [])                                      # откат одной строкой
+        finally:
+            sb.subprocess.run = real
+
     def test_old_jobs_without_config_build_product_image(self):
         p = sb.Pipeline(self.root, self.job())
         self.assertEqual((p.cfg, p.buildhost), (sb.CFG, False))

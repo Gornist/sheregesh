@@ -95,6 +95,7 @@ GPIO/UART, A/B-откат.
 | `parallel_tests` (1) | `tests` вместе с `build` | `parallel_tests=0` |
 | `parallel_gates` (1) | `owners_check` вместе с `order_check` | `parallel_gates=0` |
 | `parallel_boot` (**0**) | `gates` вместе с `boot` (на Pi 5 флак ENOMEM, см. раздел 8) | включить: `parallel_boot=1` |
+| `fstrim` (1) | TRIM файловой системы хоста после каждого задания (NVMe без DRAM деградирует без него: +15–70 с на `build`) | `fstrim=0` |
 | `zstd_level` (3) | уровень сжатия итогового образа (на Pi 5 `-10` стоил 118 с против 38 с) | `zstd_level=10` |
 
 ```sh
