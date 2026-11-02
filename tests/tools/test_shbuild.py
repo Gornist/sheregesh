@@ -163,5 +163,44 @@ class ShbuildTest(unittest.TestCase):
         self.assertIn("в итоге пробы нет строки", text)           # потерянная строка — провал            # by-slot по меткам GPT, корень образа не меняется
         self.assertIn('mount -o ro "$SYS" /newroot', init)            # корень образа — только чтение
 
+    def test_buildhost_profile_artifacts_gates_and_boot(self):
+        # ADR-0019: образ сборочного хоста — свой каталог артефактов, свой загрузочный сценарий, без owners/order
+        # (свойства A/B-образа «Шерегеша») и без SBOM пакета sheregesh
+        cfg = "sheregesh-buildhost-pi5"
+        self.assertIn(cfg, sb.CONFIGS)
+        sha = "b" * 40
+        j = sb.new_job(self.root, sha, self.bundle, {"config": cfg})
+        self.assertEqual(sb.art_name(j.load()), f"{sha}.{cfg}")
+        self.assertEqual(sb.art_name(self.job(sha).load()), sha)             # продуктовый образ — как было
+        p = sb.Pipeline(self.root, j)
+        self.assertTrue(p.buildhost)
+        self.assertEqual(p.art, self.root / "artifacts" / f"{sha}.{cfg}")
+        calls = []
+        p.sh = lambda stage, cmd, **kw: calls.append((stage, cmd))
+        tool = p.src / "tools/release/release.py"
+        tool.parent.mkdir(parents=True)
+        tool.write_text("")
+        p.art.mkdir(parents=True)
+        with self.assertRaises(sb.Fail):
+            p.sbom_gate()                                                    # SBOM образа обязателен
+        (p.art / "img.sbom.zst").write_text("x")
+        p.sbom_gate()                                                        # пакета sheregesh не требуется
+        self.assertEqual([Path(c).name for c in calls[0][1][4:]], ["img.sbom.zst"])
+        calls.clear()
+        (p.art / "img.img.zst").write_text("x")
+        (p.art / "build-report.json").write_text(json.dumps({"verify_exit": 0, "dirty": False, "commit": sha}))
+        (p.art / "SHA256SUMS").write_text("")
+        p.gates()
+        self.assertTrue(all("owners_check.sh" not in str(c[1]) and "order_check.sh" not in str(c[1]) for c in calls))
+        calls.clear()
+        p.boot()
+        self.assertEqual([c[1][-2] for c in calls], ["buildhost"])
+        self.assertEqual(sb.BUILDHOST_SCENARIOS, ("buildhost",))
+
+    def test_old_jobs_without_config_build_product_image(self):
+        p = sb.Pipeline(self.root, self.job())
+        self.assertEqual((p.cfg, p.buildhost), (sb.CFG, False))
+
+
 if __name__ == "__main__":
     unittest.main()

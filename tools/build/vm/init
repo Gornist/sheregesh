@@ -17,19 +17,29 @@ SC=$(sed -n 's/.*shboot\.scenario=\([a-z]*\).*/\1/p' /proc/cmdline)
 for m in $(cat /modules.order); do insmod "/mods/$m" 2>/dev/null; done
 for _ in $(seq 50); do [ -e /sys/class/block/vda ] && [ -e /sys/class/block/vdb ] && break; sleep 0.1; done
 part() { for u in /sys/class/block/vda*/uevent; do grep -q "^PARTNAME=$1\$" "$u" && { d=${u%/uevent}; echo "/dev/${d##*/}"; return; }; done; }
-SYS=$(part system_a); PERS=$(part persistent)
-[ -n "$SYS" ] && [ -n "$PERS" ] || { log "нет разделов system_a/persistent"; poweroff -f; }
-mkdir -p /newroot /p
-mount -o ro "$SYS" /newroot || { log "system_a не смонтирован"; poweroff -f; }
-UI=$(awk -F: '$1=="sheregesh-ui"{print $3}' /newroot/etc/passwd)
-mount "$PERS" /p
-H=/p/home/sheregesh-ui
-rm -f "$H"/.config/sheregesh/*.role
-if [ "$SC" != fresh ]; then
-  mkdir -p "$H/.config/sheregesh"; echo urn:boot-check > "$H/.config/sheregesh/$SC.role"
+if [ "$SC" = buildhost ]; then
+  # образ сборочного хоста (ADR-0019): MBR, раздел 2 — корень; ролей, persistent и sheregesh-ui нет
+  for _ in $(seq 50); do [ -e /sys/class/block/vda2 ] && break; sleep 0.1; done
+  SYS=/dev/vda2; PERS=
+  [ -e /sys/class/block/vda2 ] || { log "нет раздела vda2"; poweroff -f; }
+else
+  SYS=$(part system_a); PERS=$(part persistent)
+  [ -n "$SYS" ] && [ -n "$PERS" ] || { log "нет разделов system_a/persistent"; poweroff -f; }
 fi
-chown -R "$UI:$UI" "$H/.config"; chmod 0700 "$H"
-umount /p
+mkdir -p /newroot /p
+mount -o ro "$SYS" /newroot || { log "корень $SYS не смонтирован"; poweroff -f; }
+UI=
+if [ -n "$PERS" ]; then
+  UI=$(awk -F: '$1=="sheregesh-ui"{print $3}' /newroot/etc/passwd)
+  mount "$PERS" /p
+  H=/p/home/sheregesh-ui
+  rm -f "$H"/.config/sheregesh/*.role
+  if [ "$SC" != fresh ]; then
+    mkdir -p "$H/.config/sheregesh"; echo urn:boot-check > "$H/.config/sheregesh/$SC.role"
+  fi
+  chown -R "$UI:$UI" "$H/.config"; chmod 0700 "$H"
+  umount /p
+fi
 mount -t tmpfs -o mode=0755 tmpfs /newroot/run
 mkdir -p /newroot/run/udev/rules.d /newroot/run/systemd/system/multi-user.target.wants /newroot/run/shboot
 cat > /newroot/run/udev/rules.d/90-shboot-slots.rules <<'EOF'

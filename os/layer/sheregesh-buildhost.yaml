@@ -1,0 +1,104 @@
+# METABEGIN
+# X-Env-Layer-Name: sheregesh-buildhost
+# X-Env-Layer-Category: app
+# X-Env-Layer-Desc: Build host for the shbuild image service on Raspberry Pi 5 + NVMe (ADR-0019):
+#  Docker, git, zstd, rsync; DHCP on eth0; SSH by public key only (root too, DEV policy);
+#  root partition grows to the whole NVMe on first boot; hardware watchdog; zram swap.
+#  Not a Sheregesh product image.
+# X-Env-Layer-Version: 0.1.0
+# X-Env-Layer-Requires: sheregesh-base,device-user-admin,rpi-boot-firmware,systemd-net-min,openssh-server
+#
+# X-Env-VarPrefix: buildhost
+#
+# X-Env-Var-assetdir: ${DIRECTORY}/sheregesh-buildhost.d
+# X-Env-Var-assetdir-Desc: Layer assets (first-boot root grow script)
+# X-Env-Var-assetdir-Required: n
+# X-Env-Var-assetdir-Valid: dir
+# X-Env-Var-assetdir-Set: y
+# METAEND
+---
+mmdebstrap:
+  packages:
+    - ca-certificates
+    - docker.io
+    - docker-cli
+    - git
+    - rsync
+    - zstd
+    - python3
+    - python3-yaml
+    - curl
+    - cloud-guest-utils
+    - e2fsprogs
+    - nvme-cli
+    - smartmontools
+    - rpi-eeprom
+    - systemd-zram-generator
+    - avahi-daemon
+    - sudo
+    - tmux
+    - htop
+    - less
+  customize-hooks:
+    - |-
+      set -eu
+      # PCIe x1 для NVMe на M.2 HAT (Waveshare HAT C — не HAT+, автоопределения нет). Gen 2 по умолчанию: для
+      # сборочного хоста устойчивость важнее скорости; Gen 3 — строка «dtparam=pciex1_gen=3» ниже [pi5].
+      test -s $1/boot/firmware/config.txt || { echo "sheregesh-buildhost: нет /boot/firmware/config.txt" >&2; exit 1; }
+      printf '\n[pi5]\n# Sheregesh (ADR-0019): PCIe x1 for the NVMe M.2 HAT\ndtparam=pciex1\n' >> $1/boot/firmware/config.txt
+    - |-
+      set -eu
+      mkdir -p $1/etc/systemd/network $1/etc/ssh/sshd_config.d $1/etc/sheregesh
+      printf '[Match]\nName=eth0 en*\n\n[Network]\nDHCP=yes\n' > $1/etc/systemd/network/20-sheregesh-buildhost.network
+      # Только ключи; root — тоже (решение владельца 2026-10-30 для DEV-образов), пароля у root нет.
+      printf 'PermitRootLogin prohibit-password\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nAuthenticationMethods publickey\n' \
+        > $1/etc/ssh/sshd_config.d/00-sheregesh-buildhost.conf
+      echo "Build host image (ADR-0019): SSH by public key on the owner's LAN. Not a product image." > $1/etc/sheregesh/BUILDHOST-MODE
+    - |-
+      set -eu
+      user="$IGconf_device_user1"
+      test -s $1/home/$user/.ssh/authorized_keys || \
+        { echo "sheregesh-buildhost: не задан IGconf_ssh_pubkey_user1 — вход по SSH невозможен" >&2; exit 1; }
+      chroot $1 getent passwd "$user" >/dev/null
+      chroot $1 getent group docker >/dev/null
+      chroot $1 usermod -aG docker,sudo "$user"
+      printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$user" > $1/etc/sudoers.d/90-sheregesh-buildhost
+      chmod 0440 $1/etc/sudoers.d/90-sheregesh-buildhost
+      install -d -m 0700 -o 0 -g 0 $1/root/.ssh
+      install -m 0600 -o 0 -g 0 $1/home/$user/.ssh/authorized_keys $1/root/.ssh/authorized_keys
+    - |-
+      set -eu
+      # Отказоустойчивость без рук: аппаратный сторож (bcm2835_wdt) перезагружает зависшую машину; журнал — на диске.
+      mkdir -p $1/etc/systemd/system.conf.d $1/etc/systemd/journald.conf.d $1/etc/systemd/zram-generator.conf.d
+      printf '[Manager]\nRuntimeWatchdogSec=30s\nRebootWatchdogSec=3min\n' > $1/etc/systemd/system.conf.d/10-sheregesh-watchdog.conf
+      printf '[Journal]\nStorage=persistent\nSystemMaxUse=512M\n' > $1/etc/systemd/journald.conf.d/10-sheregesh-persistent.conf
+      printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > $1/etc/systemd/zram-generator.conf.d/10-sheregesh.conf
+      # Docker: журналы контейнеров не растут без границы (сборки пишут много)
+      mkdir -p $1/etc/docker
+      printf '{\n  "log-driver": "local",\n  "log-opts": {"max-size": "20m", "max-file": "3"}\n}\n' > $1/etc/docker/daemon.json
+    - |-
+      set -eu
+      install -D -m 0755 "$IGconf_buildhost_assetdir/shbuild-growroot" $1/usr/local/sbin/shbuild-growroot
+      mkdir -p $1/etc/systemd/system/multi-user.target.wants
+      cat > $1/etc/systemd/system/shbuild-growroot.service <<'EOF'
+      [Unit]
+      Description=Grow root partition and filesystem to the whole medium (first boot)
+      After=systemd-remount-fs.service
+      Before=docker.service
+      ConditionPathExists=!/var/lib/shbuild-growroot.done
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/shbuild-growroot
+      ExecStartPost=/bin/touch /var/lib/shbuild-growroot.done
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+      ln -sf /etc/systemd/system/shbuild-growroot.service $1/etc/systemd/system/multi-user.target.wants/shbuild-growroot.service
+      # Прошивка EEPROM — только явной процедурой (docs/development/BUILDHOST-PI5.md), не при загрузке
+      chroot $1 systemctl mask rpi-eeprom-update.service >/dev/null
+      for u in docker.service fstrim.timer; do
+        chroot $1 systemctl enable "$u" >/dev/null
+      done

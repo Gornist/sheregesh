@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Образ сборочного хоста shbuild на Raspberry Pi 5 с NVMe (ADR-0019): нативный arm64 вместо qemu-user на devbox.
+# Это не продуктовый образ «Шерегеша»: ни пульта, ни A/B, ни OTA. Обычная однодисковая разметка Raspberry Pi OS
+# (MBR: BOOT vfat + ROOT ext4), корень при первой загрузке растёт до конца носителя.
+# Вход — только по открытому ключу (SSH_PUBKEY, как у dev-образов), пароли выключены; root по ключу — решение
+# владельца 2026-10-30 для DEV-образов. Ключ передаётся при сборке (в репозиторий не попадает).
+device:
+  layer: rpi5
+  hostname: shbuild-pi5
+  user1: shbuild
+  storage_type: nvme
+
+image:
+  layer: image-rpios
+  rootfs_type: ext4
+  # PARTUUID от сигнатуры диска: ссылки by-slot строятся только для устройства загрузки и NVMe не нужны.
+  devid_scheme: partuuid
+  boot_part_size: 512M
+  root_part_size: 6144M
+  name: sheregesh-buildhost-pi5
+
+# ext4 с блоком 4 КиБ, а не по размеру страницы ядра (на Pi 5 — 16 КиБ): такой корень монтируется и ядром Pi 5,
+# и ядром Debian с 4 КиБ страницей — загрузочный тест (ADR-0018) запускает образ под QEMU с ядром Debian.
+fs:
+  ext4_mkfs_args: "-F -b 4096"
+
+# Как в config/device/pi5.yaml rpi-image-gen: носитель — NVMe на M.2 HAT.
+trait:
+  hw:storage:nvme: true
+  hw:pcie:m2: true
+
+layer:
+  base: sheregesh-base
+  app: sheregesh-buildhost

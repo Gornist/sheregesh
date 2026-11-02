@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Первая загрузка сборочного хоста (ADR-0019): раздел ROOT растёт до конца носителя, затем ext4. Образ собран на
+# 6 ГиБ, NVMe — 256 ГБ. Идемпотентно: нечего растить (носитель равен образу, как в загрузочном тесте) — не ошибка.
+set -eu
+ROOT=$(findmnt -n -o SOURCE /)
+case "$ROOT" in
+  /dev/nvme*n*p[0-9]*) DISK=${ROOT%p[0-9]*}; PART=${ROOT##*p} ;;
+  /dev/mmcblk*p[0-9]*) DISK=${ROOT%p[0-9]*}; PART=${ROOT##*p} ;;
+  /dev/vd[a-z][0-9]*|/dev/sd[a-z][0-9]*) DISK=${ROOT%%[0-9]*}; PART=${ROOT##*[a-z]} ;;
+  *) echo "shbuild-growroot: неожиданный корень $ROOT" >&2; exit 1 ;;
+esac
+rc=0
+growpart "$DISK" "$PART" || rc=$?
+case $rc in 0|1) ;; *) echo "shbuild-growroot: growpart код $rc" >&2; exit "$rc" ;; esac   # 1 = NOCHANGE
+resize2fs "$ROOT"
+echo "shbuild-growroot: $ROOT $(lsblk -n -b -o SIZE "$ROOT") байт"

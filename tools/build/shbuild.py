@@ -5,7 +5,8 @@
 
 С Mac (проксируется на devbox по SSH; на Mac ничего не собирается):
   python3 tools/build/shbuild.py install              поставить/обновить сервис на devbox (bin, каталоги, сборщик)
-  python3 tools/build/shbuild.py submit [РЕВИЗИЯ]     отправить коммит (по умолчанию HEAD) — печатает id задания
+  python3 tools/build/shbuild.py submit [РЕВИЗИЯ]     отправить коммит (по умолчанию HEAD) — печатает id задания;
+                                                      --config sheregesh-buildhost-pi5 — образ сборочного хоста (ADR-0019)
   python3 tools/build/shbuild.py status [ID]          очередь или одно задание (этапы, время, итог)
   python3 tools/build/shbuild.py wait ID              ждать конца; одна строка «ID СОСТОЯНИЕ …», код 0 — PASSED
   python3 tools/build/shbuild.py logs ID [ЭТАП]       журнал этапа (по умолчанию — последний начатый)
@@ -46,6 +47,15 @@ MIN_DISK_GB = 40          # образ 7 ГБ, корень в tar, persistent, 
 MIN_MEM_GB = 6            # OOM devbox во время сборки (s5-ota/DEVBOX-REBOOT.md)
 KEEP_PASSED = 5           # артефакты последних PASSED; задания с keep — всегда
 BOOT_SCENARIOS = ("console", "remote", "fresh", "offline")
+BUILDHOST_PREFIX = "sheregesh-buildhost-"   # ADR-0019: образ сборочного хоста — не продуктовый, свои гейты и загрузочный тест
+BUILDHOST_SCENARIOS = ("buildhost",)
+CONFIGS = (CFG, "sheregesh-buildhost-pi5")
+
+
+def art_name(st):
+    """Каталог артефактов задания: коммит (продуктовый образ) или коммит.конфигурация (другой образ того же коммита)."""
+    cfg = (st.get("options") or {}).get("config") or CFG
+    return st["commit"] if cfg == CFG else f"{st['commit']}.{cfg}"
 
 
 def now():
@@ -164,7 +174,9 @@ class Pipeline:
         self.commit = self.st["commit"]
         self.bin = bin_dir or Path(__file__).resolve().parent
         self.src = job.dir / "src"
-        self.art = root / "artifacts" / self.commit
+        self.cfg = (self.st.get("options") or {}).get("config") or CFG
+        self.buildhost = self.cfg.startswith(BUILDHOST_PREFIX)
+        self.art = root / "artifacts" / art_name(self.st)
         self.cancel = job.dir / "cancel"
         self.sde = None
 
@@ -177,14 +189,16 @@ class Pipeline:
         free = shutil.disk_usage(self.root).free / 2**30
         mem = meminfo_gb()
         binfmt = Path("/proc/sys/fs/binfmt_misc/qemu-aarch64")
+        native = platform.machine() in ("aarch64", "arm64")          # arm64-хост: эмуляция не нужна (ADR-0019)
         lines = [f"диск свободно {free:.1f} ГБ (нужно ≥ {MIN_DISK_GB})", f"память доступна {mem:.1f} ГБ (≥ {MIN_MEM_GB})",
+                 "binfmt qemu-aarch64: не нужен (нативный arm64)" if native else
                  f"binfmt qemu-aarch64: {binfmt.read_text().splitlines()[0] if binfmt.exists() else 'нет'}"]
         log.write_text("\n".join(lines) + "\n")
         if free < MIN_DISK_GB:
             raise Fail(lines[0], "ERROR")
         if mem < MIN_MEM_GB:
             raise Fail(lines[1], "ERROR")
-        if not binfmt.exists() or "enabled" not in binfmt.read_text():
+        if not native and (not binfmt.exists() or "enabled" not in binfmt.read_text()):
             raise Fail("binfmt qemu-aarch64 не зарегистрирован (привилегированные контейнеры его стирают)", "ERROR")
         self.sh("preflight", ["docker", "info", "--format", "{{.ServerVersion}}"], kind="ERROR")
         busy = subprocess.run(["docker", "ps", "-q", "--filter", "volume=sheregesh-image-work"],
@@ -230,10 +244,10 @@ class Pipeline:
         if builder:
             env["SHEREGESH_BUILDER_IMAGE"] = builder
         try:
-            self.sh("build", ["bash", self.src / "os/docker-build.sh", CFG], env=env)
+            self.sh("build", ["bash", self.src / "os/docker-build.sh", self.cfg], env=env)
         finally:
             stop_containers(self.src)
-        out = self.src / "build/image" / CFG
+        out = self.src / "build/image" / self.cfg
         if self.art.exists():
             shutil.rmtree(self.art)
         self.art.parent.mkdir(parents=True, exist_ok=True)
@@ -255,6 +269,8 @@ class Pipeline:
         self.sh("gates", ["shasum" if platform.system() == "Darwin" else "sha256sum", "-c", "SHA256SUMS"], cwd=self.art)
         self.sbom_gate()
         img = next(self.art.glob("*.img.zst"))
+        if self.buildhost:      # owners-эталон и порядок юнитов — свойства A/B-образа «Шерегеша», здесь неприменимы
+            return
         owners = self.art / "owners.txt"
         with open(owners, "w") as f:
             rc = subprocess.run(["bash", self.bin / "owners_check.sh", img], stdout=f,
@@ -277,6 +293,10 @@ class Pipeline:
             return
         image = sorted(self.art.glob("*.sbom.zst"))
         package = sorted(self.art.glob("*.deb.spdx.json"))
+        if self.buildhost:      # пакета sheregesh в образе сборочного хоста нет — нужен SBOM самого образа
+            if not image:
+                raise Fail("нет SBOM образа")
+            return self.sh("gates", ["python3", "-I", str(tool), "sbom-check", *map(str, image)])
         if not image or not package:
             raise Fail("нет SBOM " + " и ".join(n for n, f in (("образа", image), ("пакета", package)) if not f))
         self.sh("gates", ["python3", "-I", str(tool), "sbom-check", *map(str, image + package)])
@@ -284,7 +304,7 @@ class Pipeline:
     # 5
     def boot(self):
         img = next(self.art.glob("*.img.zst"))
-        for sc in BOOT_SCENARIOS:
+        for sc in (BUILDHOST_SCENARIOS if self.buildhost else BOOT_SCENARIOS):
             self.sh("boot", ["bash", self.bin / "boot_check.sh", img, sc, self.job.id])
 
     def run(self):
@@ -364,11 +384,11 @@ def cleanup(root, job, keep_artifacts):
     st = job.load()
     Path(st["bundle"]).unlink(missing_ok=True)
     if not keep_artifacts:
-        art = root / "artifacts" / st["commit"]
+        art = root / "artifacts" / art_name(st)
         if art.exists() and not (art / "keep").exists() and not (art / "shbuild-report.json").exists():
             shutil.rmtree(art, ignore_errors=True)
     passed = [j for j in jobs(root) if j.load()["state"] == "PASSED"]
-    keep = {j.load()["commit"] for j in passed[-KEEP_PASSED:]}
+    keep = {art_name(j.load()) for j in passed[-KEEP_PASSED:]}
     for art in (root / "artifacts").glob("*") if (root / "artifacts").exists() else []:
         if art.name not in keep and not (art / "keep").exists():
             shutil.rmtree(art, ignore_errors=True)
@@ -407,7 +427,8 @@ def line(st):
 
 # ---------------------------------------------------------------- команды devbox
 def d_enqueue(a):
-    j = new_job(HOME, a.commit, Path(a.bundle).resolve(), {"builder_image": a.builder} if a.builder else None)
+    opts = {k: v for k, v in (("builder_image", a.builder), ("config", a.config)) if v}
+    j = new_job(HOME, a.commit, Path(a.bundle).resolve(), opts or None)
     spawn_worker(HOME)
     print(j.id)
     return 0
@@ -501,7 +522,8 @@ def m_submit(a):
         subprocess.run(["git", "update-ref", "-d", ref], check=True)
     subprocess.run(["scp", "-q", str(tmp), f"{DEVBOX_BULK}:shbuild/inbox/"], check=True)
     tmp.unlink()
-    args = ["enqueue", sha, f"shbuild/inbox/{tmp.name}"] + (["--builder", a.builder] if a.builder else [])
+    args = ["enqueue", sha, f"shbuild/inbox/{tmp.name}"] + (["--builder", a.builder] if a.builder else []) \
+        + (["--config", a.config] if a.config else [])
     return remote(*args).returncode
 
 
@@ -510,11 +532,11 @@ def m_fetch(a):
     first = r.stdout.splitlines()[0].split()
     if first[1] != "PASSED":
         raise SystemExit(f"{a.id}: {first[1]} — забирать можно только PASSED")
-    commit = ssh(f"python3 -c \"import json;print(json.load(open('shbuild/jobs/{a.id}/state.json'))['commit'])\"",
-                 capture=True).stdout.strip()
-    dest = Path(a.dest or f"build/image/{commit[:12]}")
+    st = json.loads(ssh(f"cat shbuild/jobs/{shlex.quote(a.id)}/state.json", capture=True).stdout)
+    name = art_name(st)
+    dest = Path(a.dest or f"build/image/{name[:12] if name == st['commit'] else name.replace('sheregesh-', '')[:60]}")
     dest.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["rsync", "-a", f"{DEVBOX_BULK}:shbuild/artifacts/{commit}/", f"{dest}/"], check=True)
+    subprocess.run(["rsync", "-a", f"{DEVBOX_BULK}:shbuild/artifacts/{name}/", f"{dest}/"], check=True)
     print(dest)
     return 0
 
@@ -527,10 +549,12 @@ def main(argv=None):
     s = sub.add_parser("submit")
     s.add_argument("rev", nargs="?", default="HEAD")
     s.add_argument("--builder", help="образ контейнера-сборщика (SHEREGESH_BUILDER_IMAGE)")
+    s.add_argument("--config", choices=CONFIGS[1:], help="не продуктовый образ того же коммита (по умолчанию " + CFG + ")")
     s = sub.add_parser("enqueue")
     s.add_argument("commit")
     s.add_argument("bundle")
     s.add_argument("--builder")
+    s.add_argument("--config", choices=CONFIGS[1:])
     sub.add_parser("worker")
     s = sub.add_parser("status")
     s.add_argument("id", nargs="?")

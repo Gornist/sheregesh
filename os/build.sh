@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Сборка лабораторного образа Raspberry Pi 4B (S2-1, ADR-0002/0006) через rpi-image-gen.
-#   os/build.sh [КОНФИГУРАЦИЯ]       sheregesh-lab-pi4 (строгий, по умолчанию) или sheregesh-lab-dev-pi4
+#   os/build.sh [КОНФИГУРАЦИЯ]       sheregesh-lab-pi4 (строгий, по умолчанию), sheregesh-lab-dev-pi4 или
+#                                    sheregesh-buildhost-pi5 (сборочный хост shbuild, ADR-0019: нужен только SSH_PUBKEY)
 # Хост: Debian trixie / Ubuntu 24.04 arm64 (нативно), обычный пользователь с sudo только для install_deps.
 # Переменные: SSH_PUBKEY — открытый ключ для dev-варианта (обязателен для него); DEPLOY_PUBKEY — открытый ключ
 # подписи выпусков DEV deploy/OTA (S3.1-DEPLOY; обязателен для dev, отличен от SSH_PUBKEY); OUT — каталог результатов
@@ -22,13 +23,18 @@ export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --format=
 mkdir -p "$OUT" "$WORK"
 
 # Ключи dev-варианта — до любых загрузок и сборки: отказ сразу.
+# Сборочный хост (ADR-0019) — не продуктовый образ: ему нужен только ключ входа; пакета sheregesh, ключа подписи
+# выпусков и лабораторного видео в нём нет.
+BUILDHOST=; [[ "$CFG" == sheregesh-buildhost-* ]] && BUILDHOST=1
 EXTRA=()
-if [[ "$CFG" == *-dev-* ]]; then
+if [[ "$CFG" == *-dev-* || -n "$BUILDHOST" ]]; then
   [[ -s "${SSH_PUBKEY:-}" ]] || { echo "dev-вариант: задайте SSH_PUBKEY=путь/к/ключу.pub" >&2; exit 2; }
   grep -qE '^(ssh-ed25519|ecdsa-sha2-nistp[0-9]+|ssh-rsa) [A-Za-z0-9+/=]+' "$SSH_PUBKEY" \
     || { echo "SSH_PUBKEY: не похоже на открытый ключ" >&2; exit 2; }
   grep -q "PRIVATE KEY" "$SSH_PUBKEY" && { echo "SSH_PUBKEY: это закрытый ключ" >&2; exit 2; }
   EXTRA=(-- "IGconf_ssh_pubkey_user1=$(realpath "$SSH_PUBKEY")")
+fi
+if [[ "$CFG" == *-dev-* ]]; then
   # S3.1-DEPLOY: открытый ключ подписи выпусков (DEV deploy, OTA) — отдельный от ключа входа: кража ключа входа
   # не даёт установить код. Подстановки ключа входа нет: без DEPLOY_PUBKEY или при совпадении — отказ сборки.
   SIGNER="${DEPLOY_PUBKEY:-}"
@@ -62,10 +68,12 @@ git -C "$RIG" fetch -q --depth 1 origin "$RIG_REF"
 git -C "$RIG" checkout -q --force FETCH_HEAD
 [[ "$(git -C "$RIG" rev-parse HEAD)" == "$RIG_REF" ]] || { echo "rpi-image-gen: не тот коммит" >&2; exit 1; }
 
-echo "== пакет sheregesh"
 PKGS="$ROOT/os/layer/sheregesh-lab.d/pkgs"
-rm -rf "$PKGS"
-python3 -I "$ROOT/tools/image/build_deb.py" --out "$PKGS" | tee "$OUT/deb.txt"
+if [[ -z "$BUILDHOST" ]]; then
+  echo "== пакет sheregesh"
+  rm -rf "$PKGS"
+  python3 -I "$ROOT/tools/image/build_deb.py" --out "$PKGS" | tee "$OUT/deb.txt"
+fi
 
 
 echo "== сборка образа $CFG (SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH)"
@@ -82,21 +90,28 @@ DEPLOY="$(ls -d "$WORK"/build/deploy-* | tail -n1)"
 
 echo "== проверка структуры $IMG"
 set +e
-python3 -I "$ROOT/tools/image/verify_image.py" "$IMG" --variant "$CFG" --out "$OUT"
+if [[ -n "$BUILDHOST" ]]; then
+  python3 -I "$ROOT/tools/image/verify_buildhost.py" "$IMG" --variant "$CFG" --out "$OUT"
+else
+  python3 -I "$ROOT/tools/image/verify_image.py" "$IMG" --variant "$CFG" --out "$OUT"
+fi
 VERIFY=$?
 set -e
 
 echo "== артефакты"
 zstd -q -T0 -10 -f "$IMG" -o "$OUT/$NAME.img.zst"
-cp "$PKGS"/sheregesh_*_all.deb "$OUT/"
-# SBOM и манифест rpi-image-gen — дополнительно к собственному манифесту пакетов.
-# SBOM образа (rpi-image-gen, syft) и пакета sheregesh (SPDX 2.3, REQ-DOC-006); обязательность — гейт shbuild.
 cp "$DEPLOY"/filesystem-*.sbom.zst "$OUT/$NAME.sbom.zst" 2>/dev/null || true
-for deb in "$OUT"/sheregesh_*_all.deb; do
-  python3 -I "$ROOT/tools/release/release.py" sbom-package --deb "$deb" --out "$deb.spdx.json" --epoch "$SOURCE_DATE_EPOCH" >/dev/null
-done
-(cd "$OUT" && sha256sum "$NAME.img.zst" sheregesh_*_all.deb sheregesh_*_all.deb.spdx.json "$NAME.packages.tsv" verify.json \
-  $(ls "$NAME.sbom.zst" 2>/dev/null) > SHA256SUMS)
+if [[ -n "$BUILDHOST" ]]; then
+  (cd "$OUT" && sha256sum "$NAME.img.zst" "$NAME.packages.tsv" verify.json $(ls "$NAME.sbom.zst" 2>/dev/null) > SHA256SUMS)
+else
+  cp "$PKGS"/sheregesh_*_all.deb "$OUT/"
+  # SBOM образа (rpi-image-gen, syft) и пакета sheregesh (SPDX 2.3, REQ-DOC-006); обязательность — гейт shbuild.
+  for deb in "$OUT"/sheregesh_*_all.deb; do
+    python3 -I "$ROOT/tools/release/release.py" sbom-package --deb "$deb" --out "$deb.spdx.json" --epoch "$SOURCE_DATE_EPOCH" >/dev/null
+  done
+  (cd "$OUT" && sha256sum "$NAME.img.zst" sheregesh_*_all.deb sheregesh_*_all.deb.spdx.json "$NAME.packages.tsv" verify.json \
+    $(ls "$NAME.sbom.zst" 2>/dev/null) > SHA256SUMS)
+fi
 python3 -I - "$OUT" "$CFG" "$NAME" "$RIG_REF" "$START" "$VERIFY" "$IMG" "$ROOT" <<'EOF'
 import json, os, platform, subprocess, sys, hashlib
 out, cfg, name, ref, start, verify, img, root = sys.argv[1:]

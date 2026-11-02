@@ -4,7 +4,7 @@
 #
 # Загрузочный тест образа до железа (ADR-0018, этап boot): весь диск образа в QEMU virt (aarch64, TCG) с ядром
 # Debian, настоящий systemd образа — пространства имён, cgroup и песочница юнитов как на плате.
-#   boot_check.sh ОБРАЗ.img.zst console|remote|fresh|offline [МЕТКА]
+#   boot_check.sh ОБРАЗ.img.zst console|remote|fresh|offline|buildhost [МЕТКА]
 # console/remote — маркер роли в /home (как после pair, без link.json); fresh — свежая плата без роли;
 # offline — fresh в сети без маршрута по умолчанию и без DNS (REQ-SYS-004): DHCP не выдаёт router/dns, весь трафик
 # моста пишется tcpdump; пакетов из машины за пределы подсети стенда и запросов DNS быть не должно, юнитов с
@@ -14,11 +14,13 @@
 # Проверки (проба vm/probe.sh печатает «SHBOOT …» в консоль): упавших юнитов нет (кроме аппаратных ALLOW_FAILED);
 # имя после загрузки, перезапуска systemd-hostnamed и продления DHCP; имя в запросах DHCP; источник времени у
 # console/fresh, у remote до pair — нет; sshd: root только по ключу, ключ root = ключ sheregesh-ui; /var засеян.
+# buildhost (ADR-0019) — образ сборочного хоста Pi 5: MBR, корень — раздел 2, без ролей; проверки: упавших юнитов нет,
+# имя, DHCP, расширение корня без ошибки, sshd по ключу (root тоже), docker запущен и отвечает, инструменты сборки.
 # Отличия от платы (не проверяются): ядро Pi, прошивка, tryboot, VideoCore, дисплей, GPIO/UART, Bluetooth.
 set -euo pipefail
 IMG="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; SC=${2:?console|remote|fresh}; LABEL=${3:-$$}
-case "$SC" in console) WANT=pi1;; remote) WANT=pi2;; fresh|offline) WANT=;;
-  *) echo "сценарий: console|remote|fresh|offline" >&2; exit 2;; esac
+case "$SC" in console) WANT=pi1;; remote) WANT=pi2;; fresh|offline) WANT=;; buildhost) WANT=shbuild-pi5;;
+  *) echo "сценарий: console|remote|fresh|offline|buildhost" >&2; exit 2;; esac
 VMSC=$SC; [ "$SC" = offline ] && VMSC=fresh
 HERE=$(cd "$(dirname "$0")" && pwd)
 KIT=${SHBOOT_KIT:-$HOME/shbuild/vm}
@@ -82,8 +84,13 @@ S="$W/probe.log"
 [ -s "$W/serial.log" ] || { echo "ERROR: нет журнала консоли машины (код $rc)"; exit 3; }
 grep -q "^SHBOOT end" "$S" 2>/dev/null || { echo "ERROR: проба не завершилась (зависание загрузки?); хвост консоли:"
   sed 's/\x1b\[[0-9;:]*m//g' "$W/serial.log" | tail -40; exit 3; }
+if [ "$SC" = buildhost ]; then
+  KEYS="state failed hostname growroot rootfs bootfs addr gw sshd permitroot password rootkey docker dockerinfo groups tools sources wdt zram"
+else
+  KEYS="state failed hostname1 static hostname2 hostname3 default sources chrony permitroot rootkey var gw dns errunits"
+fi
 # каждая строка пробы обязательна: потерянная строка — провал, а не «пусто = хорошо»
-for k in state failed hostname1 static hostname2 hostname3 default sources chrony permitroot rootkey var gw dns errunits; do
+for k in $KEYS; do
   grep -q "^SHBOOT $k=" "$S" || { echo "ERROR: в итоге пробы нет строки $k"; exit 3; }
 done
 v() { sed -n "s/^SHBOOT $1=//p" "$S" | tail -1 | tr -d '\r'; }
@@ -93,6 +100,29 @@ ok()  { echo "PASS $1: $2"; }
 bad() { echo "FAIL $1: $2"; FAIL=1; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1" "$2"; else bad "$1" "$2 (ожидалось $3)"; fi; }
 echo "состояние системы: $(v state)"
+if [ "$SC" = buildhost ]; then
+  case "$(v state)" in running|degraded) ok "загрузка завершена" "$(v state)";; *) bad "загрузка завершена" "$(v state)";; esac
+  eq "упавшие юниты" "$(v failed | sed 's/ *$//')" ""
+  eq "имя" "$(v hostname)" "$WANT"
+  eq "расширение корня (shbuild-growroot)" "$(v growroot)" "success/done"
+  case "$(v rootfs)" in /dev/vda2\ ext4*) ok "корень" "$(v rootfs)";; *) bad "корень" "$(v rootfs)";; esac
+  case "$(v bootfs)" in *vfat) ok "/boot/firmware" "$(v bootfs)";; *) bad "/boot/firmware" "$(v bootfs)";; esac
+  case "$(v addr)" in 172.30.77.*) ok "адрес по DHCP" "$(v addr)";; *) bad "адрес по DHCP" "$(v addr)";; esac
+  eq "маршрут по умолчанию" "$(v gw | sed 's/ *$//')" "172.30.77.1"
+  eq "sshd активен" "$(v sshd)" "active"
+  eq "sshd: root только по ключу" "$(v permitroot)" "without-password"
+  eq "sshd: пароли выключены" "$(v password)" "no"
+  eq "ключ root = ключ shbuild" "$(v rootkey)" "same"
+  eq "docker активен" "$(v docker)" "active"
+  case "$(v dockerinfo)" in [0-9]*\ *\ aarch64) ok "docker info отвечает" "$(v dockerinfo)";; *) bad "docker info отвечает" "$(v dockerinfo)";; esac
+  case " $(v groups) " in *" docker "*) ok "shbuild в группе docker" "$(v groups)";; *) bad "shbuild в группе docker" "$(v groups)";; esac
+  eq "инструменты сборки" "$(v tools | sed 's/ *$//')" "git zstd rsync python3 growpart resize2fs nvme tmux"
+  eq "NTP (timesyncd)" "$(v sources)" "yes"
+  eq "аппаратный сторож systemd" "$(v wdt)" "30s"
+  case "$(v zram)" in *zram*) ok "zram-подкачка" "$(v zram)";; *) bad "zram-подкачка" "нет";; esac
+  if [ $FAIL != 0 ]; then echo "--- журналы упавших юнитов"; sed -n 's/^SHBOOT log //p' "$S" | tail -60; fi
+  exit $FAIL
+fi
 allowed() { for a in $ALLOW_FAILED; do [ "$a" = "$1" ] && return 0; done; return 1; }
 unexpected=""; for u in $(v failed); do allowed "$u" || unexpected="$unexpected$u "; done
 eq "упавшие юниты (кроме аппаратных)" "${unexpected% }" ""

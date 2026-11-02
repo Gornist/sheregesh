@@ -8,6 +8,35 @@
 P=/dev/virtio-ports/shboot; [ -e "$P" ] || P=/dev/ttyAMA0
 out() { echo "SHBOOT $*" >> "$P"; }
 out "start"
+if grep -q 'shboot.scenario=buildhost' /proc/cmdline; then
+  # сборочный хост (ADR-0019): те же строки «SHBOOT ключ=значение», другой набор
+  timeout 900 systemctl is-system-running --wait >/dev/null 2>&1
+  out "state=$(systemctl is-system-running)"
+  sleep 20                                        # DHCP, расширение корня, docker
+  out "failed=$(systemctl list-units --failed --no-legend --plain | awk '{print $1}' | tr '\n' ' ')"
+  out "hostname=$(hostname)"
+  out "growroot=$(systemctl show -p Result --value shbuild-growroot.service)/$(test -e /var/lib/shbuild-growroot.done && echo done || echo none)"
+  out "rootfs=$(findmnt -n -o SOURCE,FSTYPE,OPTIONS /)"
+  out "bootfs=$(findmnt -n -o SOURCE,FSTYPE /boot/firmware)"
+  out "addr=$(ip -4 -o addr show scope global | awk '{print $4}' | tr '\n' ' ')"
+  out "gw=$(ip -4 route show default 2>/dev/null | awk '{print $3}' | tr '\n' ' ')"
+  out "sshd=$(systemctl is-active ssh)"
+  out "permitroot=$(sshd -T -C user=root,host=t,addr=127.0.0.1 2>/dev/null | awk '$1=="permitrootlogin"{print $2}')"
+  out "password=$(sshd -T -C user=shbuild,host=t,addr=127.0.0.1 2>/dev/null | awk '$1=="passwordauthentication"{print $2}')"
+  rk=$(head -1 /root/.ssh/authorized_keys 2>/dev/null | cut -d' ' -f1-2)
+  uk=$(head -1 /home/shbuild/.ssh/authorized_keys 2>/dev/null | cut -d' ' -f1-2)
+  [ -n "$rk" ] && [ "$rk" = "$uk" ] && out "rootkey=same" || out "rootkey=${rk:-none}"
+  out "docker=$(systemctl is-active docker)"
+  out "dockerinfo=$(timeout 60 docker info --format '{{.ServerVersion}} {{.Driver}} {{.Architecture}}' 2>&1 | tail -1)"
+  out "groups=$(id -nG shbuild 2>/dev/null)"
+  out "tools=$(for t in git zstd rsync python3 growpart resize2fs nvme tmux; do if command -v $t >/dev/null; then printf '%s ' "$t"; else printf -- '-%s ' "$t"; fi; done)"
+  out "sources=$(timedatectl show -p NTP --value 2>/dev/null)"
+  out "wdt=$(systemctl show -p RuntimeWatchdogUSec --value)"
+  out "zram=$(swapon --noheadings --show=NAME 2>/dev/null | tr '\n' ' ')"
+  out "end"
+  systemctl poweroff
+  exit 0
+fi
 timeout 900 systemctl is-system-running --wait >/dev/null 2>&1
 out "state=$(systemctl is-system-running)"
 sleep 20                                          # DHCP, systemd-hostnamed, роль chrony
