@@ -33,6 +33,11 @@
    тест идёт на KVM (`/dev/kvm`); остальной код сервиса тот же. Установка — `SHBUILD_HOST=shbuild@pi5.local
    SHBUILD_BULK_HOST=shbuild@pi5.local python3 tools/build/shbuild.py install`.
 
+## Что остаётся на devbox
+
+Файловое испытание системного обновления OTA (L3, `tools/deploy/ota-check`) — по решению владельца 2026-11-02 остаётся
+на devbox (docker на x86-64). Сборка образов к нему отношения не имеет и идёт только на pi5.
+
 ## Результат (2026-11-02)
 
 Продуктовый образ `sheregesh-lab-dev-pi4` на Pi 5, `PASSED`: **≈ 6 мин (371 с)** против ≈ 37 мин на devbox (`build` ≈ 4 против
