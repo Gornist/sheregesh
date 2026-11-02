@@ -15,7 +15,7 @@
 
 ## Образ хоста
 
-Образ собирается самим сервисом (ему нужен хотя бы один хост сборки, например x86-64 с эмуляцией) и содержит всё нужное:
+Образ собирается самим сервисом и содержит всё нужное:
 
 - Docker (`docker.io`, `docker-cli`), git, rsync, zstd, python3, `iproute2`, `nvme-cli`, `smartmontools`, `tmux`;
 - вход по SSH **только по ключу** (пользователь `shbuild`, root тоже), пароли отключены, `sudo` без пароля для `shbuild`;
@@ -30,6 +30,11 @@
 python3 tools/build/shbuild.py submit --config <имя>-buildhost-pi5
 python3 tools/build/shbuild.py wait <id> && python3 tools/build/shbuild.py fetch <id>
 ```
+
+Первый раз сервиса ещё нет, поэтому первый образ хоста собирается на временной системе: загрузите Pi 5 с карты
+Raspberry Pi OS Lite (64-bit, версия с поддержкой Pi 5), поставьте Docker (`sudo apt install docker.io docker-cli git`),
+установите на неё сервис (`install`, см. [README.md](README.md)) и запустите задание выше. Последующие образы хоста
+собирает уже сам хост.
 
 ## Запись на NVMe
 
