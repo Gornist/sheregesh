@@ -27,7 +27,7 @@ SECTOR = 512
 BOOT_MIN, ROOT_MIN = 512 * MiB, 6144 * MiB
 HOSTNAME = "shbuild-pi5"
 USER = "shbuild"
-TOOLS = ("usr/bin/dockerd", "usr/bin/docker", "usr/bin/git", "usr/bin/zstd", "usr/bin/rsync", "usr/bin/python3",
+TOOLS = ("usr/sbin/dockerd", "usr/bin/docker", "usr/bin/git", "usr/bin/zstd", "usr/bin/rsync", "usr/bin/python3",
          "usr/bin/growpart", "usr/sbin/resize2fs", "usr/sbin/nvme", "usr/bin/tmux")
 
 
@@ -104,6 +104,12 @@ class Ext4:
 def mtype(img, part, name):
     r = subprocess.run(["mtype", "-i", f"{img}@@{part['offset']}", f"::{name}"], capture_output=True, text=True)
     return r.stdout if r.returncode == 0 else None
+
+
+def mexists(img, part, name):
+    """Файл есть в FAT-разделе (бинарные ядро и dtb читать как текст нельзя — только наличие и размер)."""
+    r = subprocess.run(["mdir", "-i", f"{img}@@{part['offset']}", f"::{name}"], capture_output=True)
+    return r.returncode == 0
 
 
 def config_lines(text):
@@ -202,8 +208,8 @@ def verify(img, variant, out):
                     cfg is not None and "dtparam=pciex1" in config_lines(cfg), "нет config.txt" if cfg is None else "")
             rep.add("boot.cmdline", "cmdline.txt: корень по PARTUUID этого диска, rootwait",
                     cmd is not None and f"root=PARTUUID={uuid}-02" in cmd and "rootwait" in cmd, (cmd or "нет").strip()[:160])
-            rep.add("boot.kernel", "ядро Pi 5 (kernel_2712.img) в BOOT", mtype(img, boot, "kernel_2712.img") not in (None, ""))
-            rep.add("boot.dtb", "дерево устройств bcm2712-rpi-5-b.dtb в BOOT", mtype(img, boot, "bcm2712-rpi-5-b.dtb") not in (None, ""))
+            rep.add("boot.kernel", "ядро Pi 5 (kernel_2712.img) в BOOT", mexists(img, boot, "kernel_2712.img"))
+            rep.add("boot.dtb", "дерево устройств bcm2712-rpi-5-b.dtb в BOOT", mexists(img, boot, "bcm2712-rpi-5-b.dtb"))
         else:
             rep.add("boot.content", "содержимое BOOT", None, "нет mtools")
 

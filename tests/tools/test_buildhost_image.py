@@ -47,6 +47,12 @@ class BuildhostImageTest(unittest.TestCase):
             self.assertIn(needle, LAYER)
         self.assertNotIn("PasswordAuthentication yes", LAYER)
 
+    def test_verifier_paths_and_binary_safety(self):
+        self.assertIn("usr/sbin/dockerd", vb.TOOLS)                 # Debian: dockerd в /usr/sbin
+        src = (ROOT / "tools/image/verify_buildhost.py").read_text()
+        self.assertNotIn('mtype(img, boot, "kernel', src)           # ядро и dtb — бинарные: только mdir
+        self.assertIn("def mexists", src)
+
     def test_growroot_is_idempotent_and_documented(self):
         sh = (ROOT / "os/layer/sheregesh-buildhost.d/shbuild-growroot").read_text()
         self.assertIn("NOCHANGE", sh)                               # растить нечего — не ошибка (загрузочный тест)
