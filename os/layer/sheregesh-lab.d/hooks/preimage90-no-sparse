@@ -1,0 +1,25 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Не строить то, чем проект не пользуется (ADR-0009/0010: обновления — свой пакет и агент OTA, а не `.update.tar.zst`
+# и IDP rpi-image-gen): android-sparse образы всех разделов (≈ 74 с), пакет обновления слоя image-rota (≈ 10 с) и
+# IDP-архив (≈ 11 с, выключен параметром image.idp_enable: n). Образ диска (hdimage из обычных boot.vfat/system.ext4/
+# persistent.ext4) не меняется. Хук — после preimage05-templates, который пишет genimage.cfg из шаблона слоя.
+set -eu
+fs=$1
+genimg_in=$2
+[[ -d "$fs" ]] || exit 0
+cfg="${genimg_in}/genimage.cfg"
+[[ -f "$cfg" ]] || { echo "no-sparse: нет $cfg" >&2; exit 1; }
+# блоки верхнего уровня «image <имя>.sparse { … }» (android-sparse) — вон
+awk '/^image .*\.sparse[ ]*\{/{skip=1} !skip{print} skip && /^\}/{skip=0}' "$cfg" > "$cfg.new"
+mv "$cfg.new" "$cfg"
+if grep -q 'sparse' "$cfg"; then echo "no-sparse: в genimage.cfg остались sparse-блоки" >&2; exit 1; fi
+grep -q 'hdimage' "$cfg" || { echo "no-sparse: в genimage.cfg пропал образ диска" >&2; exit 1; }
+# postimage05-pack-update слоя требует system.sparse и boot.sparse: пустые заглушки (пакет обновления проекту не нужен)
+out="${IGconf_image_outputdir:?}"
+mkdir -p "$out"
+: > "$out/system.sparse"
+: > "$out/boot.sparse"
+echo "no-sparse: sparse-образы и IDP не строятся"

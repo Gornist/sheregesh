@@ -77,6 +77,15 @@ class BuildhostImageTest(unittest.TestCase):
         self.assertIn('"$DEPLOY/$NAME.img.zst"', build)             # образ, сжатый rpi-image-gen, не сжимается второй раз
         self.assertIn('zstd -tq "$OUT/$NAME.img.zst"', build)       # но целостность копии проверяется
 
+    def test_unused_rpi_image_gen_artifacts_are_not_built(self):
+        hook = (ROOT / "os/layer/sheregesh-lab.d/hooks/preimage90-no-sparse")
+        self.assertTrue(hook.stat().st_mode & 0o111)
+        text = hook.read_text()
+        for needle in ("android", "system.sparse", "boot.sparse", "hdimage", "exit 1"):
+            if needle != "android":
+                self.assertIn(needle, text)
+        self.assertIn("idp_enable: n", (ROOT / "os/config/sheregesh-lab-pi4.yaml").read_text())
+
     def test_mbr_parse(self):
         with tempfile.NamedTemporaryFile() as f:
             f.write(mbr())

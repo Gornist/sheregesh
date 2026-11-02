@@ -16,6 +16,8 @@ image:
   system_part_size: 2560M
   data_part_size: 1G
   name: sheregesh-lab-pi4
+  # IDP-архив rpi-image-gen проекту не нужен (ADR-0009/0010): штатный выключатель, хуки postimage50-idp/deploy10-idp выходят
+  idp_enable: n
 
 layer:
   base: sheregesh-base
