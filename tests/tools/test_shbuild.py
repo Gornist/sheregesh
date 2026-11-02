@@ -90,6 +90,7 @@ class ShbuildTest(unittest.TestCase):
 
     def test_failure_stops_and_is_explicit(self):
         # провал этапа — явное состояние и причина, дальнейшие этапы не идут (обрыв сборки не «тишина»)
+        (self.root / "host.conf").write_text("parallel_boot=0\n")           # последовательный режим: после gates boot не идёт
         p, state, st = self.run_fake({"gates": sb.Fail("owners_check")})
         self.assertEqual(state, "FAILED")
         self.assertEqual(p.ran, ["preflight", "checkout", "tests", "build", "gates"])
@@ -243,6 +244,18 @@ class ShbuildTest(unittest.TestCase):
         self.assertIn("build", p.ran)
         self.assertEqual({s["name"]: s["status"] for s in st["stages"]}["build"], "PASS")
         self.assertNotIn("gates", p.ran)                                   # дальше задание не идёт
+
+    def test_gates_and_boot_run_together_and_gate_failure_wins(self):
+        p, state, st = self.run_fake({})
+        self.assertEqual((state, st["flags"]["parallel_boot"]), ("PASSED", "1"))
+        self.assertEqual([s["name"] for s in st["stages"]].count("boot"), 1)
+        p, state, st = self.run_fake({"gates": sb.Fail("владельцы")})
+        self.assertEqual((state, st["failed_stage"]), ("FAILED", "gates"))
+        self.assertIn("boot", p.ran)                                       # шёл рядом и тоже записан
+        self.assertEqual(next(s["status"] for s in st["stages"] if s["name"] == "boot"), "PASS")
+        (self.root / "host.conf").write_text("parallel_boot=0\n")           # откат: boot только после gates
+        p, state, st = self.run_fake({"gates": sb.Fail("владельцы")})
+        self.assertNotIn("boot", p.ran)
 
     def test_parallel_tests_off_is_sequential(self):
         (self.root / "host.conf").write_text("parallel_tests=0\n")

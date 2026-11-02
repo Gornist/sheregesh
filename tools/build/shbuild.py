@@ -54,6 +54,7 @@ MIN_MEM_GB = 6            # OOM devbox во время сборки (s5-ota/DEVB
 MIN_RAM_GB = 1.0          # ниже — не помогает никакая подкачка (Pi 5 на 2 ГБ с подкачкой на NVMe, ADR-0019)
 KEEP_PASSED = 5           # артефакты последних PASSED; задания с keep — всегда
 BOOT_SCENARIOS = ("console", "remote", "fresh", "offline")
+PARALLEL_PAIRS = ((("tests", "build"), "parallel_tests"), (("gates", "boot"), "parallel_boot"))
 BUILDHOST_PREFIX = "sheregesh-buildhost-"   # ADR-0019: образ сборочного хоста — не продуктовый, свои гейты и загрузочный тест
 BUILDHOST_SCENARIOS = ("buildhost",)
 CONFIGS = (CFG, "sheregesh-buildhost-pi5")
@@ -61,7 +62,7 @@ CONFIGS = (CFG, "sheregesh-buildhost-pi5")
 
 # Выключатели оптимизаций конвейера (быстрый откат без переустановки и без коммита): файл ~/shbuild/host.conf, строки
 # «имя=значение»; нет файла или строки — значение по умолчанию. Откат любой оптимизации — поставить 0 (zstd_level=10).
-FLAG_DEFAULTS = {"parallel_tests": "1", "parallel_gates": "1", "zstd_level": "3"}
+FLAG_DEFAULTS = {"parallel_tests": "1", "parallel_gates": "1", "parallel_boot": "1", "zstd_level": "3"}
 
 
 def host_flags(root):
@@ -426,9 +427,12 @@ class Pipeline:
             stage = STAGES[i]
             if self.cancel.exists():
                 return self.finish("CANCELLED", stage, "отменено")
-            # tests не зависят от build (оба читают одно дерево, только чтение): идут вместе, экономия ≈ время tests
-            if stage == "tests" and self.flags["parallel_tests"] == "1" and STAGES[i + 1:i + 2] == ("build",):
-                results, i = self.run_parallel(("tests", "build")), i + 2
+            # независимые пары этапов идут вместе (выключатели в host.conf): tests читают дерево, build — тоже, только
+            # чтение; gates и boot оба читают готовый образ
+            pair = next((p for p, flag in PARALLEL_PAIRS if p[0] == stage and self.flags[flag] == "1"
+                         and STAGES[i + 1:i + 2] == (p[1],)), None)
+            if pair:
+                results, i = self.run_parallel(pair), i + 2
             else:
                 results, i = [(stage, *self.run_stage(stage))], i + 1
             for name, status, reason in results:
