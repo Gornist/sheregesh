@@ -3,7 +3,8 @@
 # X-Env-Layer-Category: app
 # X-Env-Layer-Desc: Build host for the shbuild image service on Raspberry Pi 5 + NVMe (ADR-0019):
 #  Docker, git, zstd, rsync; DHCP on eth0; SSH by public key only (root too, DEV policy);
-#  root partition grows to the whole NVMe on first boot; hardware watchdog; zram swap.
+#  root partition grows to the whole NVMe on first boot; 8 GiB swap file on it (Pi 5 has 2 GiB RAM);
+#  hardware watchdog; zram swap.
 #  Not a Sheregesh product image.
 # X-Env-Layer-Version: 0.1.0
 # X-Env-Layer-Requires: sheregesh-base,device-user-admin,rpi-boot-firmware,systemd-net-min,openssh-server
@@ -80,6 +81,7 @@ mmdebstrap:
     - |-
       set -eu
       install -D -m 0755 "$IGconf_buildhost_assetdir/shbuild-growroot" $1/usr/local/sbin/shbuild-growroot
+      install -D -m 0755 "$IGconf_buildhost_assetdir/shbuild-swap" $1/usr/local/sbin/shbuild-swap
       mkdir -p $1/etc/systemd/system/multi-user.target.wants
       cat > $1/etc/systemd/system/shbuild-growroot.service <<'EOF'
       [Unit]
@@ -98,6 +100,23 @@ mmdebstrap:
       WantedBy=multi-user.target
       EOF
       ln -sf /etc/systemd/system/shbuild-growroot.service $1/etc/systemd/system/multi-user.target.wants/shbuild-growroot.service
+      # Подкачка 8 ГиБ на NVMe (сборка образа на Pi 5 с 2 ГиБ ОЗУ): после расширения корня, до docker. Приоритет ниже zram.
+      cat > $1/etc/systemd/system/shbuild-swap.service <<'EOF'
+      [Unit]
+      Description=Swap file on the build disk (skipped when the disk is too small)
+      After=shbuild-growroot.service
+      Wants=shbuild-growroot.service
+      Before=docker.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/shbuild-swap
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+      ln -sf /etc/systemd/system/shbuild-swap.service $1/etc/systemd/system/multi-user.target.wants/shbuild-swap.service
       # Прошивка EEPROM — только явной процедурой (docs/development/BUILDHOST-PI5.md), не при загрузке
       chroot $1 systemctl mask rpi-eeprom-update.service >/dev/null
       for u in docker.service fstrim.timer systemd-networkd.service; do

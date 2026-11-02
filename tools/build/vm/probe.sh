@@ -33,6 +33,7 @@ if grep -q 'shboot.scenario=buildhost' /proc/cmdline; then
   out "sources=$(timedatectl show -p NTP --value 2>/dev/null)"
   out "wdt=$(systemctl show -p RuntimeWatchdogUSec --value)"
   out "zram=$(swapon --noheadings --show=NAME 2>/dev/null | tr '\n' ' ')"
+  out "swapunit=$(systemctl show -p Result --value shbuild-swap.service)"
   # сетевая диагностика — печатается только при провале (строки «SHBOOT net …»)
   { echo "networkd: $(systemctl is-active systemd-networkd) enabled: $(systemctl is-enabled systemd-networkd 2>&1)"
     networkctl list --no-pager 2>&1; ip -br link 2>&1; ls /etc/systemd/network /usr/lib/systemd/network 2>&1

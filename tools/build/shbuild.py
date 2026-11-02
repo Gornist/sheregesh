@@ -49,7 +49,8 @@ TERMINAL = ("PASSED", "FAILED", "ERROR", "CANCELLED", "TIMEOUT")
 STAGES = ("preflight", "checkout", "tests", "build", "gates", "boot")
 TIMEOUTS = {"preflight": 60, "checkout": 300, "tests": 900, "build": 5400, "gates": 1800, "boot": 1800}
 MIN_DISK_GB = 40          # образ 7 ГБ, корень в tar, persistent, рабочий том сборки
-MIN_MEM_GB = 6            # OOM devbox во время сборки (s5-ota/DEVBOX-REBOOT.md)
+MIN_MEM_GB = 6            # OOM devbox во время сборки (s5-ota/DEVBOX-REBOOT.md): ОЗУ + свободная подкачка на диске
+MIN_RAM_GB = 1.0          # ниже — не помогает никакая подкачка (Pi 5 на 2 ГБ с подкачкой на NVMe, ADR-0019)
 KEEP_PASSED = 5           # артефакты последних PASSED; задания с keep — всегда
 BOOT_SCENARIOS = ("console", "remote", "fresh", "offline")
 BUILDHOST_PREFIX = "sheregesh-buildhost-"   # ADR-0019: образ сборочного хоста — не продуктовый, свои гейты и загрузочный тест
@@ -192,16 +193,17 @@ class Pipeline:
     def preflight(self):
         log = self.job.log("preflight")
         free = shutil.disk_usage(self.root).free / 2**30
-        mem = meminfo_gb()
+        ram, swap = meminfo_gb(), swap_free_gb()
+        mem = ram + swap
         binfmt = Path("/proc/sys/fs/binfmt_misc/qemu-aarch64")
         native = platform.machine() in ("aarch64", "arm64")          # arm64-хост: эмуляция не нужна (ADR-0019)
-        lines = [f"диск свободно {free:.1f} ГБ (нужно ≥ {MIN_DISK_GB})", f"память доступна {mem:.1f} ГБ (≥ {MIN_MEM_GB})",
+        lines = [f"диск свободно {free:.1f} ГБ (нужно ≥ {MIN_DISK_GB})", f"память доступна {mem:.1f} ГБ = ОЗУ {ram:.1f} + подкачка на диске {swap:.1f} (≥ {MIN_MEM_GB}, ОЗУ ≥ {MIN_RAM_GB})",
                  "binfmt qemu-aarch64: не нужен (нативный arm64)" if native else
                  f"binfmt qemu-aarch64: {binfmt.read_text().splitlines()[0] if binfmt.exists() else 'нет'}"]
         log.write_text("\n".join(lines) + "\n")
         if free < MIN_DISK_GB:
             raise Fail(lines[0], "ERROR")
-        if mem < MIN_MEM_GB:
+        if mem < MIN_MEM_GB or ram < MIN_RAM_GB:
             raise Fail(lines[1], "ERROR")
         if not native and (not binfmt.exists() or "enabled" not in binfmt.read_text()):
             raise Fail("binfmt qemu-aarch64 не зарегистрирован (привилегированные контейнеры его стирают)", "ERROR")
@@ -370,6 +372,19 @@ def meminfo_gb():
     except OSError:
         pass
     return float("inf")
+
+
+def swap_free_gb():
+    """Свободная подкачка на диске, ГБ. zram не считается: он сам занимает ОЗУ."""
+    total = 0
+    try:
+        for line in Path("/proc/swaps").read_text().splitlines()[1:]:
+            f = line.split()
+            if len(f) >= 4 and "zram" not in f[0]:
+                total += max(int(f[2]) - int(f[3]), 0)
+    except (OSError, ValueError):
+        pass
+    return total / 2**20
 
 
 def stop_containers(src):

@@ -185,6 +185,8 @@ def verify(img, variant, out):
             rep.add("docker.group", f"{USER} в группе docker", USER in docker_members, ",".join(docker_members))
             wants = r.ls("/etc/systemd/system/multi-user.target.wants")
             rep.add("unit.growroot", "shbuild-growroot включён", "shbuild-growroot.service" in wants)
+            rep.add("unit.swap", "shbuild-swap включён, скрипт исполняемый", "shbuild-swap.service" in wants
+                    and "Mode:  0755" in r.run("stat /usr/local/sbin/shbuild-swap"))
             rep.add("unit.docker", "docker включён", "docker.service" in wants)
             rep.add("unit.eeprom-masked", "rpi-eeprom-update замаскирован (EEPROM — явная процедура)",
                     "/dev/null" in r.run("stat /etc/systemd/system/rpi-eeprom-update.service"))

@@ -85,7 +85,7 @@ S="$W/probe.log"
 grep -q "^SHBOOT end" "$S" 2>/dev/null || { echo "ERROR: проба не завершилась (зависание загрузки?); хвост консоли:"
   sed 's/\x1b\[[0-9;:]*m//g' "$W/serial.log" | tail -40; exit 3; }
 if [ "$SC" = buildhost ]; then
-  KEYS="state failed hostname growroot rootfs bootfs addr gw sshd permitroot password rootkey docker dockerinfo groups tools sources wdt zram"
+  KEYS="state failed hostname growroot rootfs bootfs addr gw sshd permitroot password rootkey docker dockerinfo groups tools sources wdt zram swapunit"
 else
   KEYS="state failed hostname1 static hostname2 hostname3 default sources chrony permitroot rootkey var gw dns errunits"
 fi
@@ -120,6 +120,7 @@ if [ "$SC" = buildhost ]; then
   eq "NTP (timesyncd)" "$(v sources)" "yes"
   eq "аппаратный сторож systemd" "$(v wdt)" "30s"
   case "$(v zram)" in *zram*) ok "zram-подкачка" "$(v zram)";; *) bad "zram-подкачка" "нет";; esac
+  eq "shbuild-swap (в тесте диск мал — пропуск без ошибки)" "$(v swapunit)" "success"
   if [ $FAIL != 0 ]; then echo "--- журналы упавших юнитов"; sed -n 's/^SHBOOT log //p' "$S" | tail -60
     echo "--- сеть"; sed -n 's/^SHBOOT net //p' "$S" | tail -60; fi
   exit $FAIL

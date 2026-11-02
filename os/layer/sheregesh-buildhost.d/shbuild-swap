@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Sheregesh contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Подкачка сборочного хоста (ADR-0019): у Pi 5 2 ГиБ ОЗУ, сборка образа в контейнере столько не вмещает. Файл 8 ГиБ на
+# корневой ФС (NVMe) создаётся один раз после расширения корня; приоритет ниже zram. Диск мал (загрузочный тест в
+# QEMU — образ 6 ГиБ) — подкачку не создаём и это не ошибка: хост без неё работает, shbuild при старте задания
+# проверит «ОЗУ + подкачка» сам.
+set -eu
+F=/var/swapfile
+SIZE_MB=8192
+KEEP_MB=8192            # столько места должно остаться свободным после файла
+if [ ! -e "$F" ]; then
+  avail_mb=$(df -Pm /var | awk 'NR==2{print $4}')
+  if [ "$avail_mb" -lt $((SIZE_MB + KEEP_MB)) ]; then
+    echo "shbuild-swap: на диске свободно $avail_mb МиБ, нужно $((SIZE_MB + KEEP_MB)) — подкачка не создаётся"
+    exit 0
+  fi
+  fallocate -l "${SIZE_MB}M" "$F"
+  chmod 0600 "$F"
+  mkswap -q "$F" >/dev/null
+fi
+swapon --priority 10 "$F" 2>/dev/null || swapon --show=NAME | grep -qx "$F"
+echo "shbuild-swap: $(swapon --show=NAME,SIZE --noheadings | grep "$F")"

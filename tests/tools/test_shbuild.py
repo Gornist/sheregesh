@@ -197,6 +197,18 @@ class ShbuildTest(unittest.TestCase):
         self.assertEqual([c[1][-2] for c in calls], ["buildhost"])
         self.assertEqual(sb.BUILDHOST_SCENARIOS, ("buildhost",))
 
+    def test_swap_free_counts_disk_swap_not_zram(self):
+        with tempfile.TemporaryDirectory() as d:
+            swaps = Path(d) / "swaps"
+            swaps.write_text("Filename Type Size Used Priority\n/dev/zram0 partition 2097152 1000 100\n"
+                             "/var/swapfile file 8388608 1048576 10\n")
+            real = sb.Path
+            sb.Path = lambda p: swaps if p == "/proc/swaps" else real(p)
+            try:
+                self.assertAlmostEqual(sb.swap_free_gb(), 7.0, places=3)
+            finally:
+                sb.Path = real
+
     def test_old_jobs_without_config_build_product_image(self):
         p = sb.Pipeline(self.root, self.job())
         self.assertEqual((p.cfg, p.buildhost), (sb.CFG, False))
