@@ -99,7 +99,8 @@ VERIFY=$?
 set -e
 
 echo "== артефакты"
-zstd -q -T0 -10 -f "$IMG" -o "$OUT/$NAME.img.zst"
+# Уровень 3: на Pi 5 уровень 10 стоил 118 с из 527 с сборки, уровень 3 — 38 с (файл на 12% больше, содержимое то же).
+zstd -q -T0 -"${SHEREGESH_ZSTD_LEVEL:-3}" -f "$IMG" -o "$OUT/$NAME.img.zst"
 cp "$DEPLOY"/filesystem-*.sbom.zst "$OUT/$NAME.sbom.zst" 2>/dev/null || true
 if [[ -n "$BUILDHOST" ]]; then
   (cd "$OUT" && sha256sum "$NAME.img.zst" "$NAME.packages.tsv" verify.json $(ls "$NAME.sbom.zst" 2>/dev/null) > SHA256SUMS)

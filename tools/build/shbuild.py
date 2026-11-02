@@ -24,6 +24,7 @@
 Конечные состояния всегда явные: PASSED, FAILED (дефект кода/образа), ERROR (среда), CANCELLED, TIMEOUT.
 Одно задание за раз (flock); остальные ждут в очереди."""
 import argparse
+import concurrent.futures
 import datetime as dt
 import fcntl
 import json
@@ -278,6 +279,16 @@ class Pipeline:
         img = next(self.art.glob("*.img.zst"))
         if self.buildhost:      # owners-эталон и порядок юнитов — свойства A/B-образа «Шерегеша», здесь неприменимы
             return
+        # order_check (~30 с) и owners_check (~30 с) независимы — идут вместе; строки их журналов могут чередоваться,
+        # провал любого из них останавливает задание (result() ниже ждёт и поднимает Fail)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            order = pool.submit(self.sh, "gates", ["bash", self.bin / "order_check.sh", img, "8"])
+            try:
+                self.owners_gate(img, log)
+            finally:
+                order.result()
+
+    def owners_gate(self, img, log):
         owners = self.art / "owners.txt"
         with open(owners, "w") as f:
             rc = subprocess.run(["bash", self.bin / "owners_check.sh", img], stdout=f,
@@ -296,7 +307,6 @@ class Pipeline:
             f.write(f"owners против {base}:\n{diff.stdout or 'совпадает'}\n")
         if diff.returncode != 0:
             raise Fail("владельцы файлов системного раздела отличаются от эталона (owners_check)")
-        self.sh("gates", ["bash", self.bin / "order_check.sh", img, "8"])
 
     def sbom_gate(self):
         """REQ-DOC-006: SBOM образа (*.sbom.zst) и пакета (*.deb.spdx.json) есть и это SPDX 2.3 — проверяет инструмент
