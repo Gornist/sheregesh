@@ -112,10 +112,34 @@ mmdebstrap:
       mkdir -p $1/usr/share/sheregesh
       # Формат dpkg-query -W по умолчанию: «пакет[:арх]<TAB>версия» (без шаблона с фигурными скобками).
       chroot $1 dpkg-query -W | LC_ALL=C sort > $1/tmp/pkgs.tsv
-      while IFS="$(printf '\t')" read -r p v; do
-        h=$(chroot $1 apt-cache show "$p=$v" 2>/dev/null | awk '/^SHA256:/{print $2; exit}')
-        printf '%s\t%s\t%s\n' "$p" "$v" "${h:-local}"
-      done < $1/tmp/pkgs.tsv > $1/usr/share/sheregesh/image-packages.tsv
+      # Один проход вместо «apt-cache show пакет=версия» на каждый из ~600 пакетов (606 запусков chroot ≈ 22 с): индекс
+      # целиком (dumpavail) в таблицу «имя=версия → SHA-256 первой записи», затем сопоставление построчно. Правила те же:
+      # имя без архитектуры — запись родной архитектуры или all, «имя:арх» — запись этой архитектуры; нет в индексе — local.
+      nat=$(chroot $1 dpkg --print-architecture)
+      chroot $1 apt-cache dumpavail | awk -v nat="$nat" -v list="$1/tmp/pkgs.tsv" '
+        function flush() {
+          if (p != "" && v != "" && h != "") {
+            k = p ":" a "=" v
+            if (!(k in S)) S[k] = h
+            if (a == nat || a == "all") { k = p "=" v; if (!(k in S)) S[k] = h }
+          }
+          p = ""; v = ""; a = ""; h = ""
+        }
+        /^Package: /{p = $2}
+        /^Version: /{v = $2}
+        /^Architecture: /{a = $2}
+        /^SHA256: /{ if (h == "") h = $2 }
+        /^$/{flush()}
+        END {
+          flush()
+          FS = "\t"
+          while ((getline line < list) > 0) {
+            split(line, f, "\t")
+            k = f[1] "=" f[2]
+            printf "%s\t%s\t%s\n", f[1], f[2], (k in S ? S[k] : "local")
+          }
+        }' > $1/usr/share/sheregesh/image-packages.tsv
+      test "$(wc -l < $1/usr/share/sheregesh/image-packages.tsv)" = "$(wc -l < $1/tmp/pkgs.tsv)"
       rm -f $1/tmp/pkgs.tsv
   cleanup-hooks:
     - rm -rf $1/tmp/sheregesh-debs
