@@ -252,7 +252,16 @@ class Agent:
         """Контракт status.video.source (Ingest.status). Локальный профиль (UDP): источник находится один раз при
         запуске — состояние грубое (streaming | starting | no-device)."""
         if self.ingest is not None:
-            return self.ingest.status()
+            out = self.ingest.status()
+            # Сетевой профиль: устройство держит служба tx, а видеоприём агента только следит за входом и сам стоит
+            # в «idle» (наружу — «starting»). Пока вход на месте, состояние потока — у службы (стенд 2026-11-02:
+            # CVBS шёл 25 к/с, а пульт видел «starting»).
+            srtp = ((self.vtx.status() or {}).get("srtp") or {}) if self.vtx is not None else {}
+            if self.ingest.state == "idle" and srtp.get("state") == "streaming":
+                out["state"] = "streaming"
+                if isinstance(srtp.get("fps"), (int, float)) and not isinstance(srtp.get("fps"), bool):
+                    out["fps_actual"] = float(srtp["fps"])
+            return out
         a = self.args
         src = self.video_src or (videoinput.SyntheticSource(a.video_width, a.video_height, a.video_fps)
                                  if self.video_spec["source"] == "synthetic" else None)

@@ -254,3 +254,18 @@ def test_compatible_hello_on_network_sets_time_peer(monkeypatch):
         await settle()
     run(body())
     a.module.close()
+
+
+def test_network_source_state_follows_tx_service():
+    """Сетевой профиль: видеоприём агента в «idle» (устройство держит служба tx). Пока служба передаёт поток, вход —
+    «streaming» с фактической частотой службы; нет устройства — по-прежнему «no-device» (стенд 2026-11-02)."""
+    from types import SimpleNamespace as NS
+
+    def status(ingest_state, srtp_state, reported):
+        ingest = NS(state=ingest_state, status=lambda: {"state": reported, "fps_actual": 0.0})
+        vtx = NS(status=lambda: {"transport": "srtp", "srtp": {"state": srtp_state, "fps": 25.2}})
+        return agent_mod.Agent.video_source_status(NS(ingest=ingest, vtx=vtx))
+
+    assert status("idle", "streaming", "starting") == {"state": "streaming", "fps_actual": 25.2}
+    assert status("idle", "starting", "starting")["state"] == "starting"
+    assert status("no-device", "streaming", "no-device")["state"] == "no-device"
