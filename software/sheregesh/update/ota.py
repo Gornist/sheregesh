@@ -31,12 +31,13 @@ import re
 import socket
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..deploy import sig
 from . import confirm, slots
-from .model import STATES, UpdateError, Updater, UpdateState
+from .model import STATES, StateCorrupt, UpdateError, Updater, UpdateState, write_durable
 
 MAGIC = b"SHRGOTA1\n"
 FORMAT = 1
@@ -169,9 +170,7 @@ class Policy:
         self._check(token, signature)
         self.dir.mkdir(mode=0o755, parents=True, exist_ok=True)
         for name, data in (("enable.json", token), ("enable.json.sig", signature)):
-            tmp = self.dir / (name + ".tmp")
-            tmp.write_bytes(data)
-            os.replace(tmp, self.dir / name)
+            write_durable(self.dir / name, data)
 
     def disable(self):
         for name in ("enable.json", "enable.json.sig"):
@@ -192,9 +191,7 @@ class DevGrant:
         now = self.clock()
         info = {"armed": round(now, 3), "expires": round(now + DEV_GRANT_S, 3), "by": by}
         self.path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(info))
-        os.replace(tmp, self.path)
+        write_durable(self.path, json.dumps(info))
         return info
 
     def current(self):
@@ -310,8 +307,20 @@ class Agent:
         Path(self.cfg.state_dir).mkdir(mode=0o755, parents=True, exist_ok=True)
         state = None if state_path.exists() else UpdateState(active=layout.active.name.upper(),
                                                               version_active=self.build().get("ota_version", "0.0.0"))
-        u = Updater(backend or slots.BlockSlots(layout, self.cfg.paths), state_path, state,
-                    compatible=self.compatible())
+        backend = backend or slots.BlockSlots(layout, self.cfg.paths)
+        try:
+            u = Updater(backend, state_path, state, compatible=self.compatible())
+        except StateCorrupt as e:
+            # Повреждённое состояние не выдаётся за «обновления нет»: файл сохраняется для разбора, новое состояние —
+            # FAILED (неподтверждённый слот не будет подтверждён; пробная загрузка без подтверждения откатится сама).
+            kept = state_path.with_name(f"state.json.corrupt-{int(time.time())}")
+            os.replace(state_path, kept)
+            print(f"sheregesh-ota: {e}; файл сохранён как {kept.name}", file=sys.stderr)
+            state = UpdateState(active=layout.active.name.upper(),
+                                version_active=self.build().get("ota_version", "0.0.0"), state="FAILED",
+                                reason=f"состояние обновления было повреждено (сохранено в {kept.name}); "
+                                       "незавершённое обновление отменено")
+            u = Updater(backend, state_path, state, compatible=self.compatible())
         if state is not None:
             u.save()
         return u

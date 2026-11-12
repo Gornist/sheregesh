@@ -21,6 +21,7 @@
   5. откат возвращает и конфигурацию: данные новой версии в /var нового слота, прежний слот видит свой /var.
 """
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -29,8 +30,29 @@ STATES = ("IDLE", "VERIFIED", "INSTALLING", "INSTALLED", "TRYBOOT", "HEALTH_PEND
           "FAILED")
 
 
+def write_durable(path, data):
+    """Атомарная запись, переживающая отключение питания: временный файл → fsync → rename → fsync каталога.
+    Без fsync после сбоя питания на ext4 возможен пустой файл вместо нового или прежнего (ревью 2026-11-12)."""
+    path = Path(path)
+    tmp = path.with_suffix(".tmp")          # state.tmp — то же имя, что у агентов прежних образов (слоты)
+    with open(tmp, "wb") as f:
+        f.write(data.encode() if isinstance(data, str) else data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 class UpdateError(Exception):
     pass
+
+
+class StateCorrupt(UpdateError):
+    """state.json не читается как состояние обновления (обрыв записи, сбой карты)."""
 
 
 @dataclass
@@ -98,7 +120,13 @@ class Updater:
         # Состояние общее для слотов (/persistent): его мог записать агент другой версии. Неизвестные поля
         # пропускаются — иначе после отката на прежний слот агент не запустился бы (pi2, 2026-10-25).
         known = set(UpdateState.__dataclass_fields__)
-        return UpdateState(**{k: v for k, v in json.loads(Path(self.path).read_text()).items() if k in known})
+        try:
+            raw = json.loads(Path(self.path).read_text())
+            if not isinstance(raw, dict):
+                raise ValueError("ожидался объект JSON")
+            return UpdateState(**{k: v for k, v in raw.items() if k in known})
+        except (ValueError, TypeError) as e:          # повреждён: решает Agent.updater (не «обновления нет»)
+            raise StateCorrupt(f"{self.path}: состояние обновления повреждено ({e})") from None
 
     def save(self):
         if self.path:
@@ -107,9 +135,7 @@ class Updater:
                 del d["expect"]
             if not d["dev_image"]:  # то же для агентов до режима разработчика (REQ-UPD-005)
                 del d["dev_image"]
-            tmp = Path(self.path).with_suffix(".tmp")
-            tmp.write_text(json.dumps(d, ensure_ascii=False))
-            tmp.replace(self.path)
+            write_durable(self.path, json.dumps(d, ensure_ascii=False))
 
     def _go(self, state, reason=""):
         if state not in STATES:

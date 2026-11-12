@@ -557,3 +557,35 @@ def test_video_criterion_configurable_but_required_by_default(tmp_path):
     (tmp_path / "settings.json").write_text('{"require_video": false}')
     assert cfg.require_video() is False
     assert ota.AgentConfig(state_dir=tmp_path, lab_video=True).require_video() is True
+
+
+@pytest.mark.parametrize("damage", ["", "{\"state\": \"TRYB", "[1, 2]", "\0\0\0\0"])
+def test_corrupt_state_is_kept_and_never_confirms(tmp_path, damage):
+    """Ревью 2026-11-12: повреждённый state.json (обрыв записи при отключении питания) ронял агента необработанным
+    ValueError. Теперь файл сохраняется для разбора, состояние — FAILED: пробный слот не подтверждается, а установка
+    после этого работает как обычно."""
+    b = Board(tmp_path)
+    b.enable()
+    assert b.request("install", b.payload("1.1.0"))[0]["result"] == "OK"
+    assert b.request("tryboot")[0]["result"] == "OK"
+    b.firmware_boot(tryboot_flag=True)
+    state = b.persistent / "sheregesh-ota/state.json"
+    state.write_text(damage)
+    res, _ = b.request("confirm")
+    assert res["result"] != "OK"
+    st = json.loads(state.read_text())
+    assert st["state"] == "FAILED" and "повреждено" in st["reason"]
+    kept = list(state.parent.glob("state.json.corrupt-*"))
+    assert len(kept) == 1 and kept[0].read_text() == damage
+    assert slots.autoboot_parts((b.bootfs / "autoboot.txt").read_text()) == (2, 3)   # основной по-прежнему A
+
+
+def test_state_write_is_durable(tmp_path, monkeypatch):
+    """state.json пишется через fsync файла и каталога (переживает отключение питания)."""
+    from sheregesh.update import model
+    synced = []
+    real = os.fsync
+    monkeypatch.setattr(model.os, "fsync", lambda fd: (synced.append(fd), real(fd))[1])
+    model.write_durable(tmp_path / "state.json", '{"state": "IDLE"}')
+    assert len(synced) == 2 and (tmp_path / "state.json").read_text() == '{"state": "IDLE"}'
+    assert not list(tmp_path.glob("*.tmp"))
