@@ -15,6 +15,8 @@ from . import tls
 MAX_HOSTS = 1024
 PROBE_TIMEOUT_S = 0.4
 CONNECT_TIMEOUT_S = 2.0
+DEADLINE_S = 20.0           # весь поиск (пробы портов и проверка TLS) — не дольше
+CACHE_MAX_AGE_S = 30 * 86400   # кэш адреса старше месяца не используется
 
 
 def candidates(spec, networks=None):
@@ -24,13 +26,21 @@ def candidates(spec, networks=None):
     return [str(ip) for net in nets for ip in net.hosts()][:MAX_HOSTS]
 
 
-def discover(spec, port, verify, connect=socket.create_connection):
-    """Первый адрес, где порт открыт и verify(сокет, адрес) подтвердил вторую сторону; None — не найдено."""
+def discover(spec, port, verify, connect=socket.create_connection, deadline_s=DEADLINE_S, stop=None,
+             clock=time.monotonic):
+    """Первый адрес, где порт открыт и verify(сокет, адрес) подтвердил вторую сторону; None — не найдено, время
+    deadline_s вышло или stop() вернул True. Вызывается из отдельного потока (PeerClient), не из цикла канала."""
     hosts = candidates(spec)
     if not hosts:
         return None
+    end = clock() + deadline_s
+
+    def over():
+        return clock() >= end or (stop is not None and stop())
 
     def probe(h):
+        if over():
+            return None
         try:
             with connect((h, port), timeout=PROBE_TIMEOUT_S):
                 return h
@@ -39,6 +49,8 @@ def discover(spec, port, verify, connect=socket.create_connection):
     with ThreadPoolExecutor(64) as ex:
         found = [h for h in ex.map(probe, hosts) if h]
     for h in found:
+        if over():
+            return None
         try:
             raw = connect((h, port), timeout=CONNECT_TIMEOUT_S)
         except OSError:
@@ -55,7 +67,11 @@ def discover(spec, port, verify, connect=socket.create_connection):
 
 def read_cache(cfg):
     try:
-        return json.loads((cfg.dir / "peer-cache.json").read_text()).get("host")
+        d = json.loads((cfg.dir / "peer-cache.json").read_text())
+        t = d.get("time")
+        if isinstance(t, (int, float)) and time.time() - t > CACHE_MAX_AGE_S:
+            return None
+        return d.get("host")
     except (OSError, ValueError, AttributeError):
         return None
 

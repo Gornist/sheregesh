@@ -102,6 +102,8 @@ class PeerClient:
         self.host, self.port = self.hosts[0] if self.hosts else None, port
         self.status_file = status_file
         self._last_discover = 0.0
+        self._discover_thread = None        # поиск в подсети — в своём потоке, цикл канала его не ждёт
+        self._discovered = None             # найденный поиском адрес, ещё не принятый циклом канала
         self._last_status_write = 0.0
         self.heartbeat_timeout_s = heartbeat_timeout_s
         if hardware is None or device_id is None:      # REQ-SYS-007: плата и серийный номер, вне платы — эмулятор
@@ -517,17 +519,29 @@ class PeerClient:
             except OSError:
                 pass
         self._set(phase="connecting", detail="refused" if refused else "timeout", last_rx=None)
-        if self.ctx is not None and self.tls_cfg.discover and time.monotonic() - self._last_discover > DISCOVER_EVERY_S:
+        with self._lock:
+            h, self._discovered = self._discovered, None
+        if h:
+            self.hosts = list(dict.fromkeys([h, *self.hosts]))
+            discovery.write_cache(self.tls_cfg, h)
+            try:
+                return _no_delay(socket.create_connection((h, self.port), timeout=2.0)), h
+            except OSError:
+                pass
+        if self.ctx is not None and self.tls_cfg.discover and time.monotonic() - self._last_discover > DISCOVER_EVERY_S \
+                and (self._discover_thread is None or not self._discover_thread.is_alive()):
+            # Поиск — десятки секунд в подсети с открытыми портами: в отдельном потоке, иначе цикл канала не отвечал
+            # бы на stop() и известные адреса не пробовались бы (критерий переподключения ≤ 10 с; ревью 2026-11-12)
             self._last_discover = time.monotonic()
-            h = discovery.discover(self.tls_cfg.discover, self.port, self._tls)
-            if h:
-                self.hosts = list(dict.fromkeys([h, *self.hosts]))
-                discovery.write_cache(self.tls_cfg, h)
-                try:
-                    return _no_delay(socket.create_connection((h, self.port), timeout=2.0)), h
-                except OSError:
-                    pass
+            self._discover_thread = threading.Thread(target=self._discover, name="peer-discover", daemon=True)
+            self._discover_thread.start()
         return None
+
+    def _discover(self):
+        h = discovery.discover(self.tls_cfg.discover, self.port, self._tls, stop=self._stop.is_set)
+        if h:
+            with self._lock:
+                self._discovered = h
 
     def _tls(self, raw, host):
         """TLS 1.3 + проверка URI второй стороны. None и состояние auth-failed при отказе."""
