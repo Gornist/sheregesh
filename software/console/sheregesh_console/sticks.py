@@ -354,6 +354,15 @@ class StickSource:
                 self.check()
 
 
+def _link_state(client):
+    """Фаза, сеанс и число соединений канала: link_state() клиента (дёшево, такт 50 Гц), у прочих — snapshot()."""
+    if client is None:
+        return {}
+    if hasattr(client, "link_state"):
+        return client.link_state()
+    return client.snapshot() if hasattr(client, "snapshot") else {}
+
+
 def _client_connected(snap):
     """Канал с блоком установлен и сеанс ≥ 1.4 (иначе rc не отправляется)."""
     ver = parse_session(snap.get("session"))
@@ -514,7 +523,7 @@ class StickSender:
         """Один такт: решить, какой кадр отправить (или никакого), и отправить."""
         st = self.source.state()
         client = self._client()
-        snap = client.snapshot() if client is not None and hasattr(client, "snapshot") else {}
+        snap = _link_state(client)
         connected, new = _client_connected(snap)
         send = getattr(client, "send_rc", None) if connected and new else None
         connects = (snap.get("counters") or {}).get("connects")
@@ -545,6 +554,10 @@ class StickSender:
                     self._sent_at[frame["n"]] = now
                     while len(self._sent_at) > 64:
                         self._sent_at.popitem(last=False)
+        if "rc_state_at" in snap:                # лёгкий срез: полный снимок только при новом rc-state (10 Гц)
+            if snap["rc_state_at"] is None or snap["rc_state_at"] == self._remote_seen:
+                return
+            snap = client.snapshot()
         self._measure(snap, now)
 
     def _measure(self, snap, now):

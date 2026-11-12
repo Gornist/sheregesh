@@ -33,6 +33,7 @@ from ..faults import CATALOG
 from ..hal import PeerStatus
 from ..module import wire
 from ..protocol import negotiate
+from .. import services as svc
 from . import discovery, remotecmd, tls
 from .requests import LOST, OFFLINE, QUEUED, UNSUPPORTED, Requests
 from .codec import TYPES, BadMessage, Decoder, encode
@@ -419,6 +420,15 @@ class PeerClient:
                     "remote_cmd": self._req.snapshot("remote-cmd"),
                     "rc_state": self._rc_state_snapshot(), "rc_sent": self._rc_sent_snapshot()}
 
+    def link_state(self):
+        """Лёгкий срез для частых потребителей (отправка стиков 50 Гц): фаза, сеанс, число соединений — без копий
+        запросов, rc-state и кольца отправленных кадров, которые строит snapshot() (ревью 2026-11-12)."""
+        with self._lock:
+            rs = self._rc_state
+            return {"phase": self._st.phase, "session": self._st.session,
+                    "counters": {"connects": self.counters.connects},
+                    "rc_state_at": rs.get("rx_at") if rs is not None else None}   # новый rc-state → нужен snapshot()
+
     def _rc_state_snapshot(self):
         """snapshot()["rc_state"]: тело rc-state (sanitize_rc_state) + rx_at (monotonic приёма), rx_age_s, latency_ms
         (приём rc-state − отправка кадра n, мс; None — кадра n нет среди последних RC_RING отправленных). Под _lock."""
@@ -501,7 +511,7 @@ class PeerClient:
         refused = False
         for h in self.hosts:
             try:
-                return socket.create_connection((h, self.port), timeout=2.0), h
+                return _no_delay(socket.create_connection((h, self.port), timeout=2.0)), h
             except ConnectionRefusedError:
                 refused = True
             except OSError:
@@ -514,7 +524,7 @@ class PeerClient:
                 self.hosts = list(dict.fromkeys([h, *self.hosts]))
                 discovery.write_cache(self.tls_cfg, h)
                 try:
-                    return socket.create_connection((h, self.port), timeout=2.0), h
+                    return _no_delay(socket.create_connection((h, self.port), timeout=2.0)), h
                 except OSError:
                     pass
         return None
@@ -850,7 +860,6 @@ def _sanitize_status(body):
     m = wire.sanitize_module(body.get("module"))
     if m is not None:                             # внешний модуль блока (протокол 1.3, ADR-0012): необязательное поле
         out["module"] = m
-    from .. import services as svc
     s = svc.sanitize(body.get("services"))
     if s is not None:                             # обязательные службы блока (REQ-SW-001): необязательное поле
         out["services"] = s
@@ -863,6 +872,16 @@ def _sanitize_status(body):
     if isinstance(link, dict):
         out["link"] = {str(k)[:24]: float(v) for k, v in list(link.items())[:16] if _number(v)}
     return out
+
+
+def _no_delay(sock):
+    """Канал — мелкие кадры (rc ~150 Б, 50 Гц) навстречу ack/rc-state: без TCP_NODELAY Nagle и отложенный ACK дают
+    выбросы задержки до десятков мс (ревью 2026-11-12)."""
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except OSError:
+        pass
+    return sock
 
 
 def _number(v):

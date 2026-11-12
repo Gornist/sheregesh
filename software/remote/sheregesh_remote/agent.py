@@ -44,6 +44,7 @@ import asyncio
 import json
 import os
 import signal
+import socket
 import ssl
 import subprocess
 import sys
@@ -425,6 +426,12 @@ class Agent:
 
     # ---------- обмен ----------
     async def handle(self, reader, writer):
+        raw = writer.get_extra_info("socket")
+        if raw is not None:                         # мелкие кадры канала без задержки Nagle (как у клиента пульта)
+            try:
+                raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except (OSError, AttributeError):
+                pass
         if self.ctx is not None and not await self.secure(writer):
             writer.close()
             return
