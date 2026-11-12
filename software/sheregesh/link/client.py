@@ -15,6 +15,7 @@ module-cmd, remote-cmd, кадры органов управления rc) ух�
 """
 import ipaddress
 import json
+import math
 import os
 import re
 import select
@@ -116,6 +117,7 @@ class PeerClient:
         self._sock = None
         self._thread = threading.Thread(target=self._run, name="peer-link", daemon=True)
         self._seq = 0
+        self._send_lock = threading.Lock()          # bye из stop() (поток GUI) и поток канала пишут в один сокет
         self._last_peer_seq = None
         self._outbox = []                   # (тип, тело) от других потоков; отправляет только поток канала
         self._req = Requests()              # video-select, module-cmd, remote-cmd: номер и состояние последнего
@@ -479,8 +481,9 @@ class PeerClient:
         return sock in r
 
     def _send(self, sock, mtype, body):
-        self._seq += 1
-        sock.sendall(encode(PROTOCOL_VERSION, mtype, self._seq, time.time(), body))
+        with self._send_lock:                        # номер и кадр целиком: записи потоков не перемежаются
+            self._seq += 1
+            sock.sendall(encode(PROTOCOL_VERSION, mtype, self._seq, time.time(), body))
 
     def _run(self):
         attempt = 0
@@ -823,11 +826,11 @@ def _sanitize_status(body):
     out = {}
     temps = body.get("temperatures")
     if isinstance(temps, dict):
-        out["temperatures"] = {str(k)[:16]: float(v) for k, v in temps.items()
-                               if isinstance(v, (int, float)) and not isinstance(v, bool)}
+        out["temperatures"] = {str(k)[:16]: float(v) for k, v in list(temps.items())[:16]
+                               if _number(v) and -100.0 <= v <= 300.0}
     p = body.get("power")
-    if isinstance(p, dict) and isinstance(p.get("percent"), (int, float)):
-        out["power"] = {"source": str(p.get("source", ""))[:16], "percent": float(p["percent"]),
+    if isinstance(p, dict) and _number(p.get("percent")):
+        out["power"] = {"source": str(p.get("source", ""))[:16], "percent": min(100.0, max(0.0, float(p["percent"]))),
                         "low_battery": bool(p.get("low_battery"))}
     v = body.get("video")
     if isinstance(v, dict):
@@ -858,9 +861,13 @@ def _sanitize_status(body):
     out["state"] = str(body.get("state", ""))[:16]
     link = body.get("link")
     if isinstance(link, dict):
-        out["link"] = {str(k)[:24]: float(v) for k, v in list(link.items())[:16]
-                       if isinstance(v, (int, float)) and not isinstance(v, bool)}
+        out["link"] = {str(k)[:24]: float(v) for k, v in list(link.items())[:16] if _number(v)}
     return out
+
+
+def _number(v):
+    """Конечное число, не bool: 1e300, inf и nan из недоверенного status не доходят до интерфейса."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
 class RemotePeer:

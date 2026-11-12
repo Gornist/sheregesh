@@ -44,3 +44,13 @@ def test_remote_status_uses_board_sensors_and_omits_power(tmp_path):
     assert body["temperatures"] == {"soc": 64.0} and body["power"] is None
     from sheregesh.link.client import _sanitize_status
     assert "power" not in _sanitize_status(body)               # пульт: «нет данных», не 0 и не прежнее значение
+
+
+def test_untrusted_status_numbers_are_bounded():
+    """Ревью 2026-11-12: недоверенный блок мог прислать тысячи температур, percent 1e300 и inf/nan."""
+    from sheregesh.link.client import _sanitize_status
+    out = _sanitize_status({"temperatures": {**{f"t{i}": 40 for i in range(1000)}, "hot": 1e300, "nan": float("nan")},
+                            "power": {"source": "bat", "percent": 1e300}, "link": {"rtt": float("inf"), "ok": 2}})
+    assert len(out["temperatures"]) == 16 and all(v == 40 for v in out["temperatures"].values())
+    assert out["power"]["percent"] == 100.0 and out["link"] == {"ok": 2.0}
+    assert _sanitize_status({"temperatures": {"soc": 55.5, "bad": 900}})["temperatures"] == {"soc": 55.5}
