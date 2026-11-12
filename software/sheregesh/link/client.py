@@ -115,6 +115,9 @@ class PeerClient:
         self.counters = LinkCounters()
         self._st = _State()
         self._lock = threading.Lock()
+        # Ожидающие итог запроса (video-select, module-cmd, remote-cmd) спят на условии и просыпаются по каждому
+        # принятому сообщению, смене фазы и обрыву — без опроса с шагом 50 мс (ревью 2026-11-12)
+        self._changed = threading.Condition(self._lock)
         self._events = []                   # (code, params) для журнала монитора
         self._stop = threading.Event()
         self._sock = None
@@ -145,6 +148,8 @@ class PeerClient:
     def stop(self):
         self._stop.set()
         self._wake()
+        with self._lock:
+            self._changed.notify_all()               # ожидающие итог запроса выходят сразу
         s = self._sock
         if s is not None:
             try:
@@ -190,20 +195,20 @@ class PeerClient:
             return {"ok": False, "error": "not-connected", "detail": "no link to remote unit"}
         if state == UNSUPPORTED:
             return {"ok": False, "error": "unsupported", "detail": "remote unit does not support video-select (1.1)"}
-        deadline = time.monotonic() + max(0.0, wait_s)
-        while time.monotonic() < deadline and not self._stop.is_set():
-            with self._lock:
-                sel = ((self._st.telemetry or {}).get("video") or {}).get("select")
-                if self._req.state("video-select", req) == OFFLINE:
-                    return {"ok": False, "error": "not-connected", "detail": "link lost before sending"}
-                if sel and sel.get("req") == req:
-                    self._req.completed("video-select", req)
+        def poll():
+            sel = ((self._st.telemetry or {}).get("video") or {}).get("select")
+            if self._req.state("video-select", req) == OFFLINE:
+                return {"ok": False, "error": "not-connected", "detail": "link lost before sending"}
             if sel and sel.get("req") == req:
+                self._req.completed("video-select", req)
                 if sel["result"] == "ok":
-                    return None
+                    return "ok"
                 return {"ok": False, "error": "unknown" if sel["result"] == "unknown-id" else "unavailable",
                         "detail": sel.get("error", "")}
-            time.sleep(0.05)
+            return None
+        res = self._wait_for(poll, wait_s)
+        if res is not None:
+            return None if res == "ok" else res
         # Итога нет: принято (переключение видно по sources[].active); в состоянии — timeout или unknown (обрыв)
         with self._lock:
             if wait_s > 0:
@@ -284,24 +289,22 @@ class PeerClient:
                     "error": "remote unit does not support the external module"
                              + (f" (protocol {st.session})" if st.session and "module-cmd" not in TYPES.get(st.session, ())
                                 else " (module subsystem disabled)")}
-        deadline = time.monotonic() + max(0.0, wait_s)
-        cmd = None
-        while not self._stop.is_set():
-            with self._lock:
-                cmd = ((self._st.telemetry or {}).get("module") or {}).get("cmd")
-                done = bool(cmd and cmd.get("req") == req and cmd.get("result") != "pending")
-                if done:
-                    self._req.completed("module-cmd", req)
-                lost = self._req.state("module-cmd", req) in LOST \
-                    or self.counters.connects != connects or self._st.phase != "connected"
-            if done:
+        seen = {}
+
+        def poll():
+            cmd = seen["cmd"] = ((self._st.telemetry or {}).get("module") or {}).get("cmd")
+            if cmd and cmd.get("req") == req and cmd.get("result") != "pending":
+                self._req.completed("module-cmd", req)
                 return {"ok": cmd["result"] == "ok", "result": cmd["result"], "error": cmd.get("error", ""), "req": req}
-            if lost:
+            if self._req.state("module-cmd", req) in LOST or self.counters.connects != connects \
+                    or self._st.phase != "connected":
                 return {"ok": False, "result": "not-connected", "req": req,
                         "error": "link lost before the result (outcome unknown)"}
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(0.05)
+            return None
+        res = self._wait_for(poll, wait_s)
+        if res is not None:
+            return res
+        cmd = seen.get("cmd")
         with self._lock:
             self._req.timed_out("module-cmd", req)
         return {"ok": False, "result": "timeout", "req": req,
@@ -339,24 +342,22 @@ class PeerClient:
             return {"ok": False, "result": "unsupported", "req": req,
                     "error": f"remote unit does not support maintenance commands (protocol {session})"}
         self._wake()
-        deadline = time.monotonic() + max(0.0, wait_s)
-        while not self._stop.is_set():
-            with self._lock:
-                slot = self._rcmd.get(req) or {}
-                res = slot.get("result")
-                if res is not None:
-                    self._req.completed("remote-cmd", req)
-                    self._rcmd.pop(req, None)
-                lost = self._req.state("remote-cmd", req) in LOST \
-                    or self.counters.connects != connects or self._st.phase != "connected"
-            if res is not None:
-                return self._remote_result(req, op, res, slot["asm"])
-            if lost:
-                return {"ok": False, "result": "not-connected", "req": req,
-                        "error": "link lost before the result (outcome unknown)"}
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(0.05)
+        def poll():
+            slot = self._rcmd.get(req) or {}
+            if slot.get("result") is not None:
+                self._req.completed("remote-cmd", req)
+                self._rcmd.pop(req, None)
+                return ("done", slot)
+            if self._req.state("remote-cmd", req) in LOST or self.counters.connects != connects \
+                    or self._st.phase != "connected":
+                return ("lost", None)
+            return None
+        res = self._wait_for(poll, wait_s)
+        if res is not None and res[0] == "done":
+            return self._remote_result(req, op, res[1]["result"], res[1]["asm"])   # сборка журнала — вне замка
+        if res is not None:
+            return {"ok": False, "result": "not-connected", "req": req,
+                    "error": "link lost before the result (outcome unknown)"}
         with self._lock:
             self._req.timed_out("remote-cmd", req)
             self._rcmd.pop(req, None)
@@ -468,6 +469,21 @@ class PeerClient:
         with self._lock:
             for k, v in kw.items():
                 setattr(self._st, k, v)
+            self._changed.notify_all()
+
+    def _wait_for(self, poll, wait_s):
+        """Ждать, пока poll() (вызывается под замком) не вернёт не None, но не дольше wait_s; None — время вышло или
+        клиент остановлен. Пробуждение — по уведомлениям потока канала, не по таймеру."""
+        deadline = time.monotonic() + max(0.0, wait_s)
+        with self._lock:
+            while True:
+                v = poll()
+                if v is not None:
+                    return v
+                left = deadline - time.monotonic()
+                if left <= 0 or self._stop.is_set():
+                    return None
+                self._changed.wait(left)
 
     def _event(self, event_code, **params):        # params может содержать свой «code» (REMOTE-EVENT)
         with self._lock:
@@ -651,6 +667,8 @@ class PeerClient:
                     self.counters.received += 1
                     self._on_message(msg)
                     established = established or self._st.phase in ("connected", "incompatible")
+                    with self._lock:
+                        self._changed.notify_all()        # ожидающим итог запроса: пришло новое
                 self._flush_outbox(sock)
                 self._write_status()
                 phase = self._st.phase
@@ -672,6 +690,7 @@ class PeerClient:
                 self._req.lost()                          # неотправленные — offline, отправленные — итог неизвестен
                 self._outbox.clear()
                 self._rc = None                           # неотправленный кадр устарел: в новое соединение не идёт
+                self._changed.notify_all()
             try:
                 sock.close()
             except OSError:

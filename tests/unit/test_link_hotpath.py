@@ -40,3 +40,27 @@ def test_link_state_used_and_snapshot_only_on_new_rc_state():
     assert sticks._client_connected(sticks._link_state(c)) == (True, True)
     assert c.full == 0
     assert sticks._link_state(None) == {}
+
+
+def test_wait_for_wakes_on_notify_not_on_polling_step():
+    """Ожидание итога запроса просыпается по уведомлению канала сразу, а не с шагом опроса 50 мс."""
+    import threading
+    import time
+    c = object.__new__(C.PeerClient)
+    c._lock = threading.Lock()
+    c._changed = threading.Condition(c._lock)
+    c._stop = threading.Event()
+    box = {}
+
+    def later():
+        time.sleep(0.1)
+        with c._lock:
+            box["v"], box["t"] = 42, time.monotonic()
+            c._changed.notify_all()
+    threading.Thread(target=later).start()
+    assert c._wait_for(lambda: box.get("v"), 2.0) == 42
+    assert time.monotonic() - box["t"] < 0.02
+    t0 = time.monotonic()
+    assert c._wait_for(lambda: None, 0.1) is None and 0.09 <= time.monotonic() - t0 < 0.5
+    c._stop.set()
+    assert c._wait_for(lambda: None, 5.0) is None
