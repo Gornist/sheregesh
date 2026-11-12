@@ -45,11 +45,14 @@ docker volume create sheregesh-image-work >/dev/null
 # SHEREGESH_CONTAINER_NAME — имя контейнера (сервис сборки останавливает его по тайм-ауту и отмене, ADR-0018);
 # SHEREGESH_BUILDER_IMAGE — заранее подготовленный сборщик (tools/build/builder.Dockerfile): зависимости
 # rpi-image-gen уже стоят — без apt-get update и install_deps.sh под эмуляцией в каждой сборке.
+# Базовый образ без готового сборщика — по digest из репозитория (os/builder-base.ref), не плавающий тег
+BASE="$(grep -v '^#' "$ROOT/os/builder-base.ref" | head -1)"
+[[ "$BASE" =~ ^debian:trixie@sha256:[0-9a-f]{64}$ ]] || { echo "os/builder-base.ref: ожидается debian:trixie@sha256:…" >&2; exit 2; }
 NAMEARGS=(); [[ -n "${SHEREGESH_CONTAINER_NAME:-}" ]] && NAMEARGS=(--name "$SHEREGESH_CONTAINER_NAME")
 exec docker run --rm --privileged --platform linux/arm64 ${NAMEARGS[@]+"${NAMEARGS[@]}"} \
   -v "$ROOT":/src:ro -v "$ROOT/build/image":/out -v sheregesh-image-work:/work ${KEYARGS[@]+"${KEYARGS[@]}"} \
   -e CFG="$CFG" -e SHEREGESH_ZSTD_LEVEL="${SHEREGESH_ZSTD_LEVEL:-}" -e SHEREGESH_POST_ONLY="${SHEREGESH_POST_ONLY:-}" -e SHEREGESH_BUILD_AS_ROOT="${SHEREGESH_BUILD_AS_ROOT:-}" -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
-  "${SHEREGESH_BUILDER_IMAGE:-debian:trixie}" bash -euo pipefail -c '
+  "${SHEREGESH_BUILDER_IMAGE:-$BASE}" bash -euo pipefail -c '
     export DEBIAN_FRONTEND=noninteractive
     # Скачанные пакеты контейнера сборки и syft — в постоянном томе /work/cache: повторная сборка их не качает
     # (с devbox загрузки с GitHub и зеркал бывают ~30 КБ/с). Кэш — только скорость: проверки sha/подписей те же.
@@ -91,16 +94,19 @@ exec docker run --rm --privileged --platform linux/arm64 ${NAMEARGS[@]+"${NAMEAR
     else
       /work/rpi-image-gen/install_deps.sh >/dev/null
     fi
-    # SBOM: слой sbom rpi-image-gen берёт syft из PATH, иначе ставит через get.anchore.io (с devbox — таймауты,
-    # OTA CLOSURE). Та же версия, что в хуке sbom05-syft, — из релиза GitHub с проверкой по checksums.txt.
+    # SBOM: слой sbom rpi-image-gen берёт syft из PATH, иначе ставит через get.anchore.io без проверки. Та же
+    # версия, что в хуке sbom05-syft, — из релиза GitHub с проверкой по SHA-256, закреплённому в репозитории
+    # (os/syft.sha256): checksums.txt того же релиза защищал бы только от битой загрузки (ревью 2026-11-12).
     SYFT_VER="$(sed -n "s/^SYFT_VER=v\([0-9.]*\).*/\1/p" /work/rpi-image-gen/layer/sbom/sbom.d/hooks/sbom05-syft)"
     if [ -n "$SYFT_VER" ] && ! command -v syft >/dev/null; then
       t="syft_${SYFT_VER}_linux_$(dpkg --print-architecture).tar.gz"; u="https://github.com/anchore/syft/releases/download/v$SYFT_VER"
-      if (cd /work/cache/syft && { [ -s "$t" ] || curl -fsSLO --retry 3 "$u/$t"; } && \
-          { [ -s "syft_${SYFT_VER}_checksums.txt" ] || curl -fsSLO --retry 3 "$u/syft_${SYFT_VER}_checksums.txt"; } && \
-          grep " $t\$" "syft_${SYFT_VER}_checksums.txt" | sha256sum -c -) \
-         && tar -xzf "/work/cache/syft/$t" -C /usr/local/bin syft; then syft --version
-      else echo "syft $SYFT_VER с GitHub не получен — rpi-image-gen попробует get.anchore.io" >&2; fi
+      pin="$(grep -E "^[0-9a-f]{64}  $t\$" /src/os/syft.sha256 || true)"
+      if [ -z "$pin" ]; then
+        echo "отказ: нет закреплённого SHA-256 для $t в os/syft.sha256 (новая версия syft в rpi-image-gen?)" >&2; exit 1
+      fi
+      (cd /work/cache/syft && { [ -s "$t" ] || curl -fsSLO --retry 3 "$u/$t"; } && echo "$pin" | sha256sum -c -) \
+        || { rm -f "/work/cache/syft/$t"; echo "отказ: архив syft не совпал с os/syft.sha256" >&2; exit 1; }
+      tar -xzf "/work/cache/syft/$t" -C /usr/local/bin syft && syft --version
     fi
     mkdir -p /out/$CFG && chown builder /out/$CFG
     AS="sudo -u builder"

@@ -354,5 +354,26 @@ class ShbuildTest(unittest.TestCase):
         self.assertEqual((p.cfg, p.buildhost), (sb.CFG, False))
 
 
+class BuilderPinTest(unittest.TestCase):
+    """Ревью 2026-11-12: образ сборщика — только собранный make_builder.sh; база и syft закреплены в репозитории."""
+
+    def test_only_local_builder_images_are_accepted(self):
+        for ok in ("shbuild-builder:6c9cea1dfccb", "shbuild-builder:6c9cea1dfccb-9c6e3814"):
+            self.assertTrue(sb.BUILDER_RE.fullmatch(ok), ok)
+        for bad in ("debian:trixie", "evil/builder:latest", "shbuild-builder:6c9cea1dfccb;rm", "shbuild-builder:x"):
+            self.assertFalse(sb.BUILDER_RE.fullmatch(bad), bad)
+        with self.assertRaises(SystemExit):
+            sb.d_enqueue(type("A", (), {"builder": "evil/builder:latest", "config": None, "commit": "x", "bundle": "x"}))
+
+    def test_base_and_syft_are_pinned(self):
+        base = [ln for ln in (ROOT / "os/builder-base.ref").read_text().splitlines() if ln and not ln.startswith("#")]
+        self.assertRegex(base[0], r"^debian:trixie@sha256:[0-9a-f]{64}$")
+        script = (ROOT / "os/docker-build.sh").read_text()
+        self.assertIn("/src/os/syft.sha256", script)
+        self.assertNotIn("_checksums.txt", script)
+        pins = [ln for ln in (ROOT / "os/syft.sha256").read_text().splitlines() if ln and not ln.startswith("#")]
+        self.assertTrue(pins and all(len(ln.split()[0]) == 64 for ln in pins))
+
+
 if __name__ == "__main__":
     unittest.main()

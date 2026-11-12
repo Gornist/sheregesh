@@ -5,15 +5,19 @@
 # Готовый контейнер-сборщик образа (ADR-0018, ускорение): debian:trixie arm64 с пакетами os/docker-build.sh и
 # зависимостями rpi-image-gen указанной ревизии. Делается один раз на ревизию rpi-image-gen (docker commit), дальше
 # сборка не ставит пакеты под эмуляцией. Клон rpi-image-gen и кэш apt — из постоянного тома sheregesh-image-work.
-#   make_builder.sh РЕВИЗИЯ_RPI_IMAGE_GEN   → печатает тег образа (shbuild-builder:<12 знаков ревизии>)
+#   make_builder.sh РЕВИЗИЯ_RPI_IMAGE_GEN [БАЗА]  → печатает тег образа (shbuild-builder:<12 hex ревизии>-<8 hex базы>)
+# БАЗА — debian:trixie@sha256:… из os/builder-base.ref собираемого коммита (без неё — прежний тег debian:trixie).
 set -euo pipefail
 REF=${1:?ревизия rpi-image-gen}; [[ "$REF" =~ ^[0-9a-f]{40}$ ]] || { echo "ревизия — 40 hex" >&2; exit 2; }
-TAG=shbuild-builder:${REF:0:12}
+BASE=${2:-debian:trixie}
+if [[ "$BASE" =~ ^debian:trixie@sha256:([0-9a-f]{64})$ ]]; then TAG=shbuild-builder:${REF:0:12}-${BASH_REMATCH[1]:0:8}
+elif [[ "$BASE" == debian:trixie ]]; then TAG=shbuild-builder:${REF:0:12}
+else echo "база — debian:trixie@sha256:<64 hex>" >&2; exit 2; fi
 if docker image inspect "$TAG" >/dev/null 2>&1; then echo "$TAG"; exit 0; fi
 NAME=shbuild-mkbuilder-$$
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
 docker volume create sheregesh-image-work >/dev/null
-docker run --name "$NAME" --platform linux/arm64 -e REF="$REF" -v sheregesh-image-work:/work debian:trixie bash -euo pipefail -c '
+docker run --name "$NAME" --platform linux/arm64 -e REF="$REF" -v sheregesh-image-work:/work "$BASE" bash -euo pipefail -c '
   export DEBIAN_FRONTEND=noninteractive
   mkdir -p /work/cache/apt/partial
   rm -f /etc/apt/apt.conf.d/docker-clean

@@ -53,6 +53,9 @@ REMOTE_BIN = "shbuild/bin/shbuild.py"
 CFG = "sheregesh-lab-dev-pi4"
 TERMINAL = ("PASSED", "FAILED", "ERROR", "CANCELLED", "TIMEOUT")
 STAGES = ("preflight", "checkout", "tests", "build", "gates", "boot")
+# Образ сборщика — только собранный make_builder.sh на хосте сборки: произвольный образ из --builder мог бы собрать
+# «PASSED»-образ с подменённым содержимым (ревью 2026-11-12)
+BUILDER_RE = re.compile(r"shbuild-builder:[0-9a-f]{12}(-[0-9a-f]{8})?")
 TIMEOUTS = {"preflight": 60, "checkout": 300, "tests": 900, "build": 5400, "gates": 1800, "boot": 1800}
 MIN_DISK_GB = 40          # образ 7 ГБ, корень в tar, persistent, рабочий том сборки
 MIN_MEM_GB = 6            # OOM при сборке на прежнем хосте (s5-ota/DEVBOX-REBOOT.md): ОЗУ + свободная подкачка на диске
@@ -290,12 +293,17 @@ class Pipeline:
                    SHEREGESH_CONTAINER_NAME=f"shbuild-{self.job.id}", SHBUILD_JOB=self.job.id,
                    SHEREGESH_ZSTD_LEVEL=self.flags["zstd_level"])
         builder = self.st.get("options", {}).get("builder_image")
+        if builder and not BUILDER_RE.fullmatch(builder):   # только сборщик, собранный make_builder.sh на этом хосте
+            raise Fail(f"сборщик {builder!r}: допустим только shbuild-builder:<ревизия>[-<база>]", "ERROR")
         script = (self.src / "os/docker-build.sh").read_text()
         if not builder and "SHEREGESH_BUILDER_IMAGE" in script:     # старые коммиты сборщик не умеют — как раньше
             ref = (self.src / "os/rpi-image-gen.ref").read_text().strip()
+            base_ref = self.src / "os/builder-base.ref"             # база по digest (коммиты до 2026-11-12 — без неё)
+            base = [ln.strip() for ln in base_ref.read_text().splitlines()
+                    if ln.strip() and not ln.startswith("#")][:1] if base_ref.exists() else []
             log = self.job.log("build")
             with open(log, "a") as f:
-                r = subprocess.run(["bash", self.bin / "make_builder.sh", ref], stdout=subprocess.PIPE, stderr=f,
+                r = subprocess.run(["bash", self.bin / "make_builder.sh", ref, *base], stdout=subprocess.PIPE, stderr=f,
                                    text=True, timeout=TIMEOUTS["build"])
             if r.returncode != 0:
                 raise Fail(f"make_builder.sh: код {r.returncode}", "ERROR")
@@ -593,6 +601,8 @@ def line(st):
 
 # ---------------------------------------------------------------- команды хоста сборки
 def d_enqueue(a):
+    if a.builder and not BUILDER_RE.fullmatch(a.builder):
+        raise SystemExit(f"сборщик {a.builder!r}: допустим только shbuild-builder:<ревизия>[-<база>] (make_builder.sh)")
     opts = {k: v for k, v in (("builder_image", a.builder), ("config", a.config)) if v}
     j = new_job(HOME, a.commit, Path(a.bundle).resolve(), opts or None)
     spawn_worker(HOME)
