@@ -102,6 +102,7 @@ class VideoRx:
         self._send, self._peer_ip = send, peer_ip
         self.runtime = runtime or runtime_dir()
         self._ctl_factory = ctl_factory or (lambda path, timeout: CtlClient(path, timeout=timeout))
+        self._ctl_clients, self._ctl_lock = {}, threading.Lock()    # постоянные клиенты службы по таймауту
         self._systemctl = systemctl or systemctl_start
         self._clock, self._wall = clock, wall
         self._clock_offset = clock_offset
@@ -136,6 +137,7 @@ class VideoRx:
         self._q.put(None)
         for t in self._threads:
             t.join(timeout=3)
+        self._close_ctl()
 
     def _worker(self):
         while not self._stop.is_set():
@@ -256,11 +258,19 @@ class VideoRx:
         self._send("video-key-ack", out)
 
     def _ctl(self, cmd, args=None):
-        c = self._ctl_factory(os.path.join(self.runtime, "ctl.sock"),
-                              START_TIMEOUT_S if cmd == "start" else CTL_TIMEOUT_S)
-        try:
-            return c.request(cmd, args or {})
-        finally:
+        """Команда службе rx по постоянному соединению (как у VideoTx): CtlClient сам переподключается после обрыва,
+        соединение не открывается заново на каждую команду (ревью 2026-11-12). start — свой клиент с долгим таймаутом."""
+        timeout = START_TIMEOUT_S if cmd == "start" else CTL_TIMEOUT_S
+        with self._ctl_lock:
+            c = self._ctl_clients.get(timeout)
+            if c is None:
+                c = self._ctl_clients[timeout] = self._ctl_factory(os.path.join(self.runtime, "ctl.sock"), timeout)
+        return c.request(cmd, args or {})
+
+    def _close_ctl(self):
+        with self._ctl_lock:
+            clients, self._ctl_clients = list(self._ctl_clients.values()), {}
+        for c in clients:
             try:
                 c.close()
             except Exception:                          # noqa: BLE001 — подменные клиенты без close

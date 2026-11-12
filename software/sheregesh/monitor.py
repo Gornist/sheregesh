@@ -36,6 +36,7 @@ class EventLog:
         self.events: list[Event] = []
         self._active: dict[str, Event] = {}
         self._seq = 0
+        self.resolved = 0          # снятых состояний всего: признак изменения журнала без прохода по событиям
 
     def _add(self, t, code, params, active):
         self._seq += 1
@@ -61,6 +62,7 @@ class EventLog:
         ev = self._active.pop(code, None)
         if ev:
             ev.active, ev.resolved_t = False, t
+            self.resolved += 1
         return ev
 
     def is_active(self, code):

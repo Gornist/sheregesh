@@ -390,10 +390,13 @@ class Backend(QObject):
         self._journal_transitions()
         if p is not None:
             self._power_history.append(round(p.percent, 1))
-        self._log.mirror_events(self.bench.monitor.log.events)
-        events = self.bench.monitor.log.events
+        log = self.bench.monitor.log
+        events = log.events
         sig = (events[-1].id if events else 0, tuple(e.id for e in s.active), self.lang,
-               sum(1 for e in events if e.resolved_t is not None))
+               getattr(log, "resolved", None))                # счётчик, а не проход по 500 событиям в каждом такте
+        if events and events[-1].id != getattr(self, "_mirrored_id", None):
+            self._mirrored_id = events[-1].id
+            self._log.mirror_events(events)
         if sig != getattr(self, "_events_sig", None):      # перестраивать список только при изменениях
             self._events_sig = sig
             self._active = [self._render_event(e) for e in s.active]
