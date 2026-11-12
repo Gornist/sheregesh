@@ -23,6 +23,8 @@ class FakeCtl:
         self.svc.calls.append((cmd, args))
         if self.svc.fail.get(cmd):
             raise self.svc.fail[cmd]
+        if cmd == "status" and self.svc.path is not None and (self.svc.path / "state.json").exists():
+            return json.loads((self.svc.path / "state.json").read_text())   # служба отвечает своим состоянием
         return {}
 
     def close(self):
@@ -33,6 +35,7 @@ class Svc:
     def __init__(self):
         self.calls, self.fail, self.units, self.sent, self.logs, self.allow_ok = [], {}, [], [], [], True
         self.t = 100.0
+        self.path = None
 
     def systemctl(self, unit):
         self.units.append(unit)
@@ -45,6 +48,7 @@ class Svc:
 @pytest.fixture
 def env(tmp_path):
     svc = Svc()
+    svc.path = tmp_path
     rx = V.VideoRx(lambda t, b: svc.sent.append((t, b)) or True, lambda: "192.168.1.169", runtime=str(tmp_path),
                    ctl_factory=lambda path, timeout: FakeCtl(svc), systemctl=svc.systemctl, clock=lambda: svc.t,
                    log=lambda lv, tx: svc.logs.append(tx), rx_port=7444, clock_offset=lambda: 0.0123)
@@ -221,10 +225,13 @@ def test_stats_from_state_json_and_no_key_leak(env):
     assert any("video-key" in line and "***" in line for line in svc.logs)
 
 
-def test_stale_state_json_is_ignored(env):
+def test_state_comes_from_ctl_status_not_wall_clock(env):
+    """Состояние — ответ status службы: шаг настенных часов на него не влияет; служба не отвечает — сведений нет."""
     rx, svc, tmp = env
     write_state(tmp)
-    rx._wall = lambda: time.time() + 60
+    rx._wall = lambda: time.time() + 3600
+    assert rx.read_state()["state"] == "streaming"
+    svc.fail["status"] = OSError("нет сокета")
     assert rx.read_state() == {}
 
 

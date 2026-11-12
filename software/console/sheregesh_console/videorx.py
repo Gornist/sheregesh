@@ -29,7 +29,6 @@ FIRST_FRAME_TIMEOUT_S = 5.0      # контракт v5 §6
 OFFSET_EVERY_S = 5.0
 RENEW_AFTER_S = 5.0              # кадров нет дольше — просим новое поколение (video-renew)
 RENEW_EVERY_S = 10.0             # video-renew не чаще
-STATE_MAX_AGE_S = 5.0            # state.json старше — сведений нет (служба не пишет)
 SYSTEMCTL_TIMEOUT_S = 10.0
 CTL_TIMEOUT_S = 1.0              # команды службы rx (status, stop, set-clock-offset)
 # start строит конвейер синхронно; первый после загрузки пульта (холодный GStreamer) — дольше 1 с: при коротком
@@ -119,7 +118,7 @@ class VideoRx:
         self._ack_at = None
         self._last_offset_at = None
         self._reason = ""
-        self._state = {}                        # последнее чтение state.json (поток)
+        self._state = {}                        # последний ответ status службы (поток)
         self._q = queue.Queue()
         self._threads = []
         self._stop = threading.Event()
@@ -343,15 +342,14 @@ class VideoRx:
 
     # ---------- периодическое ----------
     def read_state(self):
-        """Поток из state.json службы rx; {} — файла нет, он старый или не читается."""
+        """Поток службы rx командой status по тому же сокету, что и команды (ответ — тот же объект, что state.json,
+        контракт v7); {} — служба не отвечает. Раньше — чтение state.json с проверкой свежести по настенным часам:
+        шаг chrony делал состояние ложно устаревшим или свежим (ревью 2026-11-12)."""
         try:
-            with open(os.path.join(self.runtime, "state.json"), encoding="utf-8") as f:
-                doc = json.load(f)
-            if abs(self._wall() - float(doc.get("time", 0))) > STATE_MAX_AGE_S:
-                return {}
+            doc = self._ctl("status")
             st = (doc.get("streams") or {}).get(self.stream)
             return st if isinstance(st, dict) else {}
-        except (OSError, ValueError, TypeError, AttributeError):
+        except (CtlError, OSError, AttributeError):
             return {}
 
     def tick(self):
