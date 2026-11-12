@@ -137,6 +137,7 @@ class Agent:
         self.vtx_task = None                         # опрос службы tx раз в секунду, не задерживает основной цикл
         self.vtx_end_task = None
         self.handshakes = None                       # asyncio.Semaphore: не более 4 рукопожатий одновременно
+        self.accepting = asyncio.Lock()              # принятие сеанса (замена текущего) — строго по одному
         self.sent = {}                               # seq heartbeat/event → (тип, monotonic) для ack
         self.peer_desc = None                        # TLS-идентичность последнего прошедшего проверку пульта (secure)
         self.event_k = 0
@@ -435,17 +436,20 @@ class Agent:
         if self.ctx is not None and not await self.secure(writer):
             writer.close()
             return
-        await self.vtx.end("control session replaced")   # video-stop уходит ещё старому пульту, пока он не оборван
-        if self.conn is not None:                   # одно соединение: новое заменяет старое (старое могло «повиснуть»)
-            self.conn.writer.transport.abort()
-        # Новый сеанс — новый объект: версия, ожидание heartbeat, итог выбора видео и rc-state прежнего не переходят
-        conn = self.conn = ConsoleSession(writer, (writer.get_extra_info("peername") or (None,))[0])
-        if "video-key" in TYPES.get(self.proto, ()):
-            await self.vtx.probe()                  # hello объявляет srtp, только если сокет службы tx отвечает
-        self.control.on_link_lost()                 # прежний сеанс (если был) кончился; нумерация кадров — заново
-        if self.module is not None:
-            self.module.new_session()               # и итог команды модулю — тоже
-        await self.send("hello", self.info())
+        # Принятие сеанса — по одному (ревью 2026-11-12): между await-точками ниже второе подключение могло
+        # назначить себя текущим, и hello первого уходил бы в его соединение, а его замена — гасить чужое видео.
+        async with self.accepting:
+            await self.vtx.end("control session replaced")   # video-stop уходит ещё старому пульту, пока не оборван
+            if self.conn is not None:               # одно соединение: новое заменяет старое (старое могло «повиснуть»)
+                self.conn.writer.transport.abort()
+            # Новый сеанс — новый объект: версия, ожидание heartbeat, итог выбора видео и rc-state не переходят
+            conn = self.conn = ConsoleSession(writer, (writer.get_extra_info("peername") or (None,))[0])
+            if "video-key" in TYPES.get(self.proto, ()):
+                await self.vtx.probe()              # hello объявляет srtp, только если сокет службы tx отвечает
+            self.control.on_link_lost()             # прежний сеанс (если был) кончился; нумерация кадров — заново
+            if self.module is not None:
+                self.module.new_session()           # и итог команды модулю — тоже
+            await self.send("hello", self.info(), writer)
         dec = Decoder()
         hello_by = time.monotonic() + HELLO_TIMEOUT_S
         try:

@@ -338,3 +338,24 @@ def test_connection_without_hello_is_dropped_after_timeout(monkeypatch):
         c2.writer.close()
         await asyncio.wait_for(c2.task, 2)
     run(body())
+
+
+def test_concurrent_connections_are_accepted_one_by_one(monkeypatch):
+    """Ревью 2026-11-12: два почти одновременных подключения перемежались на await (vtx.end/probe): hello первого
+    уходил во второе соединение. Теперь принятие сеанса последовательное — каждый получает свой hello, текущим
+    остаётся последний."""
+    a = make_agent(monkeypatch)
+
+    async def slow(*_args):
+        await asyncio.sleep(0.05)
+    monkeypatch.setattr(a.vtx, "probe", slow)
+    monkeypatch.setattr(a.vtx, "end", slow)
+
+    async def body():
+        c1, c2 = Conn(a), Conn(a)
+        await asyncio.sleep(0.3)
+        assert c1.writer.types().count("hello") == 1 and c2.writer.types().count("hello") == 1
+        assert c1.writer.closed and not c2.writer.closed and a.conn.writer is c2.writer
+        c2.writer.close()
+        await asyncio.wait_for(asyncio.gather(c1.task, c2.task), 2)
+    run(body())
