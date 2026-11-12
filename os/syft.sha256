@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Sheregesh contributors
-# SPDX-License-Identifier: CC0-1.0
+# SPDX-License-Identifier: GPL-3.0-or-later
 # SHA-256 архивов syft для SBOM (версия — из хука sbom05-syft ревизии os/rpi-image-gen.ref). Сверены 2026-11-12
 # с checksums.txt релиза и с digest ассетов в API GitHub. Новая версия syft — новые строки отдельным коммитом.
 2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f  syft_1.51.0_linux_amd64.tar.gz
