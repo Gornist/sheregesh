@@ -18,6 +18,7 @@ import json
 import os
 import ssl
 import stat
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -129,8 +130,35 @@ def _looks_like_ip(h):
 
 
 def cert_info(path) -> dict:
-    """Разбор PEM-сертификата средствами модуля ssl (без сторонних библиотек)."""
-    return ssl._ssl._test_decode_cert(str(path))         # noqa: SLF001 — стабильный внутренний API CPython
+    """Разбор PEM-сертификата через openssl x509 (в образе есть всегда). Форма — как у ssl.getpeercert():
+    subject (кортеж RDN из пар (имя, значение)), notBefore/notAfter (формат ssl.cert_time_to_seconds),
+    subjectAltName (пары (тип, значение)). Приватный ssl._ssl._test_decode_cert не используется (ревью 2026-11-12).
+    Нечитаемый сертификат — ValueError."""
+    r = subprocess.run(["openssl", "x509", "-in", str(path), "-noout", "-subject",
+                        "-nameopt", "sep_multiline,utf8,lname,-esc_msb", "-startdate", "-enddate",
+                        "-ext", "subjectAltName"], capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        raise ValueError(f"{path}: сертификат не читается: {r.stderr.strip()[:200]}")
+    info, subject, san, section = {}, [], [], None
+    for line in r.stdout.splitlines():
+        if not line.startswith(" "):
+            key, _, value = line.partition("=")
+            section = "subject" if key == "subject" else "san" if line.startswith("X509v3 Subject Alternative") else None
+            if key in ("notBefore", "notAfter"):
+                info[key] = value.strip()
+            continue
+        item = line.strip()
+        if section == "subject" and "=" in item:
+            name, _, value = item.partition("=")
+            subject.append(((name, value),))
+        elif section == "san":
+            for part in item.split(", "):
+                kind, _, value = part.partition(":")
+                san.append((kind, value))
+    info["subject"] = tuple(subject)
+    if san:
+        info["subjectAltName"] = tuple(san)
+    return info
 
 
 def cert_uris(path_or_dict) -> list[str]:

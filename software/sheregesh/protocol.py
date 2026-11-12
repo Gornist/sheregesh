@@ -26,8 +26,21 @@ def parse(version: str) -> tuple[int, int]:
     return int(m.group(1)), int(m.group(2))
 
 
+_MATRIX_CACHE: dict = {}
+
+
 def load_matrix(path=MATRIX_PATH) -> dict:
-    return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    """Матрица совместимости. Кэш по пути и времени изменения файла: negotiate зовётся в каждом такте монитора
+    (0,5 с) и на каждый hello — разбор YAML с диска при каждом вызове не нужен (ревью 2026-11-12). Результат —
+    общий объект: только для чтения."""
+    p = Path(path)
+    key = (str(p), p.stat().st_mtime_ns)
+    hit = _MATRIX_CACHE.get(key[0])
+    if hit is not None and hit[0] == key[1]:
+        return hit[1]
+    matrix = yaml.safe_load(p.read_text(encoding="utf-8"))
+    _MATRIX_CACHE[key[0]] = (key[1], matrix)
+    return matrix
 
 
 @dataclass(frozen=True)
