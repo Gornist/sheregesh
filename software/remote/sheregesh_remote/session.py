@@ -19,6 +19,7 @@ class ConsoleSession:
     hb_wait: float | None = None         # monotonic первого heartbeat, на который пульт ещё не ответил
     video_select: dict | None = None     # итог последнего video-select этого сеанса (status.video.select)
     rc_state_sent: object = None         # control.transitions в последнем отправленном rc-state
+    bad_in_row: int = 0                  # битых сообщений подряд (лимит — agent.MAX_BAD_IN_ROW)
 
     def established(self, mtype: str) -> bool:
         """Свой hello принят и согласованная версия знает тип сообщения."""

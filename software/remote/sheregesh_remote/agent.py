@@ -76,6 +76,9 @@ DRAIN_TIMEOUT_S = 3.0
 CONTROL_TICK_S = 0.025
 RC_STATE_ACTIVE_S = 0.1                             # rc-state в ACTIVE/FAILSAFE — 10 Гц
 RC_STATE_IDLE_S = 1.0                               # … в IDLE — 1 Гц
+HELLO_TIMEOUT_S = 10.0                              # пульт прошёл TLS, но не прислал hello — соединение разрывается
+MAX_BAD_IN_ROW = 10                                 # битых сообщений подряд — разрыв (как у клиента пульта)
+BAD_LOG_EVERY_S = 10.0                              # журнал битых сообщений — не чаще раза в 10 с (SD-карта)
 
 
 class Agent:
@@ -97,6 +100,7 @@ class Agent:
         self.seq = 0
         self.ignored = 0
         self.bad = 0
+        self.bad_log_at, self.bad_skipped = 0.0, 0         # ограничение журнала битых сообщений
         self.video_proc = None
         # Видеоисточник: синтетический (по умолчанию), устройство V4L2 (S3.3 «uvc» и любой захват «v4l2») или RTSP —
         # описание из аргументов или файла --video-config (video_spec). Сетевой профиль: источник ведёт видеоприём
@@ -436,9 +440,16 @@ class Agent:
             self.module.new_session()               # и итог команды модулю — тоже
         await self.send("hello", self.info())
         dec = Decoder()
+        hello_by = time.monotonic() + HELLO_TIMEOUT_S
         try:
             while True:
-                data = await reader.read(65536)
+                # Без своего hello соединение не держит единственный слот сеанса бесконечно
+                wait = None if conn.version is not None else max(0.0, hello_by - time.monotonic())
+                try:
+                    data = await asyncio.wait_for(reader.read(65536), wait)
+                except asyncio.TimeoutError:
+                    log(f"console sent no hello in {HELLO_TIMEOUT_S:.0f} s: connection dropped")
+                    break
                 if not data:
                     break
                 if self.conn is conn:
@@ -520,8 +531,19 @@ class Agent:
             return
         if isinstance(msg, BadMessage):
             self.bad += 1
-            log(f"bad message from console: {msg.reason}")
+            conn.bad_in_row += 1
+            mono = time.monotonic()
+            if mono >= self.bad_log_at:              # поток мусора не забивает журнал и карту
+                skipped, self.bad_skipped, self.bad_log_at = self.bad_skipped, 0, mono + BAD_LOG_EVERY_S
+                log(f"bad message from console: {msg.reason}" + (f" (+{skipped} not logged)" if skipped else ""))
+            else:
+                self.bad_skipped += 1
+            if conn.bad_in_row >= MAX_BAD_IN_ROW:
+                log(f"{conn.bad_in_row} bad messages in a row from console: connection dropped")
+                conn.writer.transport.abort()
+                self.drop(conn)
             return
+        conn.bad_in_row = 0
         mtype, body = msg["type"], msg["body"]
         if mtype == "hello":
             await self.on_hello(conn, body)

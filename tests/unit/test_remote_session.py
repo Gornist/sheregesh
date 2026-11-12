@@ -293,3 +293,48 @@ def test_sighup_reload_starts_new_generation(tmp_path):
         await asyncio.sleep(0)
     asyncio.run(run())
     assert switched == [{"source": "synthetic"}] and calls == ["select"]
+
+
+def test_garbage_stream_is_rate_limited_and_drops_connection(monkeypatch):
+    """Ревью 2026-11-12: поток битых строк от прошедшего TLS пульта писал журнал на каждую строку и не рвал соединение.
+    Теперь журнал — раз в BAD_LOG_EVERY_S, после MAX_BAD_IN_ROW подряд — разрыв; годное сообщение сбрасывает счёт."""
+    a = make_agent(monkeypatch)
+    logged = []
+    monkeypatch.setattr(agent_mod, "log", lambda text: logged.append(text))
+
+    async def body():
+        c = Conn(a)
+        c.hello()
+        await settle()
+        for _ in range(agent_mod.MAX_BAD_IN_ROW - 1):
+            c.reader.feed_data(b"not json\n")
+        c.send("heartbeat", {})
+        await settle()
+        assert a.conn is not None and a.conn.bad_in_row == 0
+        for _ in range(agent_mod.MAX_BAD_IN_ROW):
+            c.reader.feed_data(b"not json\n")
+        await settle()
+        assert a.conn is None and c.writer.closed
+        await asyncio.wait_for(c.task, 2)
+    run(body())
+    bad_lines = [t for t in logged if t.startswith("bad message")]
+    assert len(bad_lines) == 1 and a.bad == 2 * agent_mod.MAX_BAD_IN_ROW - 1
+    assert any("in a row" in t for t in logged)
+
+
+def test_connection_without_hello_is_dropped_after_timeout(monkeypatch):
+    """Ревью 2026-11-12: соединение без hello держало слот сеанса вечно."""
+    a = make_agent(monkeypatch)
+    monkeypatch.setattr(agent_mod, "HELLO_TIMEOUT_S", 0.2)
+
+    async def body():
+        c = Conn(a)
+        await asyncio.wait_for(c.task, 3)
+        assert c.writer.closed and a.conn is None
+        c2 = Conn(a)
+        c2.hello()
+        await asyncio.sleep(0.4)
+        assert a.conn is not None and not c2.writer.closed   # после hello таймаут не действует
+        c2.writer.close()
+        await asyncio.wait_for(c2.task, 2)
+    run(body())
