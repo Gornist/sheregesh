@@ -99,6 +99,7 @@ class VideoTx:
         self.offer = None
         self.acked = False
         self.started = False
+        self.refused = False                          # пульт отказал в ack текущего поколения
         self.allowed = False
         self.offer_at = 0.0
         self.last_gen_at = -1e9
@@ -163,7 +164,7 @@ class VideoTx:
 
     async def _offer(self, why: str) -> None:
         offer = self.tx.begin(STREAM, CIPHER)
-        self.offer, self.acked, self.started = offer, False, False
+        self.offer, self.acked, self.started, self.refused = offer, False, False, False
         self.offer_at = self.last_gen_at = self._clock()
         self.next_gen_at = self.last_gen_at + retry_gap(self.fails)
         self.svc = {}
@@ -204,7 +205,10 @@ class VideoTx:
         if isinstance(body, dict) and body.get("ok") is False and body.get("session") == self.tx.session \
                 and body.get("gen") == self.offer.gen and body.get("stream") == STREAM:
             self.error = f"ack refused: {body.get('error', '?')}"
-            self._log(f"video: video-key-ack refused: {mask(body)}")      # ждём video-fallback или конец сеанса
+            self._log(f"video: video-key-ack refused: {mask(body)}")
+            # Отказ пульта (stale/bad-request/unsupported — у пульта «unsupported» значит и сбой его службы rx,
+            # контракт v7) — поколение неудачно сразу: следующее после паузы, без 10 с ожидания таймаута ack
+            self.refused = True
             return
         if not self.tx.ack(body):
             self._log("video: video-key-ack of another generation ignored")
@@ -285,7 +289,9 @@ class VideoTx:
             now = self._clock()
             trouble = ""
             if not self.acked:
-                if now - self.offer_at > ACK_TIMEOUT_S:
+                if self.refused:
+                    trouble = self.error
+                elif now - self.offer_at > ACK_TIMEOUT_S:
                     trouble = self.error = "ack timeout"
             elif not self.started:
                 trouble = self.error or "tx start failed"

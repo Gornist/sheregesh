@@ -42,3 +42,13 @@ def test_cert_info_matches_ssl_peercert_shape(tmp_path):
     (tmp_path / "bad.pem").write_text("not a cert")
     with pytest.raises(ValueError):
         tls.cert_info(tmp_path / "bad.pem")
+
+
+def test_lab_address_is_rfc1918_ula_link_local_only():
+    """Ревью 2026-11-12: ip.is_private пропускал CGNAT и служебные диапазоны, шире заявленного."""
+    for ok in ("10.1.2.3", "172.31.0.1", "192.168.1.94", "127.0.0.1", "::1", "fd00::5", "fe80::1%eth0",
+               "169.254.3.4", "::ffff:192.168.1.94"):
+        assert tls.is_lab_address(ok), ok
+    for bad in ("100.64.0.1", "198.18.0.1", "192.0.2.1", "203.0.113.5", "8.8.8.8", "172.32.0.1", "2001:db8::1",
+                "::ffff:8.8.8.8", "not-an-ip"):
+        assert not tls.is_lab_address(bad), bad

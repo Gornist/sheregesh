@@ -674,6 +674,23 @@ def test_no_ack_for_ten_seconds_triggers_new_generation():
     asyncio.run(scenario())
 
 
+def test_refused_ack_retries_after_backoff_not_ack_timeout():
+    """Ревью 2026-11-12: отказ пульта («unsupported» — в том числе сбой его службы rx) ждал 10 с таймаута ack.
+    Теперь поколение неудачно сразу: следующее — после обычной паузы 2 с."""
+    async def scenario():
+        rig = Rig()
+        body = await start_srtp(rig)
+        await ack(rig, body, ok=False, error="unsupported")
+        rig.advance(0.5)
+        await rig.vtx.tick()
+        rig.advance(2.1)
+        await rig.vtx.tick()
+        keys = rig.video_keys()
+        assert len(keys) == 2 and keys[1]["gen"] == 2
+        assert rig.vtx.status()["srtp"]["state"] != "streaming"
+    asyncio.run(scenario())
+
+
 # --- 8. конец сеанса --------------------------------------------------------------------------------------------------
 
 def test_end_stops_service_notifies_peer_and_closes_allow():

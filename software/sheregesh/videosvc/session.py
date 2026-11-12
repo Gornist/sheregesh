@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import collections
 import copy
 import hashlib
 import re
@@ -213,6 +214,35 @@ class Offer:
                               codec=codec, profile=profile, rtcp_port=rtcp_port)
 
 
+USED_LIMIT = 4096    # поколений сеанса, чьи SSRC и отпечатки ключей помнятся (дальше — забываются старейшие)
+
+
+class _Recent:
+    """Множество последних limit значений: проверка «новое поколение — новые SSRC и ключ» без роста памяти в долгом
+    сеансе с частыми renew (ревью 2026-11-12). 128-битный ключ не повторится и так; SSRC (32 бита) — проверяется."""
+
+    def __init__(self, limit):
+        self._q, self._s, self._limit = collections.deque(), set(), limit
+
+    def __contains__(self, v):
+        return v in self._s
+
+    def __len__(self):
+        return len(self._s)
+
+    def add(self, v):
+        if v in self._s:
+            return
+        self._q.append(v)
+        self._s.add(v)
+        while len(self._q) > self._limit:
+            self._s.discard(self._q.popleft())
+
+    def clear(self):
+        self._q.clear()
+        self._s.clear()
+
+
 class TxSessions:
     """Поколения ключей на стороне блока. Ключи не хранятся; для гарантии новизны — отпечатки."""
 
@@ -223,8 +253,8 @@ class TxSessions:
     def _reset_state(self) -> None:
         self._gen: dict[str, int] = {}
         self._cur: dict[str, tuple[int, bool]] = {}   # stream -> (gen, получено ack ok)
-        self._used_ssrc: set[int] = set()
-        self._used_keys: set[bytes] = set()
+        self._used_ssrc = _Recent(USED_LIMIT)
+        self._used_keys = _Recent(USED_LIMIT)
 
     def new_control_session(self) -> str:
         """Новый сеанс управления: новый session id, все потоки и история сброшены."""

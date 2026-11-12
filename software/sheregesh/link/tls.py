@@ -37,13 +37,21 @@ def device_uri(role: str, device_id: str) -> str:
     return f"{URI_PREFIX}{role}:{device_id}"
 
 
+LAB_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
+    "127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7", "169.254.0.0/16", "fe80::/10"))
+
+
 def is_lab_address(addr: str) -> bool:
-    """Только локальный лабораторный контур: loopback, частные сети RFC 1918/ULA и link-local; не интернет."""
+    """Только локальный лабораторный контур: loopback, частные сети RFC 1918/ULA и link-local; не интернет.
+    Списком сетей, а не ip.is_private: тот включает и CGNAT 100.64.0.0/10, 198.18.0.0/15, сети документации и
+    прочие служебные диапазоны (ревью 2026-11-12). IPv4 в IPv6 (::ffff:a.b.c.d) проверяется как IPv4."""
     try:
         ip = ipaddress.ip_address(addr.split("%")[0])
     except ValueError:
         return False
-    return ip.is_loopback or ip.is_link_local or (ip.is_private and not ip.is_global)
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return any(ip in net for net in LAB_NETWORKS if net.version == ip.version)
 
 
 @dataclass(frozen=True)
